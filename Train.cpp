@@ -95,7 +95,7 @@ TCab::~TCab()
     delete[] btList;
 };
 
-TGauge *__fastcall TCab::Gauge(int n)
+TGauge * TCab::Gauge(int n)
 { // pobranie adresu obiektu aniomowanego ruchem
     if (n < 0)
     { // rezerwacja wolnego
@@ -106,7 +106,7 @@ TGauge *__fastcall TCab::Gauge(int n)
         return ggList + n;
     return NULL;
 };
-TButton *__fastcall TCab::Button(int n)
+TButton * TCab::Button(int n)
 { // pobranie adresu obiektu animowanego wyborem 1 z 2
     if (n < 0)
     { // rezerwacja wolnego
@@ -2789,16 +2789,15 @@ bool TTrain::Update()
                               mvOccupied->Compressor); // Ra: sterowanie miernikiem: zbiornik g³ówny
             Console::ValueSet(1,
                               mvOccupied->PipePress); // Ra: sterowanie miernikiem: przewód g³ówny
-            Console::ValueSet(
-                2, mvOccupied->BrakePress); // Ra: sterowanie miernikiem: cylinder hamulcowy
+            Console::ValueSet(2, mvOccupied->BrakePress); // Ra: sterowanie miernikiem: cylinder hamulcowy
             Console::ValueSet(3, fHVoltage); // woltomierz wysokiego napiêcia
             Console::ValueSet(4, fHCurrent[2]); // Ra: sterowanie miernikiem: drugi amperomierz
-            Console::ValueSet(
-                5,
+            Console::ValueSet(5,
                 fHCurrent[(mvControlled->TrainType & dt_EZT) ? 0 : 1]); // pierwszy amperomierz; dla
             // EZT pr¹d ca³kowity
             Console::ValueSet(6, fTachoVelocity); ////Ra: prêdkoœæ na pin 43 - wyjœcie
-            /// analogowe (to nie jest PWM);
+			Console::ValueSet(7, mvControlled->MainCtrlActualPos + mvControlled->ScndCtrlActualPos);   //nbmx: Wal kulakowy
+			/// analogowe (to nie jest PWM);
             /// skakanie zapewnia mechanika
             /// napêdu
         }

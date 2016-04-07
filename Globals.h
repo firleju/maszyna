@@ -299,6 +299,8 @@ class Global
     static double fCalibrateIn[6][6]; // parametry kalibracyjne wejœæ z pulpitu
     static double fCalibrateOut[7][6]; // parametry kalibracyjne wyjœæ dla pulpitu
 	static double fCalibrateOutMax[7]; // wartoœci maksymalne wyjœæ dla pulpitu
+	static int iCalibrateOutDebugInfo; // numer wyjœcia kalibrowanego dla którego wyœwietlaæ
+									   // informacje podczas kalibracji
     static double fBrakeStep; // krok zmiany hamulca dla klawiszy [Num3] i [Num9]
     static bool bJoinEvents; // czy grupowaæ eventy o tych samych nazwach
     static bool bSmudge; // czy wyœwietlaæ smugê, a pojazd u¿ytkownika na koñcu
@@ -311,8 +313,8 @@ class Global
     static void TrainDelete(TDynamicObject *d);
     static void ConfigParse(Queryparsercomp::TQueryParserComp *qp, cParser *cp = NULL);
     static AnsiString GetNextSymbol();
-    static TDynamicObject *__fastcall DynamicNearest();
-    static TDynamicObject *__fastcall CouplerNearest();
+    static TDynamicObject * DynamicNearest();
+    static TDynamicObject * CouplerNearest();
     static bool AddToQuery(TEvent *event, TDynamicObject *who);
     static bool DoEvents();
     static AnsiString Bezogonkow(AnsiString str, bool _ = false);
