@@ -77,7 +77,7 @@ TGroundNode::TGroundNode()
     asName = "";
     // Color= TMaterialColor(1);
     // fAngle=0; //obrót dla modelu
-    // fLineThickness=1.0; //mm dla linii
+    fLineThickness=1.0; //mm dla linii
     for (int i = 0; i < 3; i++)
     {
         Ambient[i] = Global::whiteLight[i] * 255;
@@ -117,6 +117,9 @@ TGroundNode::~TGroundNode()
             delete Model;
         Model = NULL;
         break;
+	case TP_SOUND:
+		SafeDelete(tsStaticSound);
+		break;
     case TP_TERRAIN:
     { // pierwsze nNode zawiera model E3D, reszta to trójk¹ty
         for (int i = 1; i < iCount; ++i)
@@ -697,6 +700,7 @@ TSubRect::~TSubRect()
     if (Global::bManageNodes) // Ra: tu siê coœ sypie
         ResourceManager::Unregister(this); // wyrejestrowanie ze sprz¹tacza
     // TODO: usun¹æ obiekty z listy (nRootMesh), bo s¹ one tworzone dla sektora
+	delete[] tTracks;
 }
 
 void TSubRect::NodeAdd(TGroundNode *Node)
@@ -735,7 +739,7 @@ void TSubRect::NodeAdd(TGroundNode *Node)
             {
                 if (t && (Node->TextureID != t))
                 { // jeœli s¹ dwie ró¿ne tekstury, dodajemy drugi obiekt dla danego toru
-                    TGroundNode *n = new TGroundNode();
+                    TGroundNode *n = new TGroundNode(); // BUG: source of a memory leak here
                     n->iType = TP_DUMMYTRACK; // obiekt renderuj¹cy siatki dla tekstury
                     n->TextureID = t;
                     n->pTrack = Node->pTrack; // wskazuje na ten sam tor
@@ -958,7 +962,7 @@ void TSubRect::Sort()
         if (t < n1->TextureID) // jeœli (n1) ma inn¹ teksturê ni¿ poprzednie
         { // mo¿na zrobiæ obiekt renderuj¹cy
             t = n1->TextureID;
-            n2 = new TGroundNode();
+			n2 = new TGroundNode(); // BUG: source of a memory leak here
             n2->nNext2 = nRootMesh;
             nRootMesh = n2; // podczepienie na pocz¹tku listy
             nRootMesh->iType = TP_MESH; // obiekt renderuj¹cy siatki dla tekstury
@@ -1303,6 +1307,9 @@ void TGround::MoveGroundNode(vector3 pPosition)
     */
 }
 
+TGroundVertex TempVerts[ 10000 ]; // tu wczytywane s¹ trójk¹ty
+BYTE TempConnectionType[ 200 ]; // Ra: sprzêgi w sk³adzie; ujemne, gdy odwrotnie
+
 TGround::TGround()
 {
     // RootNode=NULL;
@@ -1320,6 +1327,8 @@ TGround::TGround()
         nRootOfType[i] = NULL; // zerowanie tablic wyszukiwania
     bDynamicRemove = false; // na razie nic do usuniêcia
     sTracks = new TNames(); // nazwy torów - na razie tak
+    ::SecureZeroMemory( TempVerts, sizeof( TempVerts ) );
+    ::SecureZeroMemory( TempConnectionType, sizeof( TempConnectionType ) );
 }
 
 TGround::~TGround()
@@ -1409,9 +1418,6 @@ string asTrainName = "";
 int iTrainSetWehicleNumber = 0;
 TGroundNode *nTrainSetNode = NULL; // poprzedni pojazd do ³¹czenia
 TGroundNode *nTrainSetDriver = NULL; // pojazd, któremu zostanie wys³any rozk³ad
-
-TGroundVertex TempVerts[10000]; // tu wczytywane s¹ trójk¹ty
-BYTE TempConnectionType[200]; // Ra: sprzêgi w sk³adzie; ujemne, gdy odwrotnie
 
 void TGround::RaTriangleDivider(TGroundNode *node)
 { // tworzy dodatkowe trójk¹ty i zmiejsza podany
@@ -1767,8 +1773,7 @@ TGroundNode * TGround::AddGroundNode(cParser *parser)
         *parser >> token;
 		str = token;
 		//str = AnsiString(token.c_str());
-        tmp->tsStaticSound = new TTextSound(strdup(str.c_str()), sqrt(tmp->fSquareRadius), tmp->pCenter.x,
-                                 tmp->pCenter.y, tmp->pCenter.z, false, rmin);
+        tmp->tsStaticSound = new TTextSound(str, sqrt(tmp->fSquareRadius), tmp->pCenter.x, tmp->pCenter.y, tmp->pCenter.z, false, rmin);
         if (rmin < 0.0)
             rmin =
                 0.0; // przywrócenie poprawnej wartoœci, jeœli s³u¿y³a do wy³¹czenia efektu Dopplera
@@ -2320,9 +2325,7 @@ void TGround::FirstInit()
     WriteLog("InitLaunchers OK");
     WriteLog("InitGlobalTime");
     // ABu 160205: juz nie TODO :)
-    GlobalTime = new TMTableTime(
-        hh, mm, srh, srm, ssh,
-        ssm); // McZapkie-300302: inicjacja czasu rozkladowego - TODO: czytac z trasy!
+    GlobalTime = std::make_shared<TMTableTime>( hh, mm, srh, srm, ssh, ssm ); // McZapkie-300302: inicjacja czasu rozkladowego - TODO: czytac z trasy!
     WriteLog("InitGlobalTime OK");
     // jeszcze ustawienie pogody, gdyby nie by³o w scenerii wpisów
     glClearColor(Global::AtmoColor[0], Global::AtmoColor[1], Global::AtmoColor[2],
@@ -3134,14 +3137,13 @@ bool TGround::InitEvents()
                     strcpy(buff, Current->Params[i].asText);
                     SafeDeleteArray(Current->Params[i].asText);
                     Current->Params[i].asEvent = FindEvent(buff);
-                    if (!Current->Params[i].asEvent) // Ra: tylko w logu informacja o braku
-                        if (string(Current->Params[i].asText).substr(0, 5) != "none_")
-                        {
-                            WriteLog("Event \"" + string(buff) +
-                                     "\" does not exist");
-                            ErrorLog("Missed event: " + string(buff) + " in multiple " +
-                                     Current->asName);
-                        }
+					if( !Current->Params[ i ].asEvent ) { // Ra: tylko w logu informacja o braku
+						if( ( Current->Params[ i ].asText == NULL )
+						 || ( std::string( Current->Params[ i ].asText ).substr( 0, 5 ) != "none_" ) ) {
+							WriteLog( "Event \"" + string( buff ) + "\" does not exist" );
+							ErrorLog( "Missed event: " + string( buff ) + " in multiple " + Current->asName );
+						}
+					}
                 }
             }
             break;
