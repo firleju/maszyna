@@ -10,9 +10,8 @@ http://mozilla.org/MPL/2.0/.
 #ifndef AdvSoundH
 #define AdvSoundH
 
-#include "Sound.h"
 #include "RealSound.h"
-#include "QueryParserComp.hpp"
+#include "parser.h"
 
 typedef enum
 {
@@ -23,7 +22,7 @@ typedef enum
 } TSoundState;
 
 class TAdvancedSound
-{ // klasa dŸwiêków maj¹cych pocz¹tek, dowolnie d³ugi œrodek oraz zakoñczenie (np. Rp1)
+{ // klasa dÅºwiÄ™kÃ³w majÄ…cych poczÄ…tek, dowolnie dÅ‚ugi Å›rodek oraz zakoÅ„czenie (np. Rp1)
     TRealSound SoundStart;
     TRealSound SoundCommencing;
     TRealSound SoundShut;
@@ -37,9 +36,8 @@ class TAdvancedSound
   public:
     TAdvancedSound();
     ~TAdvancedSound();
-    void Init(char *NameOn, char *Name, char *NameOff, double DistanceAttenuation,
-              vector3 pPosition);
-    void Load(TQueryParserComp *Parser, vector3 pPosition);
+	void Init( std::string const &NameOn, std::string const &Name, std::string const &NameOff, double DistanceAttenuation, vector3 const &pPosition);
+    void Load(cParser &Parser, vector3 const &pPosition);
     void TurnOn(bool ListenerInside, vector3 NewPosition);
     void TurnOff(bool ListenerInside, vector3 NewPosition);
     void Free();

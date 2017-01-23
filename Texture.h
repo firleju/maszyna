@@ -7,23 +7,19 @@ obtain one at
 http://mozilla.org/MPL/2.0/.
 */
 
-#ifndef TextureH
-#define TextureH
+#pragma once
 
-#include <map>
 #include <string>
-
 #include "opengl/glew.h"
-#include "usefull.h"
 
 /*
 //Ra: miejsce umieszczenia tego jest deczko bezsensowne
 void glDebug()
-{//logowanie b³êdów OpenGL
+{//logowanie bÅ‚Ä™dÃ³w OpenGL
  GLenum err;
- if (Global::iErorrCounter==326) //tu wpisz o 1 mniej niz wartoœæ, przy której siê wy³o¿y³o
-  Global::iErorrCounter=Global::iErorrCounter+0; //do zastawiania pu³apki przed b³êdnym kodem
- while ((err=glGetError())!=GL_NO_ERROR) //dalej jest pu³apka po wykonaniu b³êdnego kodu
+ if (Global::iErorrCounter==326) //tu wpisz o 1 mniej niz wartoÅ›Ä‡, przy ktÃ³rej siÄ™ wyÅ‚oÅ¼yÅ‚o
+  Global::iErorrCounter=Global::iErorrCounter+0; //do zastawiania puÅ‚apki przed bÅ‚Ä™dnym kodem
+ while ((err=glGetError())!=GL_NO_ERROR) //dalej jest puÅ‚apka po wykonaniu bÅ‚Ä™dnego kodu
   WriteLog("OpenGL error found: "+AnsiString(err)+", step:"+AnsiString(Global::iErorrCounter));
  ++Global::iErorrCounter;
 };
@@ -54,7 +50,7 @@ class TTexturesManager
 
     static void SetFiltering(int filter);
     static void SetFiltering(bool alpha, bool hash);
-    static GLuint CreateTexture(char *buff, GLint bpp, int width, int height, bool bHasAlpha,
+    static GLuint CreateTexture(GLubyte *buff, GLint bpp, int width, int height, bool bHasAlpha,
                                 bool bHash, bool bDollar = true, int filter = -1);
 
     static Names _names;
@@ -62,4 +58,3 @@ class TTexturesManager
     //    std::list<TTexture> Textures;
 };
 //---------------------------------------------------------------------------
-#endif

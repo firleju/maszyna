@@ -7,11 +7,9 @@ obtain one at
 http://mozilla.org/MPL/2.0/.
 */
 
-#ifndef MATH3D_H
-#define MATH3D_H
+#pragma once
 
-//#include <cmath>
-#include <fastmath.h>
+#include <cmath>
 
 namespace Math3D
 {
@@ -29,15 +27,15 @@ typedef double scalar_t;
 // written in this style to allow for easy substitution with more efficient versions
 inline scalar_t SINE_FUNCTION(scalar_t x)
 {
-    return sin(x);
+    return std::sin(x);
 }
 inline scalar_t COSINE_FUNCTION(scalar_t x)
 {
-    return cos(x);
+    return std::cos(x);
 }
 inline scalar_t SQRT_FUNCTION(scalar_t x)
 {
-    return sqrt(x);
+    return std::sqrt(x);
 }
 
 // 2 element vector
@@ -112,12 +110,12 @@ class vector3
     //    	scalar_t e[3];
     //    };
     bool inline Equal(vector3 *v)
-    { // sprawdzenie odleg³oœci punktów
-        if (fabs(x - v->x) > 0.02)
-            return false; // szeœcian zamiast kuli
-        if (fabs(z - v->z) > 0.02)
+    { // sprawdzenie odlegÅ‚oÅ›ci punktÃ³w
+        if (std::fabs(x - v->x) > 0.02)
+            return false; // szeÅ›cian zamiast kuli
+        if (std::fabs(z - v->z) > 0.02)
             return false;
-        if (fabs(y - v->y) > 0.02)
+        if (std::fabs(y - v->y) > 0.02)
             return false;
         return true;
     };
@@ -192,7 +190,7 @@ class matrix4x4
     inline matrix4x4 &ProjectionMatrix(bool perspective, scalar_t l, scalar_t r, scalar_t t,
                                        scalar_t b, scalar_t n, scalar_t f);
     void InitialRotate()
-    { // taka specjalna rotacja, nie ma co ci¹gaæ trygonometrii
+    { // taka specjalna rotacja, nie ma co ciÄ…gaÄ‡ trygonometrii
         double f;
         for (int i = 0; i < 16; i += 4)
         {
@@ -203,7 +201,7 @@ class matrix4x4
         }
     };
     inline bool IdentityIs()
-    { // sprawdzenie jednostkowoœci
+    { // sprawdzenie jednostkowoÅ›ci
         for (int i = 0; i < 16; ++i)
             if (e[i] != ((i % 5) ? 0.0 : 1.0)) // jedynki tylko na 0, 5, 10 i 15
                 return false;
@@ -635,5 +633,3 @@ std::ostream &operator<<(std::ostream &os, const Math3D::matrix4x4 &m)
     return os;
 }
 #endif // OSTREAM_MATH3D
-
-#endif
