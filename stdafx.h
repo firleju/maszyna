@@ -37,6 +37,7 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include <queue>
 #include <list>
 #include <forward_list>
 #include <map>

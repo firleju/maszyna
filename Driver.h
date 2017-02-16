@@ -126,28 +126,33 @@ enum TSpeedPosFlag
 class TSpeedPos
 { // pozycja tabeli prędkości dla AI
   public:
-    double fDist; // aktualna odległość (ujemna gdy minięte)
-    double fVelNext; // prędkość obowiązująca od tego miejsca
-    double fSectionVelocityDist; // długość ograniczenia prędkości
+    double fDist = 0; // aktualna odległość (ujemna gdy minięte)
+    double fVelNext = -1; // prędkość obowiązująca od tego miejsca
+    double fSectionVelocityDist = 0; // długość ograniczenia prędkości
     // double fAcc;
-    int iFlags; // flagi typu wpisu do tabelki
+    int iFlags = 0; // flagi typu wpisu do tabelki
     // 1=istotny,2=tor,4=odwrotnie,8-zwrotnica (może się zmienić),16-stan
     // zwrotnicy,32-minięty,64=koniec,128=łuk
     // 0x100=event,0x200=manewrowa,0x400=przystanek,0x800=SBL,0x1000=wysłana komenda,0x2000=W5
     // 0x4000=semafor,0x10000=zatkanie
-    vector3 vPos; // współrzędne XYZ do liczenia odległości
+    vector3 vPos = vector3(); // współrzędne XYZ do liczenia odległości
     struct
     {
-        TTrack *trTrack; // wskaźnik na tor o zmiennej prędkości (zwrotnica, obrotnica)
-        TEvent *evEvent; // połączenie z eventem albo komórką pamięci
+        TTrack *trTrack = nullptr; // wskaźnik na tor o zmiennej prędkości (zwrotnica, obrotnica)
+        TEvent *evEvent = nullptr; // połączenie z eventem albo komórką pamięci
     };
-    void CommandCheck();
 
   public:
+      TSpeedPos(TTrack *track, double dist, int flag);
+      TSpeedPos(TEvent *event, double dist, TOrders order);
+      TSpeedPos() {};
     void Clear();
     bool Update(vector3 *p, vector3 *dir, double &len);
-    bool Set(TEvent *e, double d, TOrders order = Wait_for_orders);
-    void Set(TTrack *t, double d, int f);
+    bool UpdateTrackStatus();
+    void UpdateDistance(double dist);
+    void UpdateEventStatus();
+    bool Set(TEvent *e, double dist, TOrders order = Wait_for_orders);
+    void Set(TTrack *t, double dist, int flag);
     std::string TableText();
     std::string GetName();
     bool IsProperSemaphor(TOrders order = Wait_for_orders);
@@ -167,6 +172,8 @@ class TController
 {
   private: // obsługa tabelki prędkości (musi mieć możliwość odhaczania stacji w rozkładzie)
     TSpeedPos *sSpeedTable = nullptr; // najbliższe zmiany prędkości
+    std::deque<TSpeedPos> speedTableTracks; //tabelka ograniczeń predkości dla torów
+    std::list<TSpeedPos> speedTableSigns; //tabelka ograniczeń prędkości dla wskaźników11
     int iSpeedTableSize = 16; // wielkość tabelki
     int iFirst = 0; // aktualna pozycja w tabeli (modulo iSpeedTableSize)
     int iLast = 0; // ostatnia wypełniona pozycja w tabeli <iFirst (modulo iSpeedTableSize)
@@ -176,6 +183,7 @@ class TController
     TEvent *eSignSkip = nullptr; // można pominąć ten SBL po zatrzymaniu
     TSpeedPos *sSemNext = nullptr; // następny semafor na drodze zależny od trybu jazdy
     TSpeedPos *sSemNextStop = nullptr; // następny semafor na drodze zależny od trybu jazdy i na stój
+    double dMoveLen = 0.0; // odległość przejechana od ostatniego sprawdzenia tabelki
   private: // parametry aktualnego składu
     double fLength = 0.0; // długość składu (do wyciągania z ograniczeń)
     double fMass = 0.0; // całkowita masa do liczenia stycznej składowej grawitacji
@@ -251,9 +259,9 @@ class TController
     double VelLimitLast = -1.0; // prędkość zadana przez ograniczenie // ostatnie ograniczenie bez ograniczenia
     double VelRoad = -1.0; // aktualna prędkość drogowa (ze znaku W27) (PutValues albo komendą) // prędkość drogowa bez ograniczenia
   public:
-    double VelNext = 120.0; // prędkość, jaka ma być po przejechaniu długości ProximityDist
+    double VelNext = 120.0; // prędkość, jaka ma być po przejechaniu długości ActualProximityDist
   private:
-    double fProximityDist = 0.0; // odleglosc podawana w SetProximityVelocity(); >0:przeliczać do punktu, <0:podana wartość
+    double fProximityDist = 0.0; // odleglosc do punktu ograniczenia prędkości
     double FirstSemaphorDist = 10000.0; // odległość do pierwszego znalezionego semafora
   public:
     double
@@ -356,16 +364,28 @@ class TController
 
   private: // Ra: metody obsługujące skanowanie toru
     TEvent *CheckTrackEvent(double fDirection, TTrack *Track);
-    bool TableCheckEvent(TEvent *e);
-    bool TableAddNew();
-    bool TableNotFound(TEvent *e);
+    //bool TableAddNew();
+    bool TableEventNotExistIn(TEvent *e);
     void TableClear();
-    TEvent *TableCheckTrackEvent(double fDirection, TTrack *Track);
     void TableTraceRoute(double fDistance, TDynamicObject *pVehicle = NULL);
-    void TableCheck(double fDistance);
+    void TableCheckForChanges(double fDistance);
+    void TableCheckStopPoint(TSpeedPos &ste, double &fVelDes, double &fDist, double &fNext, double &fAcc);
+    void TableCheckSemaphor(TSpeedPos &ste, double &fVelDes, double &fDist, double &fNext, double &fAcc);
     TCommandType TableUpdate(double &fVelDes, double &fDist, double &fNext, double &fAcc);
-    void TablePurger();
-
+    //void TablePurger();
+    inline double MoveDistanceGet()
+    {
+        return dMoveLen;
+    }
+    inline void MoveDistanceReset()
+    {
+        dMoveLen = 0.0;
+    }
+    public:
+        inline void MoveDistanceAdd(double distance)
+        {
+            dMoveLen += distance;
+        }
   private: // Ra: stare funkcje skanujące, używane do szukania sygnalizatora z tyłu
     bool BackwardTrackBusy(TTrack *Track);
     TEvent *CheckTrackEventBackward(double fDirection, TTrack *Track);
