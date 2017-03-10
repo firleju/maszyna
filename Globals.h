@@ -12,7 +12,8 @@ http://mozilla.org/MPL/2.0/.
 #include <string>
 #include <Windows.h>
 #include "renderer.h"
-#include "opengl/glew.h"
+#include "glfw/glfw3.h"
+#include "gl/glew.h"
 #include "dumb3d.h"
 
 // definicje klawiszy
@@ -169,13 +170,14 @@ class Global
     static double
         pCameraRotation; // kierunek bezwzględny kamery w świecie: 0=północ, 90°=zachód (-azymut)
     static double pCameraRotationDeg; // w stopniach, dla animacji billboard
-    static Math3D::vector3 pFreeCameraInit[10]; // pozycje kamery
-    static Math3D::vector3 pFreeCameraInitAngle[10];
+    static std::vector<Math3D::vector3> FreeCameraInit; // pozycje kamery
+    static std::vector<Math3D::vector3> FreeCameraInitAngle;
     static int iWindowWidth;
     static int iWindowHeight;
     static float fDistanceFactor;
     static int iBpp;
     static bool bFullScreen;
+    static bool VSync;
     static bool bFreeFly;
     // float RunningTime;
     static bool bWireFrame;
@@ -208,7 +210,7 @@ class Global
     // McZapkie-170602: zewnetrzna definicja pojazdu uzytkownika
     static std::string asHumanCtrlVehicle;
     static void LoadIniFile(std::string asFileName);
-    static void InitKeys(std::string asFileName);
+    static void InitKeys();
     inline static Math3D::vector3 GetCameraPosition()
     {
         return pCameraPosition;
@@ -262,7 +264,9 @@ class Global
     static double fLuminance; // jasność światła do automatycznego zapalania
     static float SunAngle; // angle of the sun relative to horizon
     static int iMultiplayer; // blokada działania niektórych eventów na rzecz kominikacji
-    static HWND hWnd; // uchwyt okna
+	static GLFWwindow *window;
+	static bool shiftState; //m7todo: brzydko
+	static bool ctrlState;
     static int ScreenWidth; // current window dimensions. TODO: move it to renderer
     static int ScreenHeight;
     static float ZoomFactor; // determines current camera zoom level. TODO: move it to the renderer

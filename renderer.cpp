@@ -23,8 +23,8 @@ opengl_renderer::Init() {
         light.id = GL_LIGHT1 + idx;
 
         light.position[ 3 ] = 1.0f;
-        ::glLightf( light.id, GL_SPOT_CUTOFF, 20.0f );
-        ::glLightf( light.id, GL_SPOT_EXPONENT, 10.0f );
+        ::glLightf( light.id, GL_SPOT_CUTOFF, 7.5f );
+        ::glLightf( light.id, GL_SPOT_EXPONENT, 7.5f );
         ::glLightf( light.id, GL_CONSTANT_ATTENUATION, 0.0f );
         ::glLightf( light.id, GL_LINEAR_ATTENUATION, 0.035f );
 
@@ -35,7 +35,7 @@ opengl_renderer::Init() {
 void
 opengl_renderer::Update_Lights( light_array const &Lights ) {
 
-    int const count = std::min( m_lights.size(), Lights.data.size() );
+    size_t const count = std::min( m_lights.size(), Lights.data.size() );
     if( count == 0 ) { return; }
 
     auto renderlight = m_lights.begin();
@@ -59,14 +59,15 @@ opengl_renderer::Update_Lights( light_array const &Lights ) {
         renderlight->set_position( scenelight.position );
         renderlight->direction = scenelight.direction;
 
-        renderlight->diffuse[ 0 ] = scenelight.color.x;
-        renderlight->diffuse[ 1 ] = scenelight.color.y;
-        renderlight->diffuse[ 2 ] = scenelight.color.z;
-        renderlight->ambient[ 0 ] = scenelight.color.x * scenelight.intensity;
-        renderlight->ambient[ 1 ] = scenelight.color.y * scenelight.intensity;
-        renderlight->ambient[ 2 ] = scenelight.color.z * scenelight.intensity;
+        auto const luminance = Global::fLuminance; // TODO: adjust this based on location, e.g. for tunnels
+        renderlight->diffuse[ 0 ] = std::max( 0.0, scenelight.color.x - luminance );
+        renderlight->diffuse[ 1 ] = std::max( 0.0, scenelight.color.y - luminance );
+        renderlight->diffuse[ 2 ] = std::max( 0.0, scenelight.color.z - luminance );
+        renderlight->ambient[ 0 ] = std::max( 0.0, scenelight.color.x * scenelight.intensity - luminance);
+        renderlight->ambient[ 1 ] = std::max( 0.0, scenelight.color.y * scenelight.intensity - luminance );
+        renderlight->ambient[ 2 ] = std::max( 0.0, scenelight.color.z * scenelight.intensity - luminance );
 
-        ::glLightf( renderlight->id, GL_LINEAR_ATTENUATION, 0.3f / std::pow( scenelight.count, 2 ) );
+        ::glLightf( renderlight->id, GL_LINEAR_ATTENUATION, (0.25f * scenelight.count) / std::pow( scenelight.count, 2 ) );
         ::glEnable( renderlight->id );
 
         renderlight->apply_intensity();
@@ -85,9 +86,9 @@ opengl_renderer::Update_Lights( light_array const &Lights ) {
 void
 opengl_renderer::Disable_Lights() {
 
-    for( int idx = 0; idx < m_lights.size() + 1; ++idx ) {
+    for( size_t idx = 0; idx < m_lights.size() + 1; ++idx ) {
 
-        ::glDisable( GL_LIGHT0 + idx );
+        ::glDisable( GL_LIGHT0 + (int)idx );
     }
 }
 //---------------------------------------------------------------------------
