@@ -108,7 +108,7 @@ double GetDistanceToEvent(TTrack* track, TEvent* event, double scan_dir, double 
 {
     shared_ptr<TSegment> segment = track->CurrentSegment();
     vector3 pos_event = event->PositionGet();
-    double len1, len2, temp_len;
+    double len1, len2;
     double sd = scan_dir;
     double seg_len = scan_dir > 0 ? 0.0 : 1.0; // dzielimy na 10 odcinków i już
     len2 = (pos_event - segment->FastGetPoint(seg_len)).Length();
@@ -138,12 +138,12 @@ double GetDistanceToEvent(TTrack* track, TEvent* event, double scan_dir, double 
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
 
-TSpeedPos::TSpeedPos(TTrack *track, double dist, int flag)
+inline TSpeedPos::TSpeedPos(TTrack *track, double dist, int flag)
 {
     Set(track, dist, flag);
 };
 
-TSpeedPos::TSpeedPos(TEvent *event, double dist, TOrders order)
+inline TSpeedPos::TSpeedPos(TEvent *event, double dist, TOrders order)
 {
     Set(event, dist, order);
 };
@@ -324,8 +324,8 @@ bool TSpeedPos::Update(vector3 *p, vector3 *dir, double &len)
 				// fVelNext=trTrack->VelocityGet(); //odczyt prędkości
                 }
 #else
-                if( ( ( iFlags & spElapsed ) == 0 )
-                 && ( false == trTrack->Dynamics.empty() ) ) {
+                if(((iFlags & spElapsed)==0) && (false == trTrack->Dynamics.empty()))
+				{
                     // jeśli jeszcze nie wjechano na tor, a coś na nim jest
                     if( Global::iWriteLogEnabled & 8 ) {
                         WriteLog( "Rozjazd " + trTrack->NameGet() + " zajety przed pojazdem. Num=" + std::to_string( trTrack->Dynamics.size() ) + "Dist= " + std::to_string( fDist ) );
@@ -348,6 +348,8 @@ bool TSpeedPos::UpdateTrackStatus()
 { // sprawdza czy zmienił się stan toru. Jeśli tak zwraca true;
     fVelNext = trTrack->VelocityGet(); // aktualizacja prędkości (może być zmieniana
                                        // eventem)
+	if (fDist < 0)
+		iFlags ^= spElapsed;
     int i;
     if ((i = iFlags & 0xF0000000) != 0)
     { // jeśli skrzyżowanie, ograniczyć prędkość przy skręcaniu
@@ -399,8 +401,7 @@ bool TSpeedPos::UpdateTrackStatus()
                             // fVelNext=trTrack->VelocityGet(); //odczyt prędkości
         }
 #else
-        if (((iFlags & spElapsed) == 0)
-            && (false == trTrack->Dynamics.empty())) {
+        if (((iFlags & spElapsed) == 0) && (false == trTrack->Dynamics.empty())) {
             // jeśli jeszcze nie wjechano na tor, a coś na nim jest
             if (Global::iWriteLogEnabled & 8) {
                 WriteLog("Rozjazd " + trTrack->NameGet() + " zajety przed pojazdem. Num=" + std::to_string(trTrack->Dynamics.size()) + "Dist= " + std::to_string(fDist));
@@ -411,7 +412,8 @@ bool TSpeedPos::UpdateTrackStatus()
     }
     return false;
 }
-void TSpeedPos::UpdateDistance(double dist)
+
+inline void TSpeedPos::UpdateDistance(double dist)
 { // aktualizuje odległość we wpisie
     fDist -= dist;
 }
@@ -428,12 +430,14 @@ std::string TSpeedPos::GetName()
 
 std::string TSpeedPos::TableText()
 { // pozycja tabelki prędkości
-    if (iFlags & spEnabled)
-    { // o ile pozycja istotna
-		return "Flags:" + to_hex_str(iFlags, 6) + ", Dist:" + to_string(fDist, 1, 6) +
-               ", Vel:" + (fVelNext == -1.0 ? " * " : to_string(static_cast<int>(fVelNext), 0, 3)) + ", Name:" + GetName();
-    }
-    return "Empty";
+    //if (iFlags & spEnabled)
+    //{ // o ile pozycja istotna
+	// nieistotnych pozycji nie ma już w tabelce gdyz je usuwam
+		return "Dist:" + to_string(fDist, 1, 6) +
+               ", Vel:" + (fVelNext == -1.0 ? "  *" : to_string(static_cast<int>(fVelNext), 0, 3)) + 
+			   ", Name:" + GetName();
+    //}
+    //return "Empty";
 }
 
 bool TSpeedPos::IsProperSemaphor(TOrders order)
@@ -873,8 +877,11 @@ void TController::TableCheckForChanges(double fDistance)
     // uwzględniamy przejechaną odległość na elementach pozostałych po kasowaniu
     for (auto &stt : speedTableTracks)
         stt.UpdateDistance(MoveDistanceGet());
-    for (auto &ste : speedTableSigns)
-        ste.UpdateDistance(MoveDistanceGet());
+	for (auto &ste : speedTableSigns)
+	{
+		ste.UpdateEventStatus();
+		ste.UpdateDistance(MoveDistanceGet());
+	}
     MoveDistanceReset(); // resetujemy licznik przejechanej odległości
 
     // trasujemy brakującą cześć trasy
@@ -978,7 +985,7 @@ void TController::TableCheckForChanges(double fDistance)
 #endif
 }
 
-void TController::TableCheckStopPoint(TSpeedPos &ste, double & fVelDes, double & fDist, double & fNext, double & fAcc)
+void TController::TableCheckStopPoint(TSpeedPos &ste, double & fVelDes, double & fDist, double & fNext, double & fAcc, TCommandType &go)
 {
  // jeśli przystanek, trzeba obsłużyć wg rozkładu
     // first 19 chars of the command is expected to be "PassengerStopPoint:" so we skip them
@@ -1042,74 +1049,57 @@ void TController::TableCheckStopPoint(TSpeedPos &ste, double & fVelDes, double &
                 // jeśli długość peronu ((ste.evEvent->ValueGet(2)) nie podana,
                 // przyjąć odległość fMinProximityDist
             { // jeśli się zatrzymał przy W4, albo stał w momencie zobaczenia W4
-                if (!AIControllFlag) // AI tylko sobie otwiera drzwi
+				if (AIControllFlag && (iDrivigFlags & moveDoorOpened) == 0) // rozbicie na obsługę przez AI i człowieka
+				{ // drzwi otwierać jednorazowo
+					iDrivigFlags |= moveDoorOpened; // nie wykonywać drugi raz
+					if (mvOccupied->DoorOpenCtrl == 1) //(mvOccupied->TrainType==dt_EZT)
+					{ // otwieranie drzwi w EZT
+						if (!mvOccupied->DoorLeftOpened && !mvOccupied->DoorRightOpened)
+						{ // otwieranie drzwi
+							int p2 =
+								int(floor(ste.evEvent->ValueGet(2))) %
+								10; // p7=platform side (1:left, 2:right, 3:both)
+							int lewe = (iDirection > 0) ? 1 : 2; // jeśli jedzie do tyłu, to drzwi otwiera odwrotnie
+							int prawe = (iDirection > 0) ? 2 : 1;
+							if (p2 & lewe)
+								mvOccupied->DoorLeft(true);
+							if (p2 & prawe)
+								mvOccupied->DoorRight(true);
+							// if (p2&3) //żeby jeszcze poczekał chwilę, zanim zamknie
+							// WaitingSet(10); //10 sekund (wziąć z rozkładu????)
+						}
+					}
+					else
+					{ // otwieranie drzwi w składach wagonowych - docelowo wysyłać
+						// komendę zezwolenia na otwarcie drzwi
+						int p7, lewe,
+							prawe; // p7=platform side (1:left, 2:right, 3:both)
+						p7 = int(floor(ste.evEvent->ValueGet(2))) %
+							10; // tu będzie jeszcze długość peronu zaokrąglona do 10m
+								// (20m bezpieczniej, bo nie modyfikuje bitu 1)
+						TDynamicObject *p = pVehicles[0]; // pojazd na czole składu
+						while (p)
+						{ // otwieranie drzwi w pojazdach - flaga zezwolenia była by
+							// lepsza
+							lewe = (p->DirectionGet() > 0) ? 1 : 2; // jeśli jedzie do tyłu, to drzwi otwiera odwrotnie
+							prawe = 3 - lewe;
+							p->MoverParameters->BatterySwitch(true); // wagony muszą mieć baterię załączoną do otwarcia drzwi...
+							if (p7 & lewe)
+								p->MoverParameters->DoorLeft(true);
+							if (p7 & prawe)
+								p->MoverParameters->DoorRight(true);
+							p = p->Next(); // pojazd podłączony z tyłu (patrząc od czoła)
+						}
+					}
+						// if (p7&3) //żeby jeszcze poczekał chwilę, zanim zamknie
+						// WaitingSet(10); //10 sekund (wziąć z rozkładu????)
+				}
+				else if (!AIControllFlag)
+				{ // jeśli steruje człowiek to tylko flaga jakby przejął AI
                     iDrivigFlags &= ~moveStopCloser; // w razie przełączenia na AI ma
                                                         // nie podciągać do W4, gdy
                                                         // użytkownik zatrzymał za daleko
-                if ((iDrivigFlags & moveDoorOpened) == 0)
-                { // drzwi otwierać jednorazowo
-                    iDrivigFlags |= moveDoorOpened; // nie wykonywać drugi raz
-                    if (mvOccupied->DoorOpenCtrl == 1) //(mvOccupied->TrainType==dt_EZT)
-                    { // otwieranie drzwi w EZT
-                        if (AIControllFlag) // tylko AI otwiera drzwi EZT, użytkownik
-                                            // musi samodzielnie
-                            if (!mvOccupied->DoorLeftOpened &&
-                                !mvOccupied->DoorRightOpened)
-                            { // otwieranie drzwi
-                                int p2 =
-                                    int(floor(ste.evEvent->ValueGet(2))) %
-                                    10; // p7=platform side (1:left, 2:right, 3:both)
-                                int lewe = (iDirection > 0) ? 1 : 2; // jeśli jedzie do
-                                                                        // tyłu, to drzwi
-                                                                        // otwiera
-                                                                        // odwrotnie
-                                int prawe = (iDirection > 0) ? 2 : 1;
-                                if (p2 & lewe)
-                                    mvOccupied->DoorLeft(true);
-                                if (p2 & prawe)
-                                    mvOccupied->DoorRight(true);
-                                // if (p2&3) //żeby jeszcze poczekał chwilę, zanim
-                                // zamknie
-                                // WaitingSet(10); //10 sekund (wziąć z rozkładu????)
-                            }
-                    }
-                    else
-                    { // otwieranie drzwi w składach wagonowych - docelowo wysyłać
-                        // komendę zezwolenia na otwarcie drzwi
-                        int p7, lewe,
-                            prawe; // p7=platform side (1:left, 2:right, 3:both)
-                        p7 = int(floor(ste.evEvent->ValueGet(2))) %
-                            10; // tu będzie jeszcze długość peronu zaokrąglona do 10m
-                                // (20m bezpieczniej, bo nie modyfikuje bitu 1)
-                        TDynamicObject *p = pVehicles[0]; // pojazd na czole składu
-                        while (p)
-                        { // otwieranie drzwi w pojazdach - flaga zezwolenia była by
-                            // lepsza
-                            lewe = (p->DirectionGet() > 0) ? 1 : 2; // jeśli jedzie do
-                                                                    // tyłu, to drzwi
-                                                                    // otwiera odwrotnie
-                            prawe = 3 - lewe;
-                            p->MoverParameters->BatterySwitch(true); // wagony muszą
-                                                                        // mieć baterię
-                                                                        // załączoną do
-                                                                        // otwarcia
-                                                                        // drzwi...
-                            if (p7 & lewe)
-                                p->MoverParameters->DoorLeft(true);
-                            if (p7 & prawe)
-                                p->MoverParameters->DoorRight(true);
-                            p = p->Next(); // pojazd podłączony z tyłu (patrząc od
-                                            // czoła)
-                        }
-                        // if (p7&3) //żeby jeszcze poczekał chwilę, zanim zamknie
-                        // WaitingSet(10); //10 sekund (wziąć z rozkładu????)
-                    }
-                    if (fStopTime >
-                        -5) // na końcu rozkładu się ustawia 60s i tu by było skrócenie
-                        WaitingSet(10); // 10 sekund (wziąć z rozkładu????) - czekanie
-                                        // niezależne od sposobu obsługi drzwi, bo
-                                        // opóźnia również kierownika
-                }
+				}
                 if (TrainParams->UpdateMTable(
                     GlobalTime->hh, GlobalTime->mm, asNextStop))
                 { // to się wykona tylko raz po zatrzymaniu na W4
@@ -1238,6 +1228,140 @@ void TController::TableCheckStopPoint(TSpeedPos &ste, double & fVelDes, double &
 
 void TController::TableCheckSemaphor(TSpeedPos &ste, double & fVelDes, double & fDist, double & fNext, double & fAcc)
 {
+	if (ste.fDist < 0.0 && sSemNext == &ste)
+	{
+		if (Global::iWriteLogEnabled & 8)
+			WriteLog("TableUpdate: semaphor " + sSemNext->GetName() + " passed by " + OwnerName());
+		sSemNext = nullptr; // jeśli minęliśmy semafor od ograniczenia to go kasujemy ze
+						 // zmiennej sprawdzającej dla skanowania w przód
+	}
+	if (ste.fDist < 0.0 && sSemNextStop == &ste)
+	{
+		if (Global::iWriteLogEnabled & 8)
+			WriteLog("TableUpdate: semaphor " + sSemNextStop->GetName() + " passed by " + OwnerName());
+		sSemNextStop = nullptr; // jeśli minęliśmy semafor od ograniczenia to go kasujemy ze
+							 // zmiennej sprawdzającej dla skanowania w przód
+	}
+	if (ste.fDist > 0.0 &&
+		ste.IsProperSemaphor(OrderCurrentGet()))
+	{
+		if (!sSemNext)
+		{
+			sSemNext = &ste; // jeśli jest mienięty poprzedni
+										// semafor a wcześniej
+										// byl nowy to go dorzucamy do zmiennej, żeby cały
+										// czas widział najbliższy
+			if (Global::iWriteLogEnabled & 8)
+				WriteLog("TableUpdate: Next semaphor: " + sSemNext->GetName() + " by " + OwnerName());
+		}
+		if (!sSemNextStop || (sSemNextStop && sSemNextStop->fVelNext != 0 &&
+			ste.fVelNext == 0))
+			sSemNextStop = &ste;
+	}
+
+	if (ste.iFlags & spStopOnSBL)
+	{ // jeśli S1 na SBL
+		if (mvOccupied->Vel < 2.0) // stanąć nie musi, ale zwolnić przynajmniej
+			if (ste.fDist < fMaxProximityDist) // jest w maksymalnym zasięgu
+			{
+				eSignSkip = ste
+					.evEvent; // to można go pominąć (wziąć drugą prędkosć)
+				iDrivigFlags |= moveVisibility; // jazda na widoczność - skanować
+												// możliwość kolizji i nie podjeżdżać zbyt blisko
+												// usunąć flagę po podjechaniu blisko semafora zezwalającego na jazdę
+												// ostrożnie interpretować sygnały - semafor może zezwalać na jazdę
+												// pociągu z przodu!
+			}
+		if (eSignSkip != ste.evEvent) // jeśli ten SBL nie jest do pominięcia
+												 // TODO sprawdzić do której zmiennej jest przypisywane v i zmienić to tutaj
+			ste.fVelNext = ste.evEvent->ValueGet(1); // to ma 0 odczytywać
+	}
+	else if (ste.IsProperSemaphor(OrderCurrentGet()))
+	{ // to semaphor
+		if (ste.fDist < 0)
+			VelSignalLast = ste.fVelNext; //minięty daje prędkość obowiązującą
+		else
+		{
+			iDrivigFlags |= moveSemaphorFound; //jeśli z przodu to dajemy flagę, że jest
+			FirstSemaphorDist = Min0R(ste.fDist, FirstSemaphorDist);
+		}
+		if (ste.fDist <= FirstSemaphorDist)
+		{
+			VelSignalNext = ste.fVelNext;
+		}
+	}
+
+
+}
+
+void TController::TableCheckRoadVelocity(TSpeedPos &ste)
+{
+	VelRoad = ste.fVelNext;
+}
+
+void TController::TableCheckSectionVelocity(TSpeedPos &ste)
+{ // to W27
+	if (ste.fSectionVelocityDist == 0.0)
+	{
+		if (Global::iWriteLogEnabled & 8)
+			WriteLog("TableUpdate: Event is behind. SVD = 0: " + ste.evEvent->asName);
+		ste.iFlags = 0; // jeśli punktowy to kasujemy i nie dajemy ograniczenia na stałe
+	}
+	else if (ste.fSectionVelocityDist < 0.0)
+	{ // ograniczenie obowiązujące do następnego
+		if (ste.fVelNext == Min0RSpeed(ste.fVelNext, VelLimitLast) &&
+			ste.fVelNext != VelLimitLast)
+		{ // jeśli ograniczenie jest mniejsze niż obecne to obowiązuje od zaraz
+			VelLimitLast = ste.fVelNext;
+		}
+		else if (ste.fDist < -fLength)
+		{ // jeśli większe to musi wyjechać za poprzednie
+			VelLimitLast = ste.fVelNext;
+			if (Global::iWriteLogEnabled & 8)
+				WriteLog("TableUpdate: Event is behind. SVD < 0: " + ste.evEvent->asName);
+			ste.iFlags = 0; // wyjechaliśmy poza poprzednie, można skasować
+		}
+	}
+	else
+	{ // jeśli większe to ograniczenie ma swoją długość
+		if (ste.fVelNext == Min0RSpeed(ste.fVelNext, VelLimitLast) &&
+			ste.fVelNext != VelLimitLast)
+		{ // jeśli ograniczenie jest mniejsze niż obecne to obowiązuje od zaraz
+			VelLimitLast = ste.fVelNext;
+		}
+		else if (ste.fDist < -fLength && ste.fVelNext != VelLimitLast)
+		{ // jeśli większe to musi wyjechać za poprzednie
+			VelLimitLast = ste.fVelNext;
+		}
+		else if (ste.fDist < -fLength - ste.fSectionVelocityDist)
+		{ //
+			VelLimitLast = -1.0;
+			if (Global::iWriteLogEnabled & 8)
+				WriteLog("TableUpdate: Event is behind. SVD > 0: " + ste.evEvent->asName);
+			ste.iFlags = 0; // wyjechaliśmy poza poprzednie, można skasować
+		}
+	}
+}
+
+void TController::TableCheckOutsideStation(TSpeedPos & ste, double & fVelDes, double & fDist, double & fNext, double & fAcc)
+{
+	if (OrderCurrentGet() & Obey_train)
+	{ // w trybie pociągowym: można przyspieszyć do wskazanej prędkości (po
+	  // zjechaniu z rozjazdów)
+		ste.fVelNext = -1.0; // ignorować?
+				  //TODO trzeba zmienić przypisywanie VelSignal na VelSignalLast
+		if (ste.fDist < 0.0 || !(iDrivigFlags & moveSwitchFound)) // jeśli wskaźnik został minięty lub rozjazdy mienięte
+			VelSignalLast = ste.fVelNext; //ustawienie prędkości na -1
+	}
+	else
+	{ // w trybie manewrowym: skanować od niego wstecz, stanąć po wyjechaniu za
+	  // sygnalizator i zmienić kierunek
+		ste.fVelNext = 0.0; // zmiana kierunku może być podanym sygnałem, ale wypadało by
+				 // zmienić światło wcześniej
+		if (!(iDrivigFlags & moveSwitchFound)) // jeśli nie ma rozjazdu
+			iDrivigFlags |= moveTrackEnd; // to dalsza jazda trwale ograniczona (W5,
+										  // koniec toru)
+	}
 }
 
 TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fNext, double &fAcc)
@@ -1246,7 +1370,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
     // fDist - dystans w jakim należy rozważyć ruch
     // fNext - prędkość na końcu tego dystansu
     // fAcc - zalecane przyspieszenie w chwili obecnej - kryterium wyboru dystansu
-    double a; // przyspieszenie
+    double a = 3.5; // przyspieszenie
     double v; // prędkość
     double d; // droga
 	double d_to_next_sem = 10000.0; //ustaiwamy na pewno dalej niż widzi AI
@@ -1254,7 +1378,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
     eSignNext = NULL;
     iDrivigFlags &= ~(moveTrackEnd | moveSwitchFound | moveSemaphorFound |
                       moveSpeedLimitFound); // te flagi są ustawiane tutaj, w razie potrzeby
-//#ifdef USE_OLD_SPEEDTABLE
+#ifdef USE_OLD_SPEEDTABLE
     int i, k = iLast - iFirst + 1;
     if (k < 0)
         k += iSpeedTableSize; // ilość pozycji do przeanalizowania
@@ -1628,7 +1752,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                         }
                         else if (sSpeedTable[i].fSectionVelocityDist < 0.0)
                         { // ograniczenie obowiązujące do następnego
-                            if (sSpeedTable[i].fVelNext == Global::Min0RSpeed(sSpeedTable[i].fVelNext, VelLimitLast) &&
+                            if (sSpeedTable[i].fVelNext == Min0RSpeed(sSpeedTable[i].fVelNext, VelLimitLast) &&
                                 sSpeedTable[i].fVelNext != VelLimitLast)
                             { // jeśli ograniczenie jest mniejsze niż obecne to obowiązuje od zaraz
                                 VelLimitLast = sSpeedTable[i].fVelNext;
@@ -1643,7 +1767,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                         }
                         else
                         { // jeśli większe to ograniczenie ma swoją długość
-                            if (sSpeedTable[i].fVelNext == Global::Min0RSpeed(sSpeedTable[i].fVelNext, VelLimitLast) &&
+                            if (sSpeedTable[i].fVelNext == Min0RSpeed(sSpeedTable[i].fVelNext, VelLimitLast) &&
                                 sSpeedTable[i].fVelNext != VelLimitLast)
                             { // jeśli ograniczenie jest mniejsze niż obecne to obowiązuje od zaraz
                                 VelLimitLast = sSpeedTable[i].fVelNext;
@@ -1815,7 +1939,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
             }
         } // if (sSpeedTable[i].iFlags&1)
     } // for
-//#else
+#else
     // najpierw sprawdzanie torów
     for (auto &stt : speedTableTracks)
     {
@@ -1848,8 +1972,8 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
             if (v < fVelDes)
                 fVelDes = v; // ograniczenie aktualnej prędkości aż do wyjechania za ograniczenie
         }
-    // sprawdzenie warunków dla torów
-        if (a < fAcc && v == Min0R(v, fNext))
+		// sprawdzenie warunków dla torów
+        if (a < fAcc && v == Min0RSpeed(v, fNext))
         { // mniejsze przyspieszenie to mniejsza możliwość rozpędzenia się albo konieczność
           // hamowania
           // jeśli droga wolna, to może być a>1.0 i się tu nie załapuje
@@ -1869,34 +1993,157 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
     // teraz sprawdzenie wskaźników
     for (auto &ste : speedTableSigns)
     {
+
         // jeśli StopPoint
-        if (ste.iFlags & spPassengerStopPoint != 0)
-            TableCheckStopPoint(ste, fVelDes,fDist, fNext, fAcc);
+        if (ste.iFlags & spPassengerStopPoint)
+            TableCheckStopPoint(ste, fVelDes,fDist, fNext, fAcc, go);
         // jeśli semafor
-        else if (ste.iFlags & (spSemaphor | spShuntSemaphor) != 0)
+        else if (ste.iFlags & (spSemaphor | spShuntSemaphor))
             TableCheckSemaphor(ste, fVelDes,fDist, fNext, fAcc);
         // jeśli ograniczenie predkości
-        else if (ste.iFlags & (spSectionVel | spRoadVel) != 0)
+        else if ((ste.iFlags & spSectionVel) && (ste.fDist < 0))
         {
+			TableCheckSectionVelocity(ste);
         }
-    }
+		// jesli prędkość drogowa
+		else if ((ste.iFlags & spRoadVel) && (ste.fDist < 0))
+		{
+			TableCheckRoadVelocity(ste);
+		}
+		// jeśli koniec manewrów
+		else if (ste.iFlags & spOutsideStation)
+		{
+			TableCheckOutsideStation(ste, fVelDes, fDist, fNext, fAcc);
+		}
+		// koniec sprawdzania tabelki, teraz warunki zmiany zapisów
+		// na początek przepisanie prędkości i odległości z tabelki
+		v = ste.fVelNext; // odczyt prędkości do zmiennej pomocniczej
+		d = ste.fDist; // odczyt odległości do zmiennej pomocniczej (nie ma znaczenia, że v = -1)
 
-//#endif
+		if ((mvOccupied->CategoryFlag & 1) ?
+			ste.fDist > pVehicles[0]->fTrackBlock - 20.0 :
+		false) // jak sygnał jest dalej niż zawalidroga
+		{
+			v = 0.0; // to może być podany dla tamtego: jechać tak, jakby tam stop był
+			d = pVehicles[0]->fTrackBlock - 20.0;
+		}
+		else
+		{ // zawalidrogi nie ma (albo pojazd jest samochodem), sprawdzić sygnał
+			if (ste.iFlags & spShuntSemaphor) // jeśli Tm - w zasadzie to sprawdzić komendę!
+			{ // jeśli podana prędkość manewrowa
+				if ((OrderCurrentGet() & Obey_train) ? v == 0.0 : false)
+				{ // jeśli tryb pociągowy a tarcze ma ShuntVelocity 0 0
+					v = -1; // ignorować, chyba że prędkość stanie się niezerowa
+					if (ste.iFlags & spElapsed) // a jak przejechana
+						ste.iFlags = 0; // to można usunąć, bo podstawowy automat usuwa tylko niezerowe
+				}
+				else if (go == cm_Unknown) // jeśli jeszcze nie ma komendy
+					if (v != 0.0) // komenda jest tylko gdy ma jechać, bo stoi na podstawie tabelki
+					{ // jeśli nie było komendy wcześniej - pierwsza się liczy - ustawianie VelSignal
+						go = cm_ShuntVelocity; // w trybie pociągowym tylko jeśli włącza tryb manewrowy (v!=0.0)
+						if (VelSignal == 0.0)
+							VelSignal = v; // aby stojący ruszył
+						if (ste.fDist < 0.0) // jeśli przejechany
+						{
+							VelSignal = v; //!!! ustawienie, gdy przejechany jest lepsze niż wcale, ale to jeszcze nie to
+							ste.iFlags = 0; // to można usunąć (nie mogą być usuwane w skanowaniu)
+						}
+					}
+			}
+			else if (!(ste.iFlags & spSectionVel) && (go == cm_Unknown)) //jeśli jakiś event pasywny ale nie ograniczenie
+				// jeśli nie było komendy wcześniej - pierwsza się liczy
+				// - ustawianie VelSignal
+				if (v < 0.0 ? true : v >= 1.0) // bo wartość 0.1 służy do hamowania tylko
+				{
+					go = cm_SetVelocity; // może odjechać
+											// Ra 2014-06: (VelSignal) nie może być tu ustawiane, bo semafor może
+											// być daleko
+											// VelSignal=v; //nie do końca tak, to jest druga prędkość; -1 nie
+											// wpisywać...
+					if (VelSignal == 0.0)
+						VelSignal = -1.0; // aby stojący ruszył
+					if (ste.fDist < 0.0) // jeśli przejechany
+					{
+						VelSignal = (v != 0 ? -1.0 : 0.0);
+						// ustawienie, gdy przejechany jest lepsze niż
+						// wcale, ale to jeszcze nie to
+						if ((ste.evEvent != eSignSkip) ?
+							true :
+							(ste.fVelNext != 0.0)) // ale inny niż ten, na którym minięto S1, chyba że się już zmieniło
+							iDrivigFlags &= ~moveVisibility; // sygnał zezwalający na jazdę wyłącza jazdę na widoczność (S1 na SBL)
+						// usunąć jeśli nie jest ograniczeniem prędkości
+						ste.iFlags = 0; // to można usunąć (nie mogą być usuwane w skanowaniu)
+					}
+				}
+				else if (ste.evEvent->StopCommand())
+				{ // jeśli prędkość jest zerowa, a komórka zawiera komendę
+					eSignNext = ste.evEvent; // dla informacji
+					if (iDrivigFlags &
+						moveStopHere) // jeśli ma stać, dostaje komendę od razu
+						go = cm_Command; // komenda z komórki, do wykonania po zatrzymaniu
+					else if (ste.fDist <= 20.0) // jeśli ma dociągnąć, to niech dociąga (moveStopCloser dotyczy dociągania do W4, nie semafora)
+						go = cm_Command; // komenda z komórki, do wykonania po zatrzymaniu
+				}
+		} // jeśli nie ma zawalidrogi
+		if ((ste.iFlags & spElapsed) ? false : d > 0.0) // sygnał lub ograniczenie z przodu (+32=przejechane)
+		{ // 2014-02: jeśli stoi, a ma do przejechania kawałek, to niech jedzie
+			if ((mvOccupied->Vel == 0.0) ?
+				((ste.iFlags &
+				(spEnabled | spPassengerStopPoint)) ==
+					(spEnabled | spPassengerStopPoint)) &&
+					(d > fMaxProximityDist) :
+				false)
+				a = (iDrivigFlags & moveStopCloser) ? fAcc : 0.0; // ma podjechać bliżej - czy na pewno w tym miejscu taki warunek?
+			else
+			{
+				a = (v * v - mvOccupied->Vel * mvOccupied->Vel) /
+					(25.92 * d); // przyspieszenie: ujemne, gdy trzeba hamować
+				if (d < fMinProximityDist) // jak jest już blisko
+					if (v < fVelDes)
+						fVelDes = v; // ograniczenie aktualnej prędkości
+			}
+		}
+		else // event trzyma tylko jeśli VelNext=0, nawet po przejechaniu (nie powinno
+			 // dotyczyć samochodów?)
+			a = (v == 0.0 ? -1.0 : fAcc); // ruszanie albo hamowanie
+		if (a < fAcc && v == Min0RSpeed(v, fNext))
+		{ // mniejsze przyspieszenie to mniejsza możliwość rozpędzenia się albo konieczność
+		  // hamowania
+		  // jeśli droga wolna, to może być a>1.0 i się tu nie załapuje
+		  // if (mvOccupied->Vel>10.0)
+			fAcc = a; // zalecane przyspieszenie (nie musi być uwzględniane przez AI)
+			fNext = v; // istotna jest prędkość na końcu tego odcinka
+			fDist = d; // dlugość odcinka
+		}
+		else if ((fAcc > 0) && (v > 0) && (v <= fNext))
+		{ // jeśli nie ma wskazań do hamowania, można podać drogę i prędkość na jej końcu
+			fNext = v; // istotna jest prędkość na końcu tego odcinka
+			fDist = d; // dlugość odcinka (kolejne pozycje mogą wydłużać drogę, jeśli
+					   // prędkość jest stała)
+		}
+		if (fNext >= 0.0)
+		{ // jeśli ograniczenie
+			if (ste.iFlags & spEnabled) // tylko sygnał przypisujemy
+				if (!eSignNext) // jeśli jeszcze nic nie zapisane tam
+					eSignNext = ste.evEvent; // dla informacji
+		}
+	}
+
+#endif
     
 
 
     if (VelSignalLast >= 0.0 && !(iDrivigFlags & (moveSemaphorFound | moveSwitchFound)) &&
         (OrderCurrentGet() & Obey_train))
 			VelSignalLast = -1.0; // jeśli mieliśmy ograniczenie z semafora i nie ma przed nami
+								  // nastepnego semafora albo zwrotnicy to uznajemy, że mijamy W5
 
 	if (VelSignalLast >= 0.0) //analiza spisanych z tabelki ograniczeń i nadpisanie aktualnego
-        fVelDes = Min0R(fVelDes, VelSignalLast);
+        fVelDes = Min0RSpeed(fVelDes, VelSignalLast);
     if (VelLimitLast >= 0.0)
-        fVelDes = Min0R(fVelDes, VelLimitLast);
+        fVelDes = Min0RSpeed(fVelDes, VelLimitLast);
     if (VelRoad >= 0.0)
-        fVelDes = Min0R(fVelDes, VelRoad);
-	// nastepnego semafora albo zwrotnicy to uznajemy, że mijamy W5
-    FirstSemaphorDist = d_to_next_sem; // przepisanie znalezionej wartosci do zmiennej
+        fVelDes = Min0RSpeed(fVelDes, VelRoad);
     return go;
 };
 
@@ -2007,7 +2254,7 @@ TController::TController(bool AI, TDynamicObject *NewControll, bool InitPsyche, 
     TableClear(); // to ma służyć za konstruktor czy jak? GF 02.2017
 
     if( WriteLogFlag ) {
-        mkdir( "physicslog\\" );
+        _mkdir( "physicslog\\" );
         LogFile.open( string( "physicslog\\" + VehicleName + ".dat" ).c_str(),
             std::ios::in | std::ios::out | std::ios::trunc );
 #if LOGPRESS == 0
@@ -4322,7 +4569,7 @@ bool TController::UpdateSituation(double dt)
         case Change_direction | Connect: // zmiana kierunku podczas podłączania
             if (OrderList[OrderPos] != Obey_train) // spokojne manewry
             {
-                VelSignal = Global::Min0RSpeed(VelSignal, 40); // jeśli manewry, to ograniczamy prędkość
+                VelSignal = Min0RSpeed(VelSignal, 40); // jeśli manewry, to ograniczamy prędkość
                 if (AIControllFlag)
                 { // to poniżej tylko dla AI
                     if (iVehicleCount >= 0) // jeśli jest co odczepić
@@ -4456,7 +4703,7 @@ bool TController::UpdateSituation(double dt)
                 // następnie ograniczana
                 if (TrainParams) // jeśli ma rozkład
                     if (TrainParams->TTVmax > 0.0) // i ograniczenie w rozkładzie
-                        VelDesired = Global::Min0RSpeed(VelDesired,
+                        VelDesired = Min0RSpeed(VelDesired,
                                            TrainParams->TTVmax); // to nie przekraczać rozkladowej
                 SetDriverPsyche(); // ustawia AccPreferred (potrzebne tu?)
                 // Ra: odczyt (ActualProximityDist), (VelNext) i (AccPreferred) z tabelki prędkosci
@@ -4665,22 +4912,22 @@ bool TController::UpdateSituation(double dt)
                 // else if (VelSignal<0)
                 // VelDesired=fVelMax; //ile fabryka dala (Ra: uwzględione wagony)
                 else if (VelSignal >= 0) // jeśli skład był zatrzymany na początku i teraz już może jechać
-                    VelDesired = Global::Min0RSpeed(VelDesired, VelSignal);
+                    VelDesired = Min0RSpeed(VelDesired, VelSignal);
 
                 if (mvOccupied->RunningTrack.Velmax >=
                     0) // ograniczenie prędkości z trajektorii ruchu
                     VelDesired =
-                        Global::Min0RSpeed(VelDesired,
+                        Min0RSpeed(VelDesired,
                         mvOccupied->RunningTrack.Velmax); // uwaga na ograniczenia szlakowej!
                 if (VelforDriver >= 0) // tu jest zero przy zmianie kierunku jazdy
-                    VelDesired = Global::Min0RSpeed(VelDesired, VelforDriver); // Ra: tu może być 40, jeśli
+                    VelDesired = Min0RSpeed(VelDesired, VelforDriver); // Ra: tu może być 40, jeśli
                 // mechanik nie ma znajomości
                 // szlaaku, albo kierowca jeździ
                 // 70
                 if (TrainParams)
                     if (TrainParams->CheckTrainLatency() < 5.0)
                         if (TrainParams->TTVmax > 0.0)
-                            VelDesired = Global::Min0RSpeed(
+                            VelDesired = Min0RSpeed(
                                 VelDesired,
                                 TrainParams
                                     ->TTVmax); // jesli nie spozniony to nie przekraczać rozkladowej
@@ -5887,14 +6134,29 @@ void TController::ControllingSet()
     mvControlling = pVehicle->ControlledFind()->MoverParameters; // poszukiwanie członu sterowanego
 };
 
-std::string TController::TableText(int i)
+std::vector<std::string> TController::TableGetTextForTrakcs()
 { // pozycja tabelki prędkości
+#ifdef USE_OLD_SPEEDTABLE
     i = (iFirst + i) % iSpeedTableSize; // numer pozycji
     if (i != iLast) // w (iLast) znajduje się kolejny tor do przeskanowania, ale nie jest ona
         // aktywną
         return sSpeedTable[i].TableText();
     return ""; // wskaźnik końca
+#else
+	std::vector<std::string> vec;
+	for (auto &stt : speedTableTracks)
+		vec.push_back(stt.TableText());
+	return vec;
+#endif
 };
+
+std::vector<std::string> TController::TableGetTextForSigns()
+{
+	std::vector<std::string> vec;
+	for (auto &ste : speedTableSigns)
+		vec.push_back(ste.TableText());
+	return vec;
+}
 
 int TController::CrossRoute(TTrack *tr)
 { // zwraca numer segmentu dla skrzyżowania (tr)

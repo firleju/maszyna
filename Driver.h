@@ -173,7 +173,7 @@ class TController
   private: // obsługa tabelki prędkości (musi mieć możliwość odhaczania stacji w rozkładzie)
     TSpeedPos *sSpeedTable = nullptr; // najbliższe zmiany prędkości
     std::deque<TSpeedPos> speedTableTracks; //tabelka ograniczeń predkości dla torów
-    std::list<TSpeedPos> speedTableSigns; //tabelka ograniczeń prędkości dla wskaźników11
+    std::list<TSpeedPos> speedTableSigns; //tabelka ograniczeń prędkości dla wskaźników
     int iSpeedTableSize = 16; // wielkość tabelki
     int iFirst = 0; // aktualna pozycja w tabeli (modulo iSpeedTableSize)
     int iLast = 0; // ostatnia wypełniona pozycja w tabeli <iFirst (modulo iSpeedTableSize)
@@ -369,8 +369,11 @@ class TController
     void TableClear();
     void TableTraceRoute(double fDistance, TDynamicObject *pVehicle = NULL);
     void TableCheckForChanges(double fDistance);
-    void TableCheckStopPoint(TSpeedPos &ste, double &fVelDes, double &fDist, double &fNext, double &fAcc);
-    void TableCheckSemaphor(TSpeedPos &ste, double &fVelDes, double &fDist, double &fNext, double &fAcc);
+	void TableCheckStopPoint(TSpeedPos & ste, double & fVelDes, double & fDist, double & fNext, double & fAcc, TCommandType & go);
+	void TableCheckSemaphor(TSpeedPos &ste, double &fVelDes, double &fDist, double &fNext, double &fAcc);
+	void TableCheckRoadVelocity(TSpeedPos &ste);
+	void TableCheckSectionVelocity(TSpeedPos &ste);
+	void TableCheckOutsideStation(TSpeedPos &ste, double &fVelDes, double &fDist, double &fNext, double &fAcc);
     TCommandType TableUpdate(double &fVelDes, double &fDist, double &fNext, double &fAcc);
     //void TablePurger();
     inline double MoveDistanceGet()
@@ -415,7 +418,8 @@ class TController
     };
     void MoveTo(TDynamicObject *to);
     void DirectionInitial();
-    std::string TableText(int i);
+    std::vector<std::string> TableGetTextForTrakcs();
+	std::vector<std::string> TableGetTextForSigns();
     int CrossRoute(TTrack *tr);
     void RouteSwitch(int d);
     std::string OwnerName();
