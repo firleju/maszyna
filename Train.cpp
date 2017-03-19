@@ -508,7 +508,7 @@ void TTrain::OnKeyDown(int cKey)
                 }
             }
         }
-        else if (cKey == Global::Keys[k_StLinOff])
+        else if ((cKey == Global::Keys[k_StLinOff]) && (!Global::shiftState) && (!Global::ctrlState)) // shift&ctrl are used for light dimming
         {
             if (mvControlled->TrainType == dt_EZT)
             {
@@ -1792,21 +1792,18 @@ if
                 { // tryb freefly
                     int CouplNr = -1; // normalnie żaden ze sprzęgów
                     TDynamicObject *tmp;
-                    tmp = DynamicObject->ABuScanNearestObject(DynamicObject->GetTrack(), 1, 1500,
-                                                              CouplNr);
-                    if (tmp == NULL)
-                        tmp = DynamicObject->ABuScanNearestObject(DynamicObject->GetTrack(), -1,
-                                                                  1500, CouplNr);
-                    if (tmp && (CouplNr != -1))
+                    tmp = DynamicObject->ABuScanNearestObject(DynamicObject->GetTrack(), 1, 1500, CouplNr);
+                    if (tmp == nullptr)
+                        tmp = DynamicObject->ABuScanNearestObject(DynamicObject->GetTrack(), -1, 1500, CouplNr);
+                    if( ( CouplNr != -1 )
+                     && ( tmp != nullptr )
+                     && ( tmp->MoverParameters->Couplers[ CouplNr ].Connected != nullptr ) )
                     {
-                        if (tmp->MoverParameters->Couplers[CouplNr].CouplingFlag ==
-                            0) // najpierw hak
+                        if (tmp->MoverParameters->Couplers[CouplNr].CouplingFlag == 0) // najpierw hak
                         {
-                            if ((tmp->MoverParameters->Couplers[CouplNr]
-                                     .Connected->Couplers[CouplNr]
-                                     .AllowedFlag &
-                                 tmp->MoverParameters->Couplers[CouplNr].AllowedFlag &
-                                 ctrain_coupler) == ctrain_coupler)
+                            if ((tmp->MoverParameters->Couplers[CouplNr].Connected->Couplers[CouplNr].AllowedFlag
+                                & tmp->MoverParameters->Couplers[CouplNr].AllowedFlag
+                                & ctrain_coupler) == ctrain_coupler)
                                 if (tmp->MoverParameters->Attach(
                                         CouplNr, 2,
                                         tmp->MoverParameters->Couplers[CouplNr].Connected,
@@ -1815,46 +1812,37 @@ if
                                     // tmp->MoverParameters->Couplers[CouplNr].Render=true;
                                     // //podłączony sprzęg będzie widoczny
                                     if (DynamicObject->Mechanik) // na wszelki wypadek
-                                        DynamicObject->Mechanik->CheckVehicles(
-                                            Connect); // aktualizacja flag kierunku w składzie
+                                        DynamicObject->Mechanik->CheckVehicles(Connect); // aktualizacja flag kierunku w składzie
                                     dsbCouplerAttach->SetVolume(DSBVOLUME_MAX);
                                     dsbCouplerAttach->Play(0, 0, 0);
                                 }
                                 else
                                     WriteLog("Mechanical coupling failed.");
                         }
-                        else if (!TestFlag(tmp->MoverParameters->Couplers[CouplNr].CouplingFlag,
-                                           ctrain_pneumatic)) // pneumatyka
+                        else if (!TestFlag(tmp->MoverParameters->Couplers[CouplNr].CouplingFlag, ctrain_pneumatic)) // pneumatyka
                         {
-                            if ((tmp->MoverParameters->Couplers[CouplNr]
-                                     .Connected->Couplers[CouplNr]
-                                     .AllowedFlag &
-                                 tmp->MoverParameters->Couplers[CouplNr].AllowedFlag &
-                                 ctrain_pneumatic) == ctrain_pneumatic)
+                            if ((tmp->MoverParameters->Couplers[CouplNr].Connected->Couplers[CouplNr].AllowedFlag
+                                & tmp->MoverParameters->Couplers[CouplNr].AllowedFlag
+                                & ctrain_pneumatic) == ctrain_pneumatic)
                                 if (tmp->MoverParameters->Attach(
                                         CouplNr, 2,
                                         tmp->MoverParameters->Couplers[CouplNr].Connected,
-                                        tmp->MoverParameters->Couplers[CouplNr].CouplingFlag +
-                                            ctrain_pneumatic))
+                                        tmp->MoverParameters->Couplers[CouplNr].CouplingFlag + ctrain_pneumatic))
                                 {
                                     rsHiss.Play(1, DSBPLAY_LOOPING, true, tmp->GetPosition());
                                     DynamicObject->SetPneumatic(CouplNr != 0, true); // Ra: to mi się nie podoba !!!!
                                     tmp->SetPneumatic(CouplNr != 0, true);
                                 }
                         }
-                        else if (!TestFlag(tmp->MoverParameters->Couplers[CouplNr].CouplingFlag,
-                                           ctrain_scndpneumatic)) // zasilajacy
+                        else if (!TestFlag(tmp->MoverParameters->Couplers[CouplNr].CouplingFlag, ctrain_scndpneumatic)) // zasilajacy
                         {
-                            if ((tmp->MoverParameters->Couplers[CouplNr]
-                                     .Connected->Couplers[CouplNr]
-                                     .AllowedFlag &
-                                 tmp->MoverParameters->Couplers[CouplNr].AllowedFlag &
-                                 ctrain_scndpneumatic) == ctrain_scndpneumatic)
+                            if ((tmp->MoverParameters->Couplers[CouplNr].Connected->Couplers[CouplNr].AllowedFlag
+                                & tmp->MoverParameters->Couplers[CouplNr].AllowedFlag
+                                & ctrain_scndpneumatic) == ctrain_scndpneumatic)
                                 if (tmp->MoverParameters->Attach(
                                         CouplNr, 2,
                                         tmp->MoverParameters->Couplers[CouplNr].Connected,
-                                        tmp->MoverParameters->Couplers[CouplNr].CouplingFlag +
-                                            ctrain_scndpneumatic))
+                                        tmp->MoverParameters->Couplers[CouplNr].CouplingFlag + ctrain_scndpneumatic))
                                 {
                                     //              rsHiss.Play(1,DSBPLAY_LOOPING,true,tmp->GetPosition());
                                     dsbCouplerDetach->SetVolume(DSBVOLUME_MAX);
@@ -1863,8 +1851,7 @@ if
                                     tmp->SetPneumatic(CouplNr != 0, false);
                                 }
                         }
-                        else if (!TestFlag(tmp->MoverParameters->Couplers[CouplNr].CouplingFlag,
-                                           ctrain_controll)) // ukrotnionko
+                        else if (!TestFlag(tmp->MoverParameters->Couplers[CouplNr].CouplingFlag, ctrain_controll)) // ukrotnionko
                         {
                             if ((tmp->MoverParameters->Couplers[CouplNr]
                                      .Connected->Couplers[CouplNr]
@@ -2352,7 +2339,7 @@ if
                 }
             }
         }
-        else if (cKey == Global::Keys[k_StLinOff]) // Winger 110904: wylacznik st.
+        else if ((cKey == Global::Keys[k_StLinOff]) && (!Global::shiftState) && (!Global::ctrlState)) // Winger 110904: wylacznik st.
         // liniowych
         {
             if ((mvControlled->TrainType != dt_EZT) && (mvControlled->TrainType != dt_EP05) &&
@@ -2481,6 +2468,29 @@ if
                 ++iRadioChannel; // 0=wyłączony
         }
     }
+
+    // TODO: break the mess above into individual command-based routines.
+    // TODO: test for modifiers inside the routines, instead of grouping by the modifier
+    // TODO: do away with the modifier tests, each command should be separate and issued by input processor(s) up the chain
+    if( cKey == Global::Keys[ k_DimHeadlights ] ) {
+        // headlight strength toggle
+        if( !Global::ctrlState ) {
+            // switch uses either ctrl, or ctrl+shift, so we can bail early here
+            return;
+        }
+        if( DynamicObject->DimHeadlights && (!Global::shiftState)) {
+            DynamicObject->DimHeadlights = false;
+            // switch sound
+            dsbSwitch->SetVolume( DSBVOLUME_MAX );
+            dsbSwitch->Play( 0, 0, 0 );
+        }
+        else if( (!DynamicObject->DimHeadlights) && (Global::shiftState)) {
+            DynamicObject->DimHeadlights = true;
+            // switch sound
+            dsbSwitch->SetVolume( DSBVOLUME_MAX );
+            dsbSwitch->Play( 0, 0, 0 );
+        }
+    }
 }
 
 void TTrain::OnKeyUp(int cKey)
@@ -2490,7 +2500,7 @@ void TTrain::OnKeyUp(int cKey)
     }
     else
     {
-        if (cKey == Global::Keys[k_StLinOff]) // Winger 110904: wylacznik st. liniowych
+        if ((cKey == Global::Keys[k_StLinOff]) && (!Global::shiftState) && (!Global::ctrlState)) // Winger 110904: wylacznik st. liniowych
         { // zwolnienie klawisza daje powrót przycisku do zwykłego stanu
             if ((mvControlled->TrainType != dt_EZT) && (mvControlled->TrainType != dt_EP05) &&
                 (mvControlled->TrainType != dt_ET40))
@@ -2675,10 +2685,9 @@ bool TTrain::Update( double const Deltatime )
            iSekunda=floor(GlobalTime->mr);
           }
         */
-        // Ra 2014-09: napięcia i prądy muszą być ustalone najpierw, bo wysyłane są
-        // ewentualnie na
-        // PoKeys
-		if ((mvControlled->EngineType != DieselElectric) && (mvControlled->EngineType != ElectricInductionMotor)) // Ra 2014-09: czy taki rozdzia? ma sens?
+        // Ra 2014-09: napięcia i prądy muszą być ustalone najpierw, bo wysyłane są ewentualnie na PoKeys
+		if ((mvControlled->EngineType != DieselElectric)
+         && (mvControlled->EngineType != ElectricInductionMotor)) // Ra 2014-09: czy taki rozdzia? ma sens?
 			fHVoltage = mvControlled->RunningTraction.TractionVoltage; // Winger czy to nie jest zle?
         // *mvControlled->Mains);
         else
@@ -3890,41 +3899,6 @@ bool TTrain::Update( double const Deltatime )
             ggLeftEndLightButton.PutValue(0);
         }
 
-        //---------
-        // hunter-101211: poprawka na zle obracajace sie przelaczniki
-        /*
-        if (((DynamicObject->iLights[0]&1)==1)
-         ||((DynamicObject->iLights[1]&1)==1))
-           ggLeftLightButton.PutValue(1);
-        if (((DynamicObject->iLights[0]&16)==16)
-         ||((DynamicObject->iLights[1]&16)==16))
-           ggRightLightButton.PutValue(1);
-        if (((DynamicObject->iLights[0]&4)==4)
-         ||((DynamicObject->iLights[1]&4)==4))
-           ggUpperLightButton.PutValue(1);
-
-        if (((DynamicObject->iLights[0]&2)==2)
-         ||((DynamicObject->iLights[1]&2)==2))
-           if (ggLeftEndLightButton.SubModel)
-           {
-              ggLeftEndLightButton.PutValue(1);
-              ggLeftLightButton.PutValue(0);
-           }
-           else
-              ggLeftLightButton.PutValue(-1);
-
-        if (((DynamicObject->iLights[0]&32)==32)
-         ||((DynamicObject->iLights[1]&32)==32))
-           if (ggRightEndLightButton.SubModel)
-           {
-              ggRightEndLightButton.PutValue(1);
-              ggRightLightButton.PutValue(0);
-           }
-           else
-              ggRightLightButton.PutValue(-1);
-         */
-
-        //--------------
         // hunter-230112
 
         // REFLEKTOR LEWY
@@ -4061,6 +4035,11 @@ bool TTrain::Update( double const Deltatime )
         {
             ggLightsButton.PutValue(mvOccupied->LightsPos - 1);
             ggLightsButton.Update();
+        }
+        if( ggDimHeadlightsButton.SubModel ) {
+        
+            ggDimHeadlightsButton.PutValue( DynamicObject->DimHeadlights ? 1.0 : 0.0 );
+            ggDimHeadlightsButton.Update();
         }
 
         //---------
@@ -5868,6 +5847,7 @@ void TTrain::clear_cab_controls()
     ggLeftLightButton.Clear();
     ggRightLightButton.Clear();
     ggUpperLightButton.Clear();
+    ggDimHeadlightsButton.Clear();
     ggLeftEndLightButton.Clear();
     ggRightEndLightButton.Clear();
     ggLightsButton.Clear();
@@ -6272,7 +6252,11 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         // swiatlo
         ggRightLightButton.Load(Parser, DynamicObject->mdKabina);
     }
-    else if (Label == "leftend_sw:")
+    else if( Label == "dimheadlights_sw:" ) {
+        // swiatlo
+        ggDimHeadlightsButton.Load( Parser, DynamicObject->mdKabina );
+    }
+    else if( Label == "leftend_sw:" )
     {
         // swiatlo
         ggLeftEndLightButton.Load(Parser, DynamicObject->mdKabina);

@@ -2615,6 +2615,20 @@ void TTrack::EnvironmentSet()
             break;
         }
     }
+#else
+    switch( eEnvironment ) {
+        case e_canyon: {
+            Global::DayLight.apply_intensity( 0.5f );
+            break;
+        }
+        case e_tunnel: {
+            Global::DayLight.apply_intensity( 0.2f );
+            break;
+        }
+        default: {
+            break;
+        }
+    }
 #endif
 };
 
@@ -2629,6 +2643,17 @@ void TTrack::EnvironmentReset()
         glLightfv(GL_LIGHT0, GL_AMBIENT, Global::ambientDayLight);
         glLightfv(GL_LIGHT0, GL_DIFFUSE, Global::diffuseDayLight);
         glLightfv(GL_LIGHT0, GL_SPECULAR, Global::specularDayLight);
+    }
+#else
+    switch( eEnvironment ) {
+        case e_canyon:
+        case e_tunnel: {
+            Global::DayLight.apply_intensity();
+            break;
+        }
+        default: {
+            break;
+        }
     }
 #endif
 };
@@ -2645,7 +2670,11 @@ void TTrack::RenderDyn()
 #else
     for( auto dynamic : Dynamics ) {
         // sam sprawdza, czy VBO; zmienia kontekst VBO!
+#ifdef EU07_USE_OLD_RENDERCODE
         dynamic->Render();
+#else
+        GfxRenderer.Render( dynamic );
+#endif
     }
 #endif
 };
@@ -2662,7 +2691,11 @@ void TTrack::RenderDynAlpha()
 #else
     for( auto dynamic : Dynamics ) {
         // sam sprawdza, czy VBO; zmienia kontekst VBO!
+#ifdef EU07_USE_OLD_RENDERCODE
         dynamic->RenderAlpha();
+#else
+        GfxRenderer.Render_Alpha( dynamic );
+#endif
     }
 #endif
 };
