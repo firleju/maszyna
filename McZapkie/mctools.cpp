@@ -36,36 +36,14 @@ bool FreeFlyModeFlag = false;
 //    return swy;
 //} /*=Ups=*/
 
-int Max0(int x1, int x2)
+inline int Max0(int x1, int x2)
 {
-    if (x1 > x2)
-        return x1;
-    else
-        return x2;
+	return std::max(x1, x2);
 }
 
-int Min0(int x1, int x2)
+inline int Min0(int x1, int x2)
 {
-    if (x1 < x2)
-        return x1;
-    else
-        return x2;
-}
-
-double Max0R(double x1, double x2)
-{
-    if (x1 > x2)
-        return x1;
-    else
-        return x2;
-}
-
-double Min0R(double x1, double x2)
-{
-    if (x1 < x2)
-        return x1;
-    else
-        return x2;
+	return std::min(x1, x2);
 }
 
 // shitty replacement for Borland timestamp function

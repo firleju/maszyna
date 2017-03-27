@@ -12,4 +12,5 @@ AllowShortIfStatementsOnASingleLine: false
 AllowShortFunctionsOnASingleLine: Empty
 ColumnLimit: 100
 SortIncludes: false
+ReflowComments: false
 ---

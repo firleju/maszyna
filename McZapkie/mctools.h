@@ -49,8 +49,28 @@ typedef unsigned long/*?*//*set of: char */ TableChar;  /*MCTUTIL*/
 int Max0(int x1, int x2);
 int Min0(int x1, int x2);
 
-double Max0R(double x1, double x2);
-double Min0R(double x1, double x2);
+inline double Max0R(double x1, double x2)
+{
+	return std::max(x1, x2);
+}
+
+inline double Min0R(double x1, double x2)
+{
+	return std::min(x1, x2);
+}
+
+inline double Min0RSpeed(double vel1, double vel2)
+{ // rozszerzenie funkcji Min0R o wartości -1.0
+	if (vel1 == -1.0)
+	{
+		vel1 = std::numeric_limits<double>::max();
+	}
+	if (vel2 == -1.0)
+	{
+		vel2 = std::numeric_limits<double>::max();
+	}
+	return Min0R(vel1, vel2);
+}
 
 inline int Sign(int x)
 {

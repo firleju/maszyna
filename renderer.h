@@ -18,7 +18,7 @@ http://mozilla.org/MPL/2.0/.
 
 struct opengl_light {
 
-    GLuint id{ (GLuint)-1 };
+    GLuint id{ static_cast<GLuint>(-1) };
     Math3D::vector3 direction;
     GLfloat position[ 4 ]; // 4th parameter specifies directional(0) or omni-directional(1) light source
     GLfloat ambient[ 4 ];
@@ -63,9 +63,9 @@ struct opengl_light {
     inline
     void set_position( Math3D::vector3 const &Position ) {
 
-        position[ 0 ] = Position.x;
-        position[ 1 ] = Position.y;
-        position[ 2 ] = Position.z;
+        position[ 0 ] = (GLfloat)Position.x;
+        position[ 1 ] = (GLfloat)Position.y;
+        position[ 2 ] = (GLfloat)Position.z;
     }
 };
 

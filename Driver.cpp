@@ -434,7 +434,7 @@ std::string TSpeedPos::TableText()
     //{ // o ile pozycja istotna
 	// nieistotnych pozycji nie ma już w tabelce gdyz je usuwam
 		return "Dist:" + to_string(fDist, 1, 6) +
-               ", Vel:" + (fVelNext == -1.0 ? "  *" : to_string(static_cast<int>(fVelNext), 0, 3)) + 
+               ", Vel:" + (fVelNext == -1.0 ? "   " : to_string(static_cast<int>(fVelNext), 0, 3)) + 
 			   ", Name:" + GetName();
     //}
     //return "Empty";
@@ -610,7 +610,7 @@ void TController::TableTraceRoute(double fDistance, TDynamicObject *pVehicle)
         // skład ma długość
         // potrzebuję odłegłość od od czoła składu do dalszego punku toru na którym stoi ostatni wagon
         fCurrentDistance = -fLength - fTrackLength + pVehicle->GetLength(); // aktualna odległość ma być ujemna gdyż jesteśmy na końcu składu
-        speedTableTracks.emplace_back(TSpeedPos(pTrack, fCurrentDistance, fLastDir > 0 ? spEnabled : (spEnabled | spReverse)));
+        speedTableTracks.emplace_back(TSpeedPos(pTrack, fCurrentDistance, fLastDir > 0 ? spEnabled : (spEnabled | spReverse))); // pierwszy tor
         pEvent = CheckTrackEvent(fLastDir, pTrack);
         if (TableEventNotExistIn(pEvent))
             speedTableSigns.emplace_back(TSpeedPos(pEvent, GetDistanceToEvent(pTrack, pEvent, fLastDir, fCurrentDistance), OrderCurrentGet()));
@@ -863,7 +863,7 @@ void TController::TableCheckForChanges(double fDistance)
                 speedTableTracks.pop_back();
             }
             // usuwamy wszystkie wskaźniki dalsze niż ta zwrotnica
-            for (std::list<TSpeedPos>::iterator it = speedTableSigns.begin(); it != speedTableSigns.end();)
+            for (std::vector<TSpeedPos>::iterator it = speedTableSigns.begin(); it != speedTableSigns.end();)
             {
                 if (it->fDist > stt.fDist)
                     it = speedTableSigns.erase(it);
@@ -877,11 +877,24 @@ void TController::TableCheckForChanges(double fDistance)
     // uwzględniamy przejechaną odległość na elementach pozostałych po kasowaniu
     for (auto &stt : speedTableTracks)
         stt.UpdateDistance(MoveDistanceGet());
-	for (auto &ste : speedTableSigns)
-	{
-		ste.UpdateEventStatus();
-		ste.UpdateDistance(MoveDistanceGet());
+
+    speedTableTracks.erase(std::remove_if(speedTableTracks.begin(), speedTableTracks.end(),
+        [&](TSpeedPos sp) {return ((sp.fDist < -fLength) // jeśli minięty przez pociąg
+        || ((sp.trTrack->VelocityGet() != 0.0) // brak zatrzymania
+            && (sp.trTrack->iAction == 0) // jeśli tor nie ma własności istotne dla skanowania
+            && (sp.trTrack->VelocityGet() == fLastVel)) // nie następuje zmiana prędkości
+        && (sp.trTrack != speedTableTracks.back().trTrack)); }), speedTableTracks.end());
+
+    for (auto &ste : speedTableSigns)
+    { // aktualizacja odległości i stanu
+        ste.UpdateEventStatus();
+        ste.UpdateDistance(MoveDistanceGet());
 	}
+
+    speedTableSigns.erase(std::remove_if(speedTableSigns.begin(), speedTableSigns.end(),
+                                            [&](TSpeedPos sp) { return sp.fDist < 0; }),
+                            speedTableSigns.end());
+
     MoveDistanceReset(); // resetujemy licznik przejechanej odległości
 
     // trasujemy brakującą cześć trasy
@@ -6144,6 +6157,7 @@ std::vector<std::string> TController::TableGetTextForTrakcs()
     return ""; // wskaźnik końca
 #else
 	std::vector<std::string> vec;
+    vec.reserve(speedTableTracks.size());
 	for (auto &stt : speedTableTracks)
 		vec.push_back(stt.TableText());
 	return vec;
@@ -6153,6 +6167,7 @@ std::vector<std::string> TController::TableGetTextForTrakcs()
 std::vector<std::string> TController::TableGetTextForSigns()
 {
 	std::vector<std::string> vec;
+    vec.reserve(speedTableSigns.size());
 	for (auto &ste : speedTableSigns)
 		vec.push_back(ste.TableText());
 	return vec;

@@ -172,8 +172,8 @@ class TController
 {
   private: // obsługa tabelki prędkości (musi mieć możliwość odhaczania stacji w rozkładzie)
     TSpeedPos *sSpeedTable = nullptr; // najbliższe zmiany prędkości
-    std::deque<TSpeedPos> speedTableTracks; //tabelka ograniczeń predkości dla torów
-    std::list<TSpeedPos> speedTableSigns; //tabelka ograniczeń prędkości dla wskaźników
+    std::vector<TSpeedPos> speedTableTracks; //tabelka ograniczeń predkości dla torów
+    std::vector<TSpeedPos> speedTableSigns; //tabelka ograniczeń prędkości dla wskaźników
     int iSpeedTableSize = 16; // wielkość tabelki
     int iFirst = 0; // aktualna pozycja w tabeli (modulo iSpeedTableSize)
     int iLast = 0; // ostatnia wypełniona pozycja w tabeli <iFirst (modulo iSpeedTableSize)
