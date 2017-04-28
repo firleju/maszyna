@@ -2131,6 +2131,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 		  // hamowania
 		  // jeśli droga wolna, to może być a>1.0 i się tu nie załapuje
 		  // if (mvOccupied->Vel>10.0)
+            eSignNext = ste.evEvent;
 			fAcc = a; // zalecane przyspieszenie (nie musi być uwzględniane przez AI)
 			fNext = v; // istotna jest prędkość na końcu tego odcinka
 			fDist = d; // dlugość odcinka
@@ -2141,12 +2142,12 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 			fDist = d; // dlugość odcinka (kolejne pozycje mogą wydłużać drogę, jeśli
 					   // prędkość jest stała)
 		}
-		if (fNext >= 0.0)
-		{ // jeśli ograniczenie
-			if (ste.iFlags & spEnabled) // tylko sygnał przypisujemy
-				if (!eSignNext) // jeśli jeszcze nic nie zapisane tam
-					eSignNext = ste.evEvent; // dla informacji
-		}
+		//if (fNext >= 0.0)
+		//{ // jeśli ograniczenie
+		//	if (ste.iFlags & spEnabled) // tylko sygnał przypisujemy
+		//		if (!eSignNext) // jeśli jeszcze nic nie zapisane tam
+		//			eSignNext = ste.evEvent; // dla informacji
+		//}
 	}
 
 #endif
