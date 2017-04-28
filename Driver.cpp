@@ -349,7 +349,7 @@ bool TSpeedPos::UpdateTrackStatus()
     fVelNext = trTrack->VelocityGet(); // aktualizacja prędkości (może być zmieniana
                                        // eventem)
 	if (fDist < 0)
-		iFlags ^= spElapsed;
+		iFlags |= spElapsed;
     int i;
     if ((i = iFlags & 0xF0000000) != 0)
     { // jeśli skrzyżowanie, ograniczyć prędkość przy skręcaniu
@@ -866,7 +866,13 @@ void TController::TableCheckForChanges(double fDistance)
             for (std::vector<TSpeedPos>::iterator it = speedTableSigns.begin(); it != speedTableSigns.end();)
             {
                 if (it->fDist > stt.fDist)
+                {
+                    if (it->evEvent == sSemNext->evEvent)
+                        sSemNext = nullptr;
+                    if (it->evEvent == sSemNextStop->evEvent)
+                        sSemNextStop = nullptr;
                     it = speedTableSigns.erase(it);
+                }
                 else
                     it++;
             }
@@ -879,7 +885,7 @@ void TController::TableCheckForChanges(double fDistance)
         stt.UpdateDistance(MoveDistanceGet());
 
     speedTableTracks.erase(std::remove_if(speedTableTracks.begin(), speedTableTracks.end(),
-        [&](TSpeedPos sp) {return ((sp.fDist < -fLength) // jeśli minięty przez pociąg
+        [&](TSpeedPos sp) {return (((sp.iFlags & spEnabled) == 0 ) // jeśli minięty przez pociąg
         || ((sp.trTrack->VelocityGet() != 0.0) // brak zatrzymania
             && (sp.trTrack->iAction == 0) // jeśli tor nie ma własności istotne dla skanowania
             && (sp.trTrack->VelocityGet() == fLastVel)) // nie następuje zmiana prędkości
@@ -892,7 +898,7 @@ void TController::TableCheckForChanges(double fDistance)
 	}
 
     speedTableSigns.erase(std::remove_if(speedTableSigns.begin(), speedTableSigns.end(),
-                                            [&](TSpeedPos sp) { return sp.fDist < 0; }),
+                                            [&](TSpeedPos sp) { return (sp.iFlags & spEnabled) == 0; }),
                             speedTableSigns.end());
 
     MoveDistanceReset(); // resetujemy licznik przejechanej odległości
@@ -1013,7 +1019,8 @@ void TController::TableCheckStopPoint(TSpeedPos &ste, double & fVelDes, double &
             asNextStop = TrainParams->NextStop();
         }
         else if (ste.fDist < -fLength) // jeśli został przejechany (całość pociągu)
-            ste.iFlags &= ~spEnabled; // to można usunąć (nie mogą być usuwane w skanowaniu)
+            ste.iFlags = 0; // to można usunąć (nie mogą być usuwane w skanowaniu)
+        ste.fVelNext = -1; //ustawienie prędkości na max, bo omijamy
         return; // ignorowanie jakby nie było tej pozycji
     }
     else if (iDrivigFlags & moveStopPoint) // uwzględnia zatrzymanie na W4 (wyłączone podczas zmiany czoła)
@@ -1388,7 +1395,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
     double d; // droga
 	double d_to_next_sem = 10000.0; //ustaiwamy na pewno dalej niż widzi AI
     TCommandType go = cm_Unknown;
-    eSignNext = NULL;
+    eSignNext = nullptr;
     iDrivigFlags &= ~(moveTrackEnd | moveSwitchFound | moveSemaphorFound |
                       moveSpeedLimitFound); // te flagi są ustawiane tutaj, w razie potrzeby
 #ifdef USE_OLD_SPEEDTABLE
@@ -1976,10 +1983,10 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
         else
         { // mieięty tor ogranicza prędkość, dopóki cały skład nie przejedzie,
           // d=fLength+d; //zamiana na długość liczoną do przodu
-            if (v >= 1.0) // EU06 się zawieszało po dojechaniu na koniec toru postojowego
+            //if (v >= 1.0) // EU06 się zawieszało po dojechaniu na koniec toru postojowego
                 if ((d + stt.trTrack->Length()) < -fLength)
                 {
-                    stt.iFlags &= spEnabled; // wyłączenie, jeśli już wyjechał za ten odcinek
+                    stt.iFlags = 0; // wyłączenie, jeśli już wyjechał za ten odcinek
                     continue;
                 }
             if (v < fVelDes)
@@ -2046,7 +2053,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 			{ // jeśli podana prędkość manewrowa
 				if ((OrderCurrentGet() & Obey_train) ? v == 0.0 : false)
 				{ // jeśli tryb pociągowy a tarcze ma ShuntVelocity 0 0
-					v = -1; // ignorować, chyba że prędkość stanie się niezerowa
+					    v = -1; // ignorować, chyba że prędkość stanie się niezerowa
 					if (ste.iFlags & spElapsed) // a jak przejechana
 						ste.iFlags = 0; // to można usunąć, bo podstawowy automat usuwa tylko niezerowe
 				}
