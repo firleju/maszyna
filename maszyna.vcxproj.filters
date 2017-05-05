@@ -210,16 +210,16 @@
     <ClCompile Include="openglmatrixstack.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="moon.cpp">
+    <ClCompile Include="command.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="gamepadinput.cpp">
-      <Filter>Source Files\input</Filter>
+      <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="keyboardinput.cpp">
-      <Filter>Source Files\input</Filter>
+      <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="command.cpp">
+    <ClCompile Include="moon.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -422,14 +422,14 @@
     <ClInclude Include="moon.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="command.h">
+    <ClInclude Include="keyboardinput.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="keyboardinput.h">
-      <Filter>Header Files\input</Filter>
-    </ClInclude>
     <ClInclude Include="gamepadinput.h">
-      <Filter>Header Files\input</Filter>
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="command.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
