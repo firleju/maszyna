@@ -950,69 +950,15 @@ double ABuAcos(const vector3 &calc_temp)
     return atan2(-calc_temp.x, calc_temp.z); // Ra: tak prościej
 }
 
-TDynamicObject * TDynamicObject::ABuFindNearestObject(TTrack *Track,
-                                                                TDynamicObject *MyPointer,
-                                                                int &CouplNr)
-{ // zwraca wskaznik do obiektu znajdujacego sie na torze
-    // (Track), którego sprzęg jest najblizszy
-    // kamerze
+TDynamicObject * TDynamicObject::ABuFindNearestObject(TTrack *Track, TDynamicObject *MyPointer, int &CouplNr)
+{
+    // zwraca wskaznik do obiektu znajdujacego sie na torze (Track), którego sprzęg jest najblizszy kamerze
     // służy np. do łączenia i rozpinania sprzęgów
     // WE: Track      - tor, na ktorym odbywa sie poszukiwanie
     //    MyPointer  - wskaznik do obiektu szukajacego
     // WY: CouplNr    - który sprzęg znalezionego obiektu jest bliższy kamerze
 
     // Uwaga! Jesli CouplNr==-2 to szukamy njblizszego obiektu, a nie sprzegu!!!
-
-#ifdef EU07_USE_OLD_TTRACK_DYNAMICS_ARRAY
-    if ((Track->iNumDynamics) > 0)
-    { // o ile w ogóle jest co przeglądać na tym torze
-        // vector3 poz; //pozycja pojazdu XYZ w scenerii
-        // vector3 kon; //wektor czoła względem środka pojazdu wzglęem początku toru
-        vector3 tmp; // wektor pomiędzy kamerą i sprzęgiem
-        double dist; // odległość
-        for (int i = 0; i < Track->iNumDynamics; i++)
-        {
-            if (CouplNr == -2)
-            { // wektor [kamera-obiekt] - poszukiwanie obiektu
-                tmp = Global::GetCameraPosition() - Track->Dynamics[i]->vPosition;
-                dist = tmp.x * tmp.x + tmp.y * tmp.y + tmp.z * tmp.z; // odległość do kwadratu
-                if (dist < 100.0) // 10 metrów
-                    return Track->Dynamics[i];
-            }
-            else // jeśli (CouplNr) inne niz -2, szukamy sprzęgu
-            { // wektor [kamera-sprzeg0], potem [kamera-sprzeg1]
-                // Powinno byc wyliczone, ale nie zaszkodzi drugi raz:
-                //(bo co, jesli nie wykonuje sie obrotow wozkow?) - Ra: ale zawsze są
-                // liczone
-                // współrzędne sprzęgów
-                // Track->Dynamics[i]->modelRot.z=ABuAcos(Track->Dynamics[i]->Axle0.pPosition-Track->Dynamics[i]->Axle1.pPosition);
-                // poz=Track->Dynamics[i]->vPosition; //pozycja środka pojazdu
-                // kon=vector3( //położenie przodu względem środka
-                // -((0.5*Track->Dynamics[i]->MoverParameters->Dim.L)*sin(Track->Dynamics[i]->modelRot.z)),
-                // 0, //yyy... jeśli duże pochylenie i długi pojazd, to może być problem
-                // +((0.5*Track->Dynamics[i]->MoverParameters->Dim.L)*cos(Track->Dynamics[i]->modelRot.z))
-                //);
-                tmp =
-                    Global::GetCameraPosition() -
-                    Track->Dynamics[i]->vCoulpler[0]; // Ra: pozycje sprzęgów też są zawsze liczone
-                dist = tmp.x * tmp.x + tmp.y * tmp.y + tmp.z * tmp.z; // odległość do kwadratu
-                if (dist < 25.0) // 5 metrów
-                {
-                    CouplNr = 0;
-                    return Track->Dynamics[i];
-                }
-                tmp = Global::GetCameraPosition() - Track->Dynamics[i]->vCoulpler[1];
-                dist = tmp.x * tmp.x + tmp.y * tmp.y + tmp.z * tmp.z; // odległość do kwadratu
-                if (dist < 25.0) // 5 metrów
-                {
-                    CouplNr = 1;
-                    return Track->Dynamics[i];
-                }
-            }
-        }
-        return NULL;
-    }
-#else
     for( auto dynamic : Track->Dynamics ) {
 
         if( CouplNr == -2 ) {
@@ -1038,14 +984,10 @@ TDynamicObject * TDynamicObject::ABuFindNearestObject(TTrack *Track,
     }
     // empty track or nothing found
     return nullptr;
-#endif
 }
 
-TDynamicObject * TDynamicObject::ABuScanNearestObject(TTrack *Track, double ScanDir,
-                                                                double ScanDist, int &CouplNr)
-{ // skanowanie toru w poszukiwaniu obiektu najblizszego
-    // kamerze
-    // double MyScanDir=ScanDir;  //Moja orientacja na torze.  //Ra: nie używane
+TDynamicObject * TDynamicObject::ABuScanNearestObject(TTrack *Track, double ScanDir, double ScanDist, int &CouplNr)
+{ // skanowanie toru w poszukiwaniu obiektu najblizszego kamerze
     if (ABuGetDirection() < 0)
         ScanDir = -ScanDir;
     TDynamicObject *FoundedObj;
@@ -1160,21 +1102,13 @@ TDynamicObject * TDynamicObject::ABuFindObject(TTrack *Track, int ScanDir,
 
     // WY: wskaznik do znalezionego obiektu.
     //    CouplFound - nr sprzegu znalezionego obiektu
-#ifdef EU07_USE_OLD_TTRACK_DYNAMICS_ARRAY
-    if (Track->iNumDynamics > 0)
-#else
     if( false == Track->Dynamics.empty() )
-#endif
     { // sens szukania na tym torze jest tylko, gdy są na nim pojazdy
         double MyTranslation; // pozycja szukającego na torze
         double MinDist = Track->Length(); // najmniejsza znaleziona odleglość
         // (zaczynamy od długości toru)
         double TestDist; // robocza odległość od kolejnych pojazdów na danym odcinku
-#ifdef EU07_USE_OLD_TTRACK_DYNAMICS_ARRAY
-        int iMinDist = -1; // indeks wykrytego obiektu
-#else
         TDynamicObject *collider = nullptr;
-#endif
         // if (Track->iNumDynamics>1)
         // iMinDist+=0; //tymczasowo pułapka
         if (MyTrack == Track) // gdy szukanie na tym samym torze
@@ -1186,54 +1120,6 @@ TDynamicObject * TDynamicObject::ABuFindObject(TTrack *Track, int ScanDir,
             MyTranslation = MinDist; // szukanie w kierunku Point1 (do zera) - jesteśmy w Point2
         if (ScanDir >= 0)
         { // jeśli szukanie w kierunku Point2
-#ifdef EU07_USE_OLD_TTRACK_DYNAMICS_ARRAY
-            for( int i = 0; i < Track->iNumDynamics; i++ )
-            { // pętla po pojazdach
-                if (Track->Dynamics[i] != this) // szukający się nie liczy
-                {
-                    TestDist = (Track->Dynamics[i]->RaTranslationGet()) -
-                               MyTranslation; // odległogłość tamtego od szukającego
-                    if ((TestDist > 0) && (TestDist <= MinDist))
-                    { // gdy jest po właściwej stronie i bliżej
-                        // niż jakiś wcześniejszy
-                        CouplFound = (Track->Dynamics[i]->RaDirectionGet() > 0) ?
-                                         1 :
-                                         0; // to, bo (ScanDir>=0)
-                        if (Track->iCategoryFlag & 254) // trajektoria innego typu niż tor kolejowy
-                        { // dla torów nie ma sensu tego sprawdzać, rzadko co jedzie po
-                            // jednej
-                            // szynie i się mija
-                            // Ra: mijanie samochodów wcale nie jest proste
-                            // Przesuniecie wzgledne pojazdow. Wyznaczane, zeby sprawdzic,
-                            // czy pojazdy faktycznie sie zderzaja (moga byc przesuniete
-                            // w/m siebie tak, ze nie zachodza na siebie i wtedy sie mijaja).
-                            double RelOffsetH; // wzajemna odległość poprzeczna
-                            if (CouplFound) // my na tym torze byśmy byli w kierunku Point2
-                                // dla CouplFound=1 są zwroty zgodne - istotna różnica
-                                // przesunięć
-                                RelOffsetH = (MoverParameters->OffsetTrackH -
-                                              Track->Dynamics[i]->MoverParameters->OffsetTrackH);
-                            else
-                                // dla CouplFound=0 są zwroty przeciwne - przesunięcia sumują
-                                // się
-                                RelOffsetH = (MoverParameters->OffsetTrackH +
-                                              Track->Dynamics[i]->MoverParameters->OffsetTrackH);
-                            if (RelOffsetH < 0)
-                                RelOffsetH = -RelOffsetH;
-                            if (RelOffsetH + RelOffsetH >
-                                MoverParameters->Dim.W + Track->Dynamics[i]->MoverParameters->Dim.W)
-                                continue; // odległość większa od połowy sumy szerokości -
-                            // kolizji
-                            // nie będzie
-                            // jeśli zahaczenie jest niewielkie, a jest miejsce na poboczu, to
-                            // zjechać na pobocze
-                        }
-                        iMinDist = i; // potencjalna kolizja
-                        MinDist = TestDist; // odleglość pomiędzy aktywnymi osiami pojazdów
-                    }
-                }
-            }
-#else
             for( auto dynamic : Track->Dynamics ) {
                 // pętla po pojazdach
                 if( dynamic == this ) {
@@ -1277,56 +1163,9 @@ TDynamicObject * TDynamicObject::ABuFindObject(TTrack *Track, int ScanDir,
                 }
                 
             }
-#endif
         }
         else //(ScanDir<0)
         {
-#ifdef EU07_USE_OLD_TTRACK_DYNAMICS_ARRAY
-            for( int i = 0; i < Track->iNumDynamics; i++ )
-            {
-                if (Track->Dynamics[i] != this)
-                {
-                    TestDist = MyTranslation -
-                               (Track->Dynamics[i]->RaTranslationGet()); //???-przesunięcie wózka
-                    // względem Point1 toru
-                    if ((TestDist > 0) && (TestDist < MinDist))
-                    {
-                        CouplFound = (Track->Dynamics[i]->RaDirectionGet() > 0) ?
-                                         0 :
-                                         1; // odwrotnie, bo (ScanDir<0)
-                        if (Track->iCategoryFlag & 254) // trajektoria innego typu niż tor kolejowy
-                        { // dla torów nie ma sensu tego sprawdzać, rzadko co jedzie po
-                            // jednej
-                            // szynie i się mija
-                            // Ra: mijanie samochodów wcale nie jest proste
-                            // Przesunięcie względne pojazdów. Wyznaczane, żeby sprawdzić,
-                            // czy pojazdy faktycznie się zderzają (mogą być przesunięte
-                            // w/m siebie tak, że nie zachodzą na siebie i wtedy sie mijają).
-                            double RelOffsetH; // wzajemna odległość poprzeczna
-                            if (CouplFound) // my na tym torze byśmy byli w kierunku Point1
-                                // dla CouplFound=1 są zwroty zgodne - istotna różnica
-                                // przesunięć
-                                RelOffsetH = (MoverParameters->OffsetTrackH -
-                                              Track->Dynamics[i]->MoverParameters->OffsetTrackH);
-                            else
-                                // dla CouplFound=0 są zwroty przeciwne - przesunięcia sumują
-                                // się
-                                RelOffsetH = (MoverParameters->OffsetTrackH +
-                                              Track->Dynamics[i]->MoverParameters->OffsetTrackH);
-                            if (RelOffsetH < 0)
-                                RelOffsetH = -RelOffsetH;
-                            if (RelOffsetH + RelOffsetH >
-                                MoverParameters->Dim.W + Track->Dynamics[i]->MoverParameters->Dim.W)
-                                continue; // odległość większa od połowy sumy szerokości -
-                            // kolizji
-                            // nie będzie
-                        }
-                        iMinDist = i; // potencjalna kolizja
-                        MinDist = TestDist; // odleglość pomiędzy aktywnymi osiami pojazdów
-                    }
-                }
-            }
-#else
             for( auto dynamic : Track->Dynamics ) {
 
                 if( dynamic == this ) { continue; }
@@ -1362,14 +1201,9 @@ TDynamicObject * TDynamicObject::ABuFindObject(TTrack *Track, int ScanDir,
                     MinDist = TestDist; // odleglość pomiędzy aktywnymi osiami pojazdów
                 }
             }
-#endif
         }
         dist += MinDist; // doliczenie odległości przeszkody albo długości odcinka do przeskanowanej odległości
-#ifdef EU07_USE_OLD_TTRACK_DYNAMICS_ARRAY
-        return ( iMinDist >= 0 ) ? Track->Dynamics[ iMinDist ] : NULL;
-#else
         return collider;
-#endif
     }
     dist += Track->Length(); // doliczenie długości odcinka do przeskanowanej
     // odległości
@@ -2451,19 +2285,18 @@ void TDynamicObject::AttachPrev(TDynamicObject *Object, int iType)
         Object->NextConnected = this; // on ma nas z tyłu
         Object->NextConnectedNo = iDirection;
     }
+/*
+    // NOTE: this appears unnecessary and only messes things for the programmable lights function, which walks along
+    // whole trainset and expects each module to point to its own lights. Disabled, TBD, TODO: test for side-effects and delete if there's none
     if (MoverParameters->TrainType & dt_EZT) // w przypadku łączenia członów,
-        // światła w rozrządczym zależą od
-        // stanu w silnikowym
-        if (MoverParameters->Couplers[iDirection].AllowedFlag &
-            ctrain_depot) // gdy sprzęgi łączone warsztatowo (powiedzmy)
-            if ((MoverParameters->Power < 1.0) &&
-                (Object->MoverParameters->Power > 1.0)) // my nie mamy mocy, ale ten drugi ma
-                iLights = Object->MoverParameters->iLights; // to w tym z mocą będą światła
-            // załączane, a w tym bez tylko widoczne
+        // światła w rozrządczym zależą od stanu w silnikowym
+        if (MoverParameters->Couplers[iDirection].AllowedFlag & ctrain_depot) // gdy sprzęgi łączone warsztatowo (powiedzmy)
+            if ((MoverParameters->Power < 1.0) && (Object->MoverParameters->Power > 1.0)) // my nie mamy mocy, ale ten drugi ma
+                iLights = Object->MoverParameters->iLights; // to w tym z mocą będą światła załączane, a w tym bez tylko widoczne
             else if ((MoverParameters->Power > 1.0) &&
                      (Object->MoverParameters->Power < 1.0)) // my mamy moc, ale ten drugi nie ma
-                Object->iLights = MoverParameters->iLights; // to w tym z mocą będą światła
-    // załączane, a w tym bez tylko widoczne
+                Object->iLights = MoverParameters->iLights; // to w tym z mocą będą światła załączane, a w tym bez tylko widoczne
+*/
     return;
     // SetPneumatic(1,1); //Ra: to i tak się nie wykonywało po return
     // SetPneumatic(1,0);
@@ -3078,11 +2911,12 @@ bool TDynamicObject::Update(double dt, double dt1)
 
     // fragment "z EXE Kursa"
     if (MoverParameters->Mains) // nie wchodzić w funkcję bez potrzeby
-        if ((!MoverParameters->Battery) && (Controller == Humandriver) &&
-            (MoverParameters->EngineType != DieselEngine) &&
-            (MoverParameters->EngineType != WheelsDriven))
-        { // jeśli bateria wyłączona, a nie diesel ani drezyna
-            // reczna
+        if ( ( false == MoverParameters->Battery)
+          && ( false == MoverParameters->ConverterFlag ) // added alternative power source. TODO: more generic power check
+          && ( Controller == Humandriver)
+          && ( MoverParameters->EngineType != DieselEngine )
+          && ( MoverParameters->EngineType != WheelsDriven ) )
+        { // jeśli bateria wyłączona, a nie diesel ani drezyna reczna
             if (MoverParameters->MainSwitch(false)) // wyłączyć zasilanie
                 MoverParameters->EventFlag = true;
         }
@@ -3457,8 +3291,7 @@ bool TDynamicObject::Update(double dt, double dt1)
             if (tmpTraction.TractionVoltage == 0)
             { // to coś wyłączało dźwięk silnika w ST43!
                 MoverParameters->ConverterFlag = false;
-                MoverParameters->CompressorFlag = false; // Ra: to jest wątpliwe - wyłączenie
-                // sprężarki powinno być w jednym miejscu!
+                MoverParameters->CompressorFlag = false; // Ra: to jest wątpliwe - wyłączenie sprężarki powinno być w jednym miejscu!
             }
         }
     }
@@ -4463,45 +4296,47 @@ void TDynamicObject::LoadMMediaFile(std::string BaseDir, std::string TypeName,
             }
 #else
             { // tekstura wymienna jest raczej jedynie w "dynamic\"
-                ReplacableSkin = Global::asCurrentTexturePath + ReplacableSkin; // skory tez z dynamic/...
-				std::string x = TextureTest(Global::asCurrentTexturePath + "nowhere"); // na razie prymitywnie
-				if (!x.empty())
-                    m_materialdata.replacable_skins[ 4 ] = GfxRenderer.GetTextureId( Global::asCurrentTexturePath + "nowhere", "", 9 );
+//                ReplacableSkin = Global::asCurrentTexturePath + ReplacableSkin; // skory tez z dynamic/...
+				std::string nowheretexture = TextureTest(Global::asCurrentTexturePath + "nowhere"); // na razie prymitywnie
+                if( false == nowheretexture.empty() ) {
+                    m_materialdata.replacable_skins[ 4 ] = GfxRenderer.GetTextureId( nowheretexture, "", 9 );
+                }
 
-                if (m_materialdata.multi_textures > 0)
-                { // jeśli model ma 4 tekstury
-                    m_materialdata.replacable_skins[ 1 ] = GfxRenderer.GetTextureId(
-                        ReplacableSkin + ",1", "", Global::iDynamicFiltering);
-                    if( m_materialdata.replacable_skins[ 1 ] )
-                    { // pierwsza z zestawu znaleziona
-                        m_materialdata.replacable_skins[ 2 ] = GfxRenderer.GetTextureId(
-                            ReplacableSkin + ",2", "", Global::iDynamicFiltering);
-                        if( m_materialdata.replacable_skins[ 2 ] )
-                        {
-                            m_materialdata.multi_textures = 2; // już są dwie
-                            m_materialdata.replacable_skins[ 3 ] = GfxRenderer.GetTextureId(
-                                ReplacableSkin + ",3", "", Global::iDynamicFiltering);
-                            if( m_materialdata.replacable_skins[ 3 ] )
-                            {
-                                m_materialdata.multi_textures = 3; // a teraz nawet trzy
-                                m_materialdata.replacable_skins[ 4 ] = GfxRenderer.GetTextureId(
-                                    ReplacableSkin + ",4", "", Global::iDynamicFiltering);
-                                if( m_materialdata.replacable_skins[ 4 ] )
-                                    m_materialdata.multi_textures = 4; // jak są cztery, to blokujemy podmianę tekstury
-                                // rozkładem
-                            }
+                if (m_materialdata.multi_textures > 0) {
+                    // jeśli model ma 4 tekstury
+                    // check for the pipe method first
+                    if( ReplacableSkin.find( '|' ) != std::string::npos ) {
+                        cParser nameparser( ReplacableSkin );
+                        nameparser.getTokens( 4, true, "|" );
+                        int skinindex = 0;
+                        std::string texturename; nameparser >> texturename;
+                        while( ( texturename != "" ) && ( skinindex < 4 ) ) {
+                            m_materialdata.replacable_skins[ skinindex + 1 ] = GfxRenderer.GetTextureId( Global::asCurrentTexturePath + texturename, "" );
+                            ++skinindex;
+                            texturename = ""; nameparser >> texturename;
                         }
+                        m_materialdata.multi_textures = skinindex;
                     }
-                    else
-                    { // zestaw nie zadziałał, próbujemy normanie
-                        m_materialdata.multi_textures = 0;
-                        m_materialdata.replacable_skins[ 1 ] = GfxRenderer.GetTextureId(
-                            ReplacableSkin, "", Global::iDynamicFiltering);
+                    else {
+                        // otherwise try the basic approach
+                        int skinindex = 0;
+                        do {
+                            texture_manager::size_type texture = GfxRenderer.GetTextureId( Global::asCurrentTexturePath + ReplacableSkin + "," + std::to_string( skinindex + 1 ), "", Global::iDynamicFiltering, true );
+                            if( false == GfxRenderer.Texture( texture ).is_ready ) {
+                                break;
+                            }
+                            m_materialdata.replacable_skins[ skinindex + 1 ] = texture;
+                            ++skinindex;
+                        } while( skinindex < 4 );
+                        m_materialdata.multi_textures = skinindex;
+                        if( m_materialdata.multi_textures == 0 ) {
+                            // zestaw nie zadziałał, próbujemy normanie
+                            m_materialdata.replacable_skins[ 1 ] = GfxRenderer.GetTextureId( Global::asCurrentTexturePath + ReplacableSkin, "", Global::iDynamicFiltering );
+                        }
                     }
                 }
                 else
-                    m_materialdata.replacable_skins[ 1 ] = GfxRenderer.GetTextureId(
-                        ReplacableSkin, "", Global::iDynamicFiltering);
+                    m_materialdata.replacable_skins[ 1 ] = GfxRenderer.GetTextureId( Global::asCurrentTexturePath + ReplacableSkin, "", Global::iDynamicFiltering );
                 if( GfxRenderer.Texture( m_materialdata.replacable_skins[ 1 ] ).has_alpha )
                     m_materialdata.textures_alpha = 0x31310031; // tekstura -1 z kanałem alfa - nie renderować w cyklu nieprzezroczystych
                 else

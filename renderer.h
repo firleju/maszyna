@@ -14,7 +14,7 @@ http://mozilla.org/MPL/2.0/.
 #include "lightarray.h"
 #include "dumb3d.h"
 #include "frustum.h"
-#include "ground.h"
+#include "world.h"
 
 struct opengl_light {
 
@@ -90,6 +90,9 @@ public:
 // methods:
     inline
     void
+        update_frustum() { m_frustum.calculate(); }
+    inline
+    void
         update_frustum(glm::mat4 &Projection, glm::mat4 &Modelview) { m_frustum.calculate(Projection, Modelview); }
     bool
         visible( bounding_area const &Area ) const;
@@ -113,7 +116,8 @@ public:
     // main draw call. returns false on error
     bool
         Render();
-#ifndef EU07_USE_OLD_RENDERCODE
+    bool
+        Render( world_environment *Environment );
     bool
         Render( TGround *Ground );
     bool
@@ -122,13 +126,16 @@ public:
         Render( TModel3d *Model, material_data const *Material, double const Squaredistance );
     bool
         Render( TModel3d *Model, material_data const *Material, Math3D::vector3 const &Position, Math3D::vector3 const &Angle );
+    void
+        Render( TSubModel *Submodel );
     bool
         Render_Alpha( TDynamicObject *Dynamic );
     bool
         Render_Alpha( TModel3d *Model, material_data const *Material, double const Squaredistance );
     bool
         Render_Alpha( TModel3d *Model, material_data const *Material, Math3D::vector3 const &Position, Math3D::vector3 const &Angle );
-#endif
+    void
+        Render_Alpha( TSubModel *Submodel );
     // maintenance jobs
     void
         Update( double const Deltatime);
@@ -173,7 +180,8 @@ private:
     typedef std::vector<opengl_light> opengllight_array;
 
 // methods
-    bool Init_caps();
+    bool
+        Init_caps();
     
 // members
     rendermode renderpass{ rendermode::color };
@@ -185,6 +193,9 @@ private:
     double m_updateaccumulator{ 0.0 };
     std::string m_debuginfo;
     GLFWwindow *m_window{ nullptr };
+    texture_manager::size_type m_glaretextureid{ -1 };
+    texture_manager::size_type m_suntextureid{ -1 };
+    texture_manager::size_type m_moontextureid{ -1 };
 };
 
 extern opengl_renderer GfxRenderer;

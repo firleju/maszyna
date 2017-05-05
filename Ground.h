@@ -178,11 +178,10 @@ class TGroundNode : public Resource
     void RenderDL(); // renderowanie nieprzezroczystych w Display Lists
     void RenderAlphaDL(); // renderowanie przezroczystych w Display Lists
     // (McZapkie-131202)
-/*
     void RaRenderVBO(); // renderowanie (nieprzezroczystych) ze wspólnego VBO
     void RenderVBO(); // renderowanie nieprzezroczystych z własnego VBO
     void RenderAlphaVBO(); // renderowanie przezroczystych z (własnego) VBO
-*/
+
 };
 
 struct bounding_area {
@@ -229,11 +228,9 @@ class TSubRect : public Resource, public CMesh
     void RaAnimate(); // przeliczenie animacji torów
     void RenderDL(); // renderowanie nieprzezroczystych w Display Lists
     void RenderAlphaDL(); // renderowanie przezroczystych w Display Lists
-/*
     // (McZapkie-131202)
     void RenderVBO(); // renderowanie nieprzezroczystych z własnego VBO
     void RenderAlphaVBO(); // renderowanie przezroczystych z (własnego) VBO
-*/
     void RenderSounds(); // dźwięki pojazdów z niewidocznych sektorów
 };
 
@@ -277,9 +274,7 @@ class TGroundRect : public TSubRect
                 pSubRects[i].Sort(); // optymalizacja obiektów w sektorach
     };
     void RenderDL();
-/*
     void RenderVBO();
-*/
 };
 
 class TGround
@@ -305,19 +300,11 @@ class TGround
     // TGroundNode *nLastOfType[TP_LAST]; //ostatnia
     TSubRect srGlobal; // zawiera obiekty globalne (na razie wyzwalacze czasowe)
     int hh = 0,
-        mm = 0,
-        srh = 0,
-        srm = 0,
-        ssh = 0,
-        ssm = 0; // ustawienia czasu
+        mm = 0; // ustawienia czasu
     // int tracks,tracksfar; //liczniki torów
-#ifdef EU07_USE_OLD_TNAMES_CLASS
-    TNames *sTracks = nullptr; // posortowane nazwy torów i eventów
-#else
     typedef std::unordered_map<std::string, TEvent *> event_map;
     event_map m_eventmap;
     TNames<TGroundNode *> m_trackmap;
-#endif
     light_array m_lights; // collection of dynamic light sources present in the scene
 
   private: // metody prywatne
@@ -368,10 +355,8 @@ class TGround
     bool Render( Math3D::vector3 const &Camera );
     bool RenderDL(vector3 pPosition);
     bool RenderAlphaDL(vector3 pPosition);
-/*
     bool RenderVBO(vector3 pPosition);
     bool RenderAlphaVBO(vector3 pPosition);
-*/
     bool CheckQuery();
     //    GetRect(double x, double z) { return
     //    &(Rects[int(x/fSubRectSize+fHalfNumRects)][int(z/fSubRectSize+fHalfNumRects)]); };

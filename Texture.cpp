@@ -66,6 +66,8 @@ opengl_texture::load() {
 fail:
     data_state = resource_state::failed;
     ErrorLog( "Failed to load texture \"" + name + "\"" );
+    // NOTE: temporary workaround for texture assignment errors
+    id = 0;
     return;
 }
 
@@ -252,6 +254,7 @@ opengl_texture::load_DDS() {
         data_width /= 2;
         data_height /= 2;
         --data_mapcount;
+        WriteLog( "Texture size exceeds specified limits, skipping mipmap level" );
     };
 
     if( data_mapcount <= 0 ) {
@@ -480,6 +483,14 @@ opengl_texture::load_TGA() {
         return;
     }
 
+    downsize( GL_BGRA );
+    if( ( data_width > Global::iMaxTextureSize ) || ( data_height > Global::iMaxTextureSize ) ) {
+        // for non-square textures there's currently possibility the scaling routine will have to abort
+        // before it gets all work done
+        data_state = resource_state::failed;
+        return;
+    }
+
     // TODO: add horizontal/vertical data flip, based on the descriptor (18th) header byte
 
     // fill remaining data info
@@ -572,9 +583,9 @@ opengl_texture::create() {
                 dataheight = std::max( dataheight / 2, 1 );
             }
             else {
-                // uncompressed texture data
+                // uncompressed texture data. have the gfx card do the compression as it sees fit
                 ::glTexImage2D(
-                    GL_TEXTURE_2D, 0, GL_RGBA8,
+                    GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA,
                     data_width, data_height, 0,
                     data_format, GL_UNSIGNED_BYTE, (GLubyte *)&data[ 0 ] );
             }
@@ -654,6 +665,32 @@ opengl_texture::set_filtering() {
         // regular texture sharpening
         ::glTexEnvf( GL_TEXTURE_FILTER_CONTROL, GL_TEXTURE_LOD_BIAS, -1.0 );
     }
+}
+
+void
+opengl_texture::downsize( GLuint const Format ) {
+
+    while( ( data_width > Global::iMaxTextureSize ) || ( data_height > Global::iMaxTextureSize ) ) {
+        // scale down the base texture, if it's larger than allowed maximum
+        // NOTE: scaling is uniform along both axes, meaning non-square textures can drop below the maximum
+        // TODO: replace with proper scaling function once we have image middleware in place
+        if( ( data_width < 2 ) || ( data_height < 2 ) ) {
+            // can't go any smaller
+            break;
+        }
+
+        WriteLog( "Texture size exceeds specified limits, downsampling data" );
+        switch( Format ) {
+
+            case GL_RGB:  { downsample< glm::tvec3<std::uint8_t> >( data_width, data_height, data.data() ); break; }
+            case GL_BGRA:
+            case GL_RGBA: { downsample< glm::tvec4<std::uint8_t> >( data_width, data_height, data.data() ); break; }
+            default:      { break; }
+        }
+        data_width /= 2;
+        data_height /= 2;
+        data.resize( data.size() / 4 ); // not strictly needed, but, eh
+    };
 }
 
 void
@@ -784,8 +821,9 @@ texture_manager::Bind( texture_manager::size_type const Id ) {
     // TODO: do binding in texture object, add support for other types
     if( Id != 0 ) {
 #ifndef EU07_DEFERRED_TEXTURE_UPLOAD
-        ::glBindTexture( GL_TEXTURE_2D, Id );
-        m_activetexture = 0;
+        // NOTE: we could bind dedicated 'error' texture here if the id isn't valid
+        ::glBindTexture( GL_TEXTURE_2D, Texture(Id).id );
+        m_activetexture = Texture(Id).id;
 #else
         if( Texture( Id ).bind() == resource_state::good ) {
             m_activetexture = Id;

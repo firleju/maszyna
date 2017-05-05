@@ -46,19 +46,19 @@ light_array::update() {
         // update light parameters to match current data of the owner
         if( light.index == 0 ) {
             // front light set
-            light.position = light.owner->GetPosition() + ( light.owner->VectorFront() * light.owner->GetLength() * 0.45 );
+            light.position = light.owner->GetPosition() + ( light.owner->VectorFront() * light.owner->GetLength() * 0.4 );
             light.direction = light.owner->VectorFront();
         }
         else {
             // rear light set
-            light.position = light.owner->GetPosition() - ( light.owner->VectorFront() * light.owner->GetLength() * 0.45 );
+            light.position = light.owner->GetPosition() - ( light.owner->VectorFront() * light.owner->GetLength() * 0.4 );
             light.direction = light.owner->VectorFront();
             light.direction.x = -light.direction.x;
             light.direction.z = -light.direction.z;
         }
         // determine intensity of this light set
-        if( true == light.owner->MoverParameters->Battery ) {
-            // with battery on, the intensity depends on the state of activated switches
+        if( ( true == light.owner->MoverParameters->Battery ) || ( true == light.owner->MoverParameters->ConverterFlag ) ) {
+            // with power on, the intensity depends on the state of activated switches
             auto const &lightbits = light.owner->iLights[ light.index ];
             light.count = 0 +
                 ( ( lightbits & 1 ) ? 1 : 0 ) +
@@ -73,16 +73,18 @@ light_array::update() {
             else {
                 light.intensity = 0.0f;
             }
-
+/*
             // crude catch for unmanned modules which share the light state with the controlled unit.
             // why don't they get their own light bits btw ._.
             // TODO, TBD: have separate light bits for each vehicle, so this override isn't necessary
+            // NOTE: should be no longer needed, test and delete if there's no ill effects
             if( ( light.owner->Controller == AIdriver )
              && ( light.owner->Mechanik == nullptr ) ) {
                 
                 light.intensity = 0.0f;
                 light.count = 0;
             }
+*/
         }
         else {
             // with battery off the lights are off

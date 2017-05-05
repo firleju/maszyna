@@ -49,19 +49,17 @@ bool Global::shiftState;
 bool Global::ctrlState;
 int Global::iCameraLast = -1;
 std::string Global::asRelease = "16.0.1172.482";
-std::string Global::asVersion =
-"Compilation 2017-01-10, release " + Global::asRelease + "."; // tutaj, bo wysyłany
+std::string Global::asVersion = "Compilation 2017-03-19, release " + Global::asRelease; // tutaj, bo wysyłany
+std::string Global::ExecutableName;
 int Global::iTextMode = 0; // tryb pracy wyświetlacza tekstowego
-int Global::iScreenMode[12] = {0, 0, 0, 0, 0, 0,
-                               0, 0, 0, 0, 0, 0}; // numer ekranu wyświetlacza tekstowego
+int Global::iScreenMode[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; // numer ekranu wyświetlacza tekstowego
 double Global::fSunDeclination = 0.0; // deklinacja Słońca
 double Global::fTimeAngleDeg = 0.0; // godzina w postaci kąta
 float Global::fClockAngleDeg[6]; // kąty obrotu cylindrów dla zegara cyfrowego
 std::string Global::szTexturesTGA = ".tga"; // lista tekstur od TGA
 std::string Global::szTexturesDDS = ".dds"; // lista tekstur od DDS
 int Global::iKeyLast = 0; // ostatnio naciśnięty klawisz w celu logowania
-GLuint Global::iTextureId = 0; // ostatnio użyta tekstura 2D
-int Global::iPause = 0x10; // globalna pauza ruchu
+int Global::iPause = 0; // 0x10; // globalna pauza ruchu
 bool Global::bActive = true; // czy jest aktywnym oknem
 int Global::iErorrCounter = 0; // licznik sprawdzań do śledzenia błędów OpenGL
 int Global::iTextures = 0; // licznik użytych tekstur
@@ -74,6 +72,7 @@ TDynamicObject *Global::pUserDynamic = NULL; // pojazd użytkownika, renderowany
 std::string Global::asTranscript[5]; // napisy na ekranie (widoczne)
 */
 TTranscripts Global::tranTexts; // obiekt obsługujący stenogramy dźwięków na ekranie
+float4 Global::UITextColor = float4( 225.0 / 255.0f, 225.0f / 255.0f, 225.0f / 255.0f, 1.0f );
 
 // parametry scenerii
 vector3 Global::pCameraPosition;
@@ -81,11 +80,12 @@ double Global::pCameraRotation;
 double Global::pCameraRotationDeg;
 std::vector<vector3> Global::FreeCameraInit;
 std::vector<vector3> Global::FreeCameraInitAngle;
-double Global::fFogStart = 1700;
-double Global::fFogEnd = 2000;
 float Global::Background[3] = {0.2f, 0.4f, 0.33f};
 GLfloat Global::AtmoColor[] = {0.423f, 0.702f, 1.0f};
 GLfloat Global::FogColor[] = {0.6f, 0.7f, 0.8f};
+double Global::fFogStart = 1700;
+double Global::fFogEnd = 2000;
+float Global::Overcast{ 0.1f }; // NOTE: all this weather stuff should be moved elsewhere
 #ifdef EU07_USE_OLD_LIGHTING_MODEL
 GLfloat Global::ambientDayLight[] = {0.40f, 0.40f, 0.45f, 1.0f}; // robocze
 GLfloat Global::diffuseDayLight[] = {0.55f, 0.54f, 0.50f, 1.0f};
@@ -107,6 +107,7 @@ int Global::iHiddenEvents = 1; // czy łączyć eventy z torami poprzez nazwę t
 
 // parametry użytkowe (jak komu pasuje)
 int Global::Keys[MaxKeys];
+bool Global::RealisticControlMode{ false };
 int Global::iWindowWidth = 800;
 int Global::iWindowHeight = 600;
 float Global::fDistanceFactor = Global::ScreenHeight / 768.0; // baza do przeliczania odległości dla LoD
@@ -140,10 +141,11 @@ int Global::iRailProFiltering = 5; // domyślne rozmywanie tekstur szyn
 int Global::iDynamicFiltering = 5; // domyślne rozmywanie tekstur pojazdów
 bool Global::bUseVBO = false; // czy jest VBO w karcie graficznej (czy użyć)
 std::string Global::LastGLError;
-GLint Global::iMaxTextureSize = 16384; // maksymalny rozmiar tekstury
+GLint Global::iMaxTextureSize = 4096; // maksymalny rozmiar tekstury
 bool Global::bSmoothTraction = false; // wygładzanie drutów starym sposobem
 std::string Global::szDefaultExt = Global::szTexturesDDS; // domyślnie od DDS
 int Global::iMultisampling = 2; // tryb antyaliasingu: 0=brak,1=2px,2=4px,3=8px,4=16px
+bool Global::DLFont{ false }; // switch indicating presence of basic font
 bool Global::bGlutFont = false; // czy tekst generowany przez GLUT32.DLL
 //int Global::iConvertModels = 7; // tworzenie plików binarnych, +2-optymalizacja transformów
 int Global::iConvertModels{ 0 }; // temporary override, to prevent generation of .e3d not compatible with old exe
@@ -165,6 +167,7 @@ bool Global::bOldSmudge = false; // Używanie starej smugi
 bool Global::bWireFrame = false;
 bool Global::bSoundEnabled = true;
 int Global::iWriteLogEnabled = 3; // maska bitowa: 1-zapis do pliku, 2-okienko, 4-nazwy torów
+bool Global::MultipleLogs{ false };
 bool Global::bManageNodes = true;
 bool Global::bDecompressDDS = false; // czy programowa dekompresja DDS
 
@@ -373,7 +376,11 @@ void Global::ConfigParse(cParser &Parser)
                 Global::iWriteLogEnabled = stol_def(token,3);
             }
         }
-        else if (token == "adjustscreenfreq")
+        else if( token == "multiplelogs" ) {
+            Parser.getTokens();
+            Parser >> Global::MultipleLogs;
+        }
+        else if( token == "adjustscreenfreq" )
         {
             // McZapkie-240403 - czestotliwosc odswiezania ekranu
             Parser.getTokens();
@@ -486,8 +493,6 @@ void Global::ConfigParse(cParser &Parser)
 
             Parser.getTokens();
             Parser >> Global::bUseVBO;
-            // NOTE: temporary override until render paths are sorted out
-            Global::bUseVBO = false;
         }
         else if (token == "feedbackmode")
         {
@@ -513,42 +518,15 @@ void Global::ConfigParse(cParser &Parser)
             Parser.getTokens(1, false);
             int size;
             Parser >> size;
-            if (size <= 64)
-            {
-                Global::iMaxTextureSize = 64;
-            }
-            else if (size <= 128)
-            {
-                Global::iMaxTextureSize = 128;
-            }
-            else if (size <= 256)
-            {
-                Global::iMaxTextureSize = 256;
-            }
-            else if (size <= 512)
-            {
-                Global::iMaxTextureSize = 512;
-            }
-            else if (size <= 1024)
-            {
-                Global::iMaxTextureSize = 1024;
-            }
-            else if (size <= 2048)
-            {
-                Global::iMaxTextureSize = 2048;
-            }
-            else if (size <= 4096)
-            {
-                Global::iMaxTextureSize = 4096;
-            }
-            else if (size <= 8192)
-            {
-                Global::iMaxTextureSize = 8192;
-            }
-            else
-            {
-                Global::iMaxTextureSize = 16384;
-            }
+                 if (size <= 64)   { Global::iMaxTextureSize = 64; }
+            else if (size <= 128)  { Global::iMaxTextureSize = 128; }
+            else if (size <= 256)  { Global::iMaxTextureSize = 256; }
+            else if (size <= 512)  { Global::iMaxTextureSize = 512; }
+            else if (size <= 1024) { Global::iMaxTextureSize = 1024; }
+            else if (size <= 2048) { Global::iMaxTextureSize = 2048; }
+            else if (size <= 4096) { Global::iMaxTextureSize = 4096; }
+            else if (size <= 8192) { Global::iMaxTextureSize = 8192; }
+            else                   { Global::iMaxTextureSize = 16384; }
         }
         else if (token == "doubleambient")
         {
@@ -682,7 +660,8 @@ void Global::ConfigParse(cParser &Parser)
                 in = 5; // na ostatni, bo i tak trzeba pominąć wartości
             }
             Parser.getTokens(4, false);
-            Parser >> Global::fCalibrateIn[in][0] // wyraz wolny
+            Parser
+                >> Global::fCalibrateIn[in][0] // wyraz wolny
                 >> Global::fCalibrateIn[in][1] // mnożnik
                 >> Global::fCalibrateIn[in][2] // mnożnik dla kwadratu
                 >> Global::fCalibrateIn[in][3]; // mnożnik dla sześcianu
@@ -796,6 +775,19 @@ void Global::ConfigParse(cParser &Parser)
             // domyślny język - http://tools.ietf.org/html/bcp47
             Parser.getTokens(1, false);
             Parser >> Global::asLang;
+        }
+        else if( token == "uitextcolor" ) {
+            // color of the ui text. NOTE: will be obsolete once the real ui is in place
+            Parser.getTokens( 3, false );
+            Parser
+                >> Global::UITextColor.x
+                >> Global::UITextColor.y
+                >> Global::UITextColor.z;
+            Global::UITextColor.x = clamp( Global::UITextColor.x, 0.0f, 255.0f );
+            Global::UITextColor.y = clamp( Global::UITextColor.y, 0.0f, 255.0f );
+            Global::UITextColor.z = clamp( Global::UITextColor.z, 0.0f, 255.0f );
+            Global::UITextColor = Global::UITextColor / 255.0f;
+            Global::UITextColor.w = 1.0f;
         }
         else if (token == "pyscreenrendererpriority")
         {
@@ -1066,14 +1058,6 @@ void Global::SetCameraRotation(double Yaw)
         pCameraRotation -= 2 * M_PI;
     pCameraRotationDeg = pCameraRotation * 180.0 / M_PI;
 }
-
-void Global::BindTexture(GLuint t)
-{ // ustawienie aktualnej tekstury, tylko gdy się zmienia
-    if (t != iTextureId)
-    {
-        iTextureId = t;
-    }
-};
 
 void Global::TrainDelete(TDynamicObject *d)
 { // usunięcie pojazdu prowadzonego przez użytkownika

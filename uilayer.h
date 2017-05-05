@@ -72,14 +72,13 @@ class ui_layer
     // draws a quad between coordinates x,y and z,w with uv-coordinates spanning 0-1
     void quad(float4 const &Coordinates, float4 const &Color);
 
-    // members:
-    GLuint m_fontbase{(GLuint)-1}; // numer DL dla znaków w napisach
-    float m_progress{0.0f}; // percentage of filled progres bar, to indicate lengthy operations.
-    float m_subtaskprogress{
-        0.0f}; // percentage of filled progres bar, to indicate lengthy operations.
-    texture_manager::size_type
-        m_background; // path to texture used as the background. size depends on mAspect.
-    std::vector<std::shared_ptr<ui_panel>> m_panels;
+
+// members:
+    GLuint m_fontbase{ static_cast<GLuint>(-1) }; // numer DL dla znakÃ³w w napisach
+    float m_progress{ 0.0f };                // percentage of filled progres bar, to indicate lengthy operations.
+    float m_subtaskprogress{ 0.0f };                // percentage of filled progres bar, to indicate lengthy operations.
+    texture_manager::size_type m_background; // path to texture used as the background. size depends on mAspect.
+    std::vector<std::shared_ptr<ui_panel> > m_panels;
 };
 
 extern ui_layer UILayer;

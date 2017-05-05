@@ -23,6 +23,8 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 
 #include "Globals.h"
 #include "Logs.h"
+#include "keyboardinput.h"
+#include "gamepadinput.h"
 #include "Console.h"
 #include "PyInt.h"
 #include "World.h"
@@ -32,8 +34,17 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #include "resource.h"
 #include "uilayer.h"
 
+#ifdef EU07_BUILD_STATIC
+#pragma comment( lib, "glfw3.lib" )
+#pragma comment( lib, "glew32s.lib" )
+#else
+#ifdef _WINDOWS
 #pragma comment( lib, "glfw3dll.lib" )
+#else
+#pragma comment( lib, "glfw3.lib" )
+#endif
 #pragma comment( lib, "glew32.lib" )
+#endif // build_static
 #pragma comment( lib, "opengl32.lib" )
 #pragma comment( lib, "glu32.lib" )
 #pragma comment( lib, "dsound.lib" )
@@ -50,6 +61,13 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #endif
 
 TWorld World;
+
+namespace input {
+
+keyboard_input Keyboard;
+gamepad_input Gamepad;
+
+}
 
 #ifdef CAN_I_HAS_LIBPNG
 void screenshot_save_thread( char *img )
@@ -104,12 +122,17 @@ void window_resize_callback(GLFWwindow *window, int w, int h)
 
 void cursor_pos_callback(GLFWwindow *window, double x, double y)
 {
+    input::Keyboard.mouse( x, y );
+#ifdef EU07_USE_OLD_COMMAND_SYSTEM
 	World.OnMouseMove(x * 0.005, y * 0.01);
+#endif
 	glfwSetCursorPos(window, 0.0, 0.0);
 }
 
 void key_callback( GLFWwindow *window, int key, int scancode, int action, int mods )
 {
+    input::Keyboard.key( key, action );
+
     Global::shiftState = ( mods & GLFW_MOD_SHIFT ) ? true : false;
     Global::ctrlState = ( mods & GLFW_MOD_CONTROL ) ? true : false;
 
@@ -135,49 +158,8 @@ void key_callback( GLFWwindow *window, int key, int scancode, int action, int mo
                 break;
             }
 #endif
-            case GLFW_KEY_ESCAPE: {
-/*                
-                if( ( DebugModeFlag ) //[Esc] pauzuje tylko bez Debugmode
-                 && ( Global::iPause == 0 ) ) { // but unpausing should work always
-                    
-                    break;
-                }
-*/
-                if( Global::iPause & 1 ) // jeśli pauza startowa
-                    Global::iPause &= ~1; // odpauzowanie, gdy po wczytaniu miało nie startować
-                else if( !( Global::iMultiplayer & 2 ) ) // w multiplayerze pauza nie ma sensu
-                    if( !Global::ctrlState ) // z [Ctrl] to radiostop jest
-                        Global::iPause ^= 2; // zmiana stanu zapauzowania
-                if( Global::iPause ) // jak pauza
-                    Global::iTextMode = GLFW_KEY_F1; // to wyświetlić zegar i informację
-                break;
-            }
-            case GLFW_KEY_F7:
-                if( DebugModeFlag ) {
-
-                    if( Global::ctrlState ) {
-                        // ctrl + f7 toggles static daylight
-                        World.ToggleDaylight();
-                        break;
-                    }
-                    // f7: wireframe toggle
-                    // siatki wyświetlane tyko w trybie testowym
-                    Global::bWireFrame = !Global::bWireFrame;
-                    if( true == Global::bWireFrame ) {
-                        glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
-                    }
-                    else {
-                        glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
-                    }
-                    ++Global::iReCompile; // odświeżyć siatki
-                    // Ra: jeszcze usunąć siatki ze skompilowanych obiektów!
-                }
-                break;
+            default: { break; }
         }
-    }
-    else if( action == GLFW_RELEASE )
-    {
-        World.OnKeyUp( key );
     }
 }
 
@@ -228,7 +210,11 @@ int main(int argc, char *argv[])
 	if (!glfwInit())
 		return -1;
 
-    DeleteFile("errors.txt");
+#ifdef _WINDOWS
+    DeleteFile( "log.txt" );
+    DeleteFile( "errors.txt" );
+    _mkdir("logs");
+#endif
     Global::LoadIniFile("eu07.ini");
     Global::InitKeys();
 
@@ -238,6 +224,12 @@ int main(int argc, char *argv[])
         AllocConsole();
         SetConsoleTextAttribute( GetStdHandle( STD_OUTPUT_HANDLE ), FOREGROUND_GREEN );
     }
+
+    std::string executable( argv[ 0 ] ); auto const pathend = executable.rfind( '\\' );
+    Global::ExecutableName =
+        ( pathend != std::string::npos ?
+            executable.substr( executable.rfind( '\\' ) + 1 ) :
+            executable );
 
 	for (int i = 1; i < argc; ++i)
 	{
@@ -349,6 +341,8 @@ int main(int argc, char *argv[])
 
         return -1;
     }
+    input::Keyboard.init();
+    input::Gamepad.init();
 
     Global::pWorld = &World; // Ra: wskaźnik potrzebny do usuwania pojazdów
     if (!World.Init(window))
@@ -358,9 +352,10 @@ int main(int argc, char *argv[])
     }
 
     Console *pConsole = new Console(); // Ra: nie wiem, czy ma to sens, ale jakoś zainicjowac trzeba
-
+/*
     if( !joyGetNumDevs() )
         WriteLog( "No joystick" );
+*/
     if( Global::iModifyTGA < 0 ) { // tylko modyfikacja TGA, bez uruchamiania symulacji
         Global::iMaxTextureSize = 64; //żeby nie zamulać pamięci
         World.ModifyTGA(); // rekurencyjne przeglądanie katalogów
@@ -377,7 +372,8 @@ int main(int argc, char *argv[])
             && World.Update()
             && GfxRenderer.Render())
         {
-			glfwPollEvents();
+            glfwPollEvents();
+            input::Gamepad.poll();
         }
         Console::Off(); // wyłączenie konsoli (komunikacji zwrotnej)
     }
@@ -387,5 +383,6 @@ int main(int argc, char *argv[])
 
 	glfwDestroyWindow(window);
 	glfwTerminate();
+
 	return 0;
 }

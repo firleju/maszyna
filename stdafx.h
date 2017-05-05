@@ -25,6 +25,7 @@
 #include <shlobj.h>
 #undef NOMINMAX
 #include <dbghelp.h>
+#include <direct.h>
 #endif
 // stl
 #include <cstdlib>
@@ -62,10 +63,20 @@
 #include <condition_variable>
 #include <typeinfo>
 
+#ifdef NDEBUG
+#define EU07_BUILD_STATIC
+#endif
+
+#ifdef EU07_BUILD_STATIC
+#define GLEW_STATIC
+#else
+#ifdef _WINDOWS
+#define GLFW_DLL
+#endif // _windows
+#endif // build_static
 #include "GL/glew.h"
 #ifdef _WINDOWS
 #include "GL/wglew.h"
-#define GLFW_DLL
 #endif
 #define GLFW_INCLUDE_GLU
 //m7todo: jest tu bo nie chcia³o mi siê wpychaæ do wszystkich plików
@@ -74,3 +85,5 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
+#include "openglmatrixstack.h"

@@ -182,8 +182,7 @@ private:
 	int iFarAttenDecay; // ta zmienna okresla typ zaniku natezenia swiatla (0:brak, 1,2: potega 1/R)
 	float fFarDecayRadius; // normalizacja j.w.
 	float fCosFalloffAngle; // cosinus kąta stożka pod którym widać światło
-	float fCosHotspotAngle; // cosinus kąta stożka pod którym widać aureolę i zwiększone natężenie
-							// światła
+	float fCosHotspotAngle; // cosinus kąta stożka pod którym widać aureolę i zwiększone natężenie światła
 	float fCosViewAngle; // cos kata pod jakim sie teraz patrzy
 
 	TSubModel *Next;
@@ -256,10 +255,12 @@ public:
 	void SetRotateIK1(float3 vNewAngles);
 	TSubModel * GetFromName(std::string const &search, bool i = true);
 	TSubModel * GetFromName(char const *search, bool i = true);
+#ifdef EU07_USE_OLD_RENDERCODE
 	void RenderDL();
 	void RenderAlphaDL();
-	void RenderVBO();
+    void RenderVBO();
 	void RenderAlphaVBO();
+#endif
 	// inline matrix4x4* GetMatrix() {return dMatrix;};
 	inline float4x4 * GetMatrix()
 	{
@@ -341,6 +342,7 @@ private:
 	int *iModel; // zawartość pliku binarnego
 	int iSubModelsCount; // Ra: używane do tworzenia binarnych
 	std::string asBinary; // nazwa pod którą zapisać model binarny
+    std::string m_filename;
 public:
 	inline TSubModel * GetSMRoot()
 	{
@@ -363,14 +365,16 @@ public:
 #ifdef EU07_USE_OLD_RENDERCODE
 	void Render(double fSquareDistance, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
 	void RenderAlpha(double fSquareDistance, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
-	void RaRender(double fSquareDistance, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
-	void RaRenderAlpha(double fSquareDistance, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
-	// trzy kąty obrotu
-	void Render(vector3 *vPosition, vector3 *vAngle, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
-	void RenderAlpha(vector3 *vPosition, vector3 *vAngle, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
-	void RaRender(vector3 *vPosition, vector3 *vAngle, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
-	void RaRenderAlpha(vector3 *vPosition, vector3 *vAngle, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
 #endif
+    void RaRender(double fSquareDistance, texture_manager::size_type const *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
+	void RaRenderAlpha(double fSquareDistance, texture_manager::size_type const *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
+	// trzy kąty obrotu
+#ifdef EU07_USE_OLD_RENDERCODE
+    void Render( vector3 *vPosition, vector3 *vAngle, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030 );
+	void RenderAlpha(vector3 *vPosition, vector3 *vAngle, texture_manager::size_type *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
+#endif
+	void RaRender(vector3 *vPosition, vector3 *vAngle, texture_manager::size_type const *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
+	void RaRenderAlpha(vector3 *vPosition, vector3 *vAngle, texture_manager::size_type const *ReplacableSkinId = NULL, int iAlpha = 0x30300030);
 	// inline int GetSubModelsCount() { return (SubModelsCount); };
 	int Flags() const
 	{
@@ -379,7 +383,8 @@ public:
 	void Init();
 	std::string NameGet()
 	{
-		return Root ? Root->pName : NULL;
+//		return Root ? Root->pName : NULL;
+        return m_filename;
 	};
 	int TerrainCount();
 	TSubModel * TerrainSquare(int n);
