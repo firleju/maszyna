@@ -102,6 +102,7 @@ enum TAction
 
 enum TSpeedPosFlag
 { // wartości dla iFlag w TSpeedPos
+    spNone = 0x0,
     spEnabled = 0x1, // pozycja brana pod uwagę
     spTrack = 0x2, // to jest tor
     spReverse = 0x4, // odwrotnie
@@ -126,11 +127,11 @@ enum TSpeedPosFlag
 class TSpeedPos
 { // pozycja tabeli prędkości dla AI
   public:
-    double fDist = 0; // aktualna odległość (ujemna gdy minięte)
-    double fVelNext = -1; // prędkość obowiązująca od tego miejsca
-    double fSectionVelocityDist = 0; // długość ograniczenia prędkości
+    double fDist{ 0.0 }; // aktualna odległość (ujemna gdy minięte)
+    double fVelNext{ -1.0 }; // prędkość obowiązująca od tego miejsca
+    double fSectionVelocityDist{ 0.0 }; // długość ograniczenia prędkości
     // double fAcc;
-    int iFlags = 0; // flagi typu wpisu do tabelki
+    int iFlags{ spNone }; // flagi typu wpisu do tabelki
     // 1=istotny,2=tor,4=odwrotnie,8-zwrotnica (może się zmienić),16-stan
     // zwrotnicy,32-minięty,64=koniec,128=łuk
     // 0x100=event,0x200=manewrowa,0x400=przystanek,0x800=SBL,0x1000=wysłana komenda,0x2000=W5
@@ -138,8 +139,8 @@ class TSpeedPos
     vector3 vPos = vector3(); // współrzędne XYZ do liczenia odległości
     struct
     {
-        TTrack *trTrack = nullptr; // wskaźnik na tor o zmiennej prędkości (zwrotnica, obrotnica)
-        TEvent *evEvent = nullptr; // połączenie z eventem albo komórką pamięci
+        TTrack *trTrack{ nullptr }; // wskaźnik na tor o zmiennej prędkości (zwrotnica, obrotnica)
+        TEvent *evEvent{ nullptr }; // połączenie z eventem albo komórką pamięci
     };
 
   public:
@@ -171,11 +172,9 @@ extern bool WriteLogFlag; // logowanie parametrów fizycznych
 class TController
 {
   private: // obsługa tabelki prędkości (musi mieć możliwość odhaczania stacji w rozkładzie)
-    TSpeedPos *sSpeedTable = nullptr; // najbliższe zmiany prędkości
+    std::vector<TSpeedPos> sSpeedTable; // najbliższe zmiany prędkości
     std::vector<TSpeedPos> speedTableTracks; //tabelka ograniczeń predkości dla torów
     std::vector<TSpeedPos> speedTableSigns; //tabelka ograniczeń prędkości dla wskaźników
-    int iSpeedTableSize = 16; // wielkość tabelki
-    int iFirst = 0; // aktualna pozycja w tabeli (modulo iSpeedTableSize)
     int iLast = 0; // ostatnia wypełniona pozycja w tabeli <iFirst (modulo iSpeedTableSize)
     int iTableDirection = 0; // kierunek zapełnienia tabelki względem pojazdu z AI
     double fLastVel = 0.0; // prędkość na poprzednio sprawdzonym torze
@@ -184,6 +183,8 @@ class TController
     TSpeedPos *sSemNext = nullptr; // następny semafor na drodze zależny od trybu jazdy
     TSpeedPos *sSemNextStop = nullptr; // następny semafor na drodze zależny od trybu jazdy i na stój
     double dMoveLen = 0.0; // odległość przejechana od ostatniego sprawdzenia tabelki
+    std::size_t SemNextIndex{ -1 };
+    std::size_t SemNextStopIndex{ -1 };
   private: // parametry aktualnego składu
     double fLength = 0.0; // długość składu (do wyciągania z ograniczeń)
     double fMass = 0.0; // całkowita masa do liczenia stycznej składowej grawitacji
@@ -367,6 +368,7 @@ class TController
     //bool TableAddNew();
     bool TableEventNotExistIn(TEvent *e);
     void TableClear();
+    TEvent *TableCheckTrackEvent(double fDirection, TTrack *Track);
     void TableTraceRoute(double fDistance, TDynamicObject *pVehicle = NULL);
     void TableCheckForChanges(double fDistance);
 	void TableCheckStopPoint(TSpeedPos & ste, double & fVelDes, double & fDist, double & fNext, double & fAcc, TCommandType & go);
@@ -375,7 +377,6 @@ class TController
 	void TableCheckSectionVelocity(TSpeedPos &ste);
 	void TableCheckOutsideStation(TSpeedPos &ste, double &fVelDes, double &fDist, double &fNext, double &fAcc);
     TCommandType TableUpdate(double &fVelDes, double &fDist, double &fNext, double &fAcc);
-    //void TablePurger();
     inline double MoveDistanceGet()
     {
         return dMoveLen;
@@ -389,6 +390,10 @@ class TController
         {
             dMoveLen += distance;
         }
+    void TablePurger();
+public:
+    std::size_t TableSize() const { return sSpeedTable.size(); }
+
   private: // Ra: stare funkcje skanujące, używane do szukania sygnalizatora z tyłu
     bool BackwardTrackBusy(TTrack *Track);
     TEvent *CheckTrackEventBackward(double fDirection, TTrack *Track);
@@ -422,6 +427,6 @@ class TController
 	std::vector<std::string> TableGetTextForSigns();
     int CrossRoute(TTrack *tr);
     void RouteSwitch(int d);
-    std::string OwnerName();
+    std::string OwnerName() const;
     TMoverParameters const *Controlling() const { return mvControlling; }
 };
