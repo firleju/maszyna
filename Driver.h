@@ -183,8 +183,6 @@ class TController
     TSpeedPos *sSemNext = nullptr; // następny semafor na drodze zależny od trybu jazdy
     TSpeedPos *sSemNextStop = nullptr; // następny semafor na drodze zależny od trybu jazdy i na stój
     double dMoveLen = 0.0; // odległość przejechana od ostatniego sprawdzenia tabelki
-    std::size_t SemNextIndex{ -1 };
-    std::size_t SemNextStopIndex{ -1 };
   private: // parametry aktualnego składu
     double fLength = 0.0; // długość składu (do wyciągania z ograniczeń)
     double fMass = 0.0; // całkowita masa do liczenia stycznej składowej grawitacji
@@ -330,9 +328,6 @@ class TController
     // procedury dotyczace rozkazow dla maszynisty
     void SetVelocity(double NewVel, double NewVelNext,
                      TStopReason r = stopNone); // uaktualnia informacje o prędkości
-    bool SetProximityVelocity(
-        double NewDist,
-        double NewVelNext); // uaktualnia informacje o prędkości przy nastepnym semaforze
   public:
     void JumpToNextOrder();
     void JumpToFirstOrder();
@@ -361,14 +356,11 @@ class TController
     void DirectionForward(bool forward);
     int OrderDirectionChange(int newdir, TMoverParameters *Vehicle);
     void Lights(int head, int rear);
-    double Distance(vector3 &p1, vector3 &n, vector3 &p2);
 
   private: // Ra: metody obsługujące skanowanie toru
     TEvent *CheckTrackEvent(double fDirection, TTrack *Track);
-    //bool TableAddNew();
     bool TableEventNotExistIn(TEvent *e);
     void TableClear();
-    TEvent *TableCheckTrackEvent(double fDirection, TTrack *Track);
     void TableTraceRoute(double fDistance, TDynamicObject *pVehicle = NULL);
     void TableCheckForChanges(double fDistance);
 	void TableCheckStopPoint(TSpeedPos & ste, double & fVelDes, double & fDist, double & fNext, double & fAcc, TCommandType & go);
@@ -390,9 +382,7 @@ class TController
         {
             dMoveLen += distance;
         }
-    void TablePurger();
 public:
-    std::size_t TableSize() const { return sSpeedTable.size(); }
 
   private: // Ra: stare funkcje skanujące, używane do szukania sygnalizatora z tyłu
     bool BackwardTrackBusy(TTrack *Track);
