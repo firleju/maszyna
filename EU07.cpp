@@ -9,7 +9,6 @@ http://mozilla.org/MPL/2.0/.
 /*
     MaSzyna EU07 locomotive simulator
     Copyright (C) 2001-2004  Marcin Wozniak, Maciej Czapkiewicz and others
-
 */
 /*
 Authors:
@@ -52,6 +51,7 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #pragma comment( lib, "setupapi.lib" )
 #pragma comment( lib, "python27.lib" )
 #pragma comment (lib, "dbghelp.lib")
+#pragma comment (lib, "version.lib")
 #ifdef CAN_I_HAS_LIBPNG
 #pragma comment (lib, "libpng16.lib")
 #endif
@@ -224,12 +224,49 @@ int main(int argc, char *argv[])
         AllocConsole();
         SetConsoleTextAttribute( GetStdHandle( STD_OUTPUT_HANDLE ), FOREGROUND_GREEN );
     }
-
+/*
     std::string executable( argv[ 0 ] ); auto const pathend = executable.rfind( '\\' );
     Global::ExecutableName =
         ( pathend != std::string::npos ?
             executable.substr( executable.rfind( '\\' ) + 1 ) :
             executable );
+*/
+    // retrieve product version from the file's version data table
+    {
+        auto const fileversionsize = ::GetFileVersionInfoSize( argv[ 0 ], NULL );
+        std::vector<BYTE>fileversiondata; fileversiondata.resize( fileversionsize );
+        if( ::GetFileVersionInfo( argv[ 0 ], NULL, fileversionsize, fileversiondata.data() ) ) {
+
+            struct lang_codepage {
+                WORD language;
+                WORD codepage;
+            } *langcodepage;
+            UINT datasize;
+
+            ::VerQueryValue(
+                fileversiondata.data(),
+                TEXT( "\\VarFileInfo\\Translation" ),
+                (LPVOID*)&langcodepage,
+                &datasize );
+
+            std::string subblock; subblock.resize( 50 );
+            ::StringCchPrintf(
+                &subblock[0], subblock.size(),
+                TEXT( "\\StringFileInfo\\%04x%04x\\ProductVersion" ),
+                langcodepage->language,
+                langcodepage->codepage );
+
+            VOID *stringdata;
+            if( ::VerQueryValue(
+                    fileversiondata.data(),
+                    subblock.data(),
+                    &stringdata,
+                    &datasize ) ) {
+
+                Global::asVersion = std::string( reinterpret_cast<char*>(stringdata) );
+            }
+        }
+    }
 
 	for (int i = 1; i < argc; ++i)
 	{
@@ -345,9 +382,15 @@ int main(int argc, char *argv[])
     input::Gamepad.init();
 
     Global::pWorld = &World; // Ra: wskaźnik potrzebny do usuwania pojazdów
-    if (!World.Init(window))
-	{
-        ErrorLog( "Failed to init TWorld" );
+    try {
+        if( false == World.Init( window ) ) {
+            ErrorLog( "Failed to init TWorld" );
+            return -1;
+        }
+    }
+    catch( std::bad_alloc const &Error ) {
+
+        ErrorLog( "Critical error, memory allocation failure: " + std::string( Error.what() ) );
         return -1;
     }
 
@@ -368,13 +411,23 @@ int main(int argc, char *argv[])
         } // po zrobieniu E3D odpalamy normalnie scenerię, by ją zobaczyć
 
         Console::On(); // włączenie konsoli
-        while (!glfwWindowShouldClose(window)
-            && World.Update()
-            && GfxRenderer.Render())
-        {
-            glfwPollEvents();
-            input::Gamepad.poll();
+
+        try {
+            while( ( false == glfwWindowShouldClose( window ) )
+                && ( true == World.Update() )
+                && ( true == GfxRenderer.Render() ) ) {
+                glfwPollEvents();
+                if( true == Global::InputGamepad ) {
+                    input::Gamepad.poll();
+                }
+            }
         }
+        catch( std::bad_alloc const &Error ) {
+
+            ErrorLog( "Critical error, memory allocation failure: " + std::string( Error.what() ) );
+            return -1;
+        }
+
         Console::Off(); // wyłączenie konsoli (komunikacji zwrotnej)
     }
 

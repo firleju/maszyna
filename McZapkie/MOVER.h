@@ -139,6 +139,7 @@ static int const ctrain_passenger = 16;     //mostek przejściowy
 static int const ctrain_scndpneumatic = 32; //przewody 8 atm (żółte; zasilanie powietrzem)
 static int const ctrain_heating = 64;       //przewody ogrzewania WN
 static int const ctrain_depot = 128;        //nie rozłączalny podczas zwykłych manewrów (międzyczłonowy), we wpisie wartość ujemna
+// possible coupling types; can be combined
 enum coupling {
     faux = 0x0,
     coupler = 0x1,
@@ -150,11 +151,16 @@ enum coupling {
     heating = 0x40,
     permanent = 0x80
 };
-/*! przesylanie komend sterujacych*/
-enum command_range {
+// possible effect ranges for control commands; exclusive
+enum range {
     local,
     unit,
     consist
+};
+// start method for devices; exclusive
+enum start {
+    manual,
+    automatic
 };
 											/*typ hamulca elektrodynamicznego*/
 static int const dbrake_none = 0;
@@ -773,6 +779,7 @@ public:
 	double Ftmax = 0.0;
 	/*- dla lokomotyw z silnikami indukcyjnymi -*/
 	double eimc[26];
+    static std::vector<std::string> const eimc_labels;
 	/*-dla wagonow*/
     double MaxLoad = 0.0;           /*masa w T lub ilosc w sztukach - ladownosc*/
 	std::string LoadAccepted; std::string LoadQuantity; /*co moze byc zaladowane, jednostki miary*/
@@ -840,10 +847,17 @@ public:
 	bool CompressorFlag = false;             /*!o czy wlaczona sprezarka*/
 	bool PantCompFlag = false;             /*!o czy wlaczona sprezarka pantografow*/
 	bool CompressorAllow = false;            /*! zezwolenie na uruchomienie sprezarki  NBMX*/
+    bool CompressorAllowLocal{ true }; // local device state override (most units don't have this fitted so it's set to true not to intefere)
     bool CompressorGovernorLock{ false }; // indicates whether compressor pressure switch was activated due to reaching cut-out pressure
-	bool ConverterFlag = false ;              /*!  czy wlaczona przetwornica NBMX*/
+    // TODO converter parameters, for when we start cleaning up mover parameters
+    start ConverterStart{ manual }; // whether converter is started manually, or by other means
+    float ConverterStartDelay{ 0.0f }; // delay (in seconds) before the converter is started, once its activation conditions are met
+    double ConverterStartDelayTimer{ 0.0 }; // helper, for tracking whether converter start delay passed
 	bool ConverterAllow = false;             /*zezwolenie na prace przetwornicy NBMX*/
-	int BrakeCtrlPos = -2;               /*nastawa hamulca zespolonego*/
+    bool ConverterAllowLocal{ true }; // local device state override (most units don't have this fitted so it's set to true not to intefere)
+    bool ConverterFlag = false;              /*!  czy wlaczona przetwornica NBMX*/
+
+    int BrakeCtrlPos = -2;               /*nastawa hamulca zespolonego*/
 	double BrakeCtrlPosR = 0.0;                 /*nastawa hamulca zespolonego - plynna dla FV4a*/
 	double BrakeCtrlPos2 = 0.0;                 /*nastawa hamulca zespolonego - kapturek dla FV4a*/
 	int LocalBrakePos = 0;                 /*nastawa hamulca indywidualnego*/
@@ -939,6 +953,7 @@ public:
 
     /*- zmienne dla lokomotyw z silnikami indukcyjnymi -*/
 	double eimv[21];
+    static std::vector<std::string> const eimv_labels;
 
 	/*-zmienne dla drezyny*/
 	double PulseForce = 0.0;        /*przylozona sila*/
@@ -965,8 +980,10 @@ public:
 	int PantRearStart = 0;
 	double PantFrontVolt = 0.0;   //pantograf pod napieciem? 'Winger 160404
 	double PantRearVolt = 0.0;
+    // TODO: move these switch types where they belong, cabin definition
 	std::string PantSwitchType;
 	std::string ConvSwitchType;
+    std::string StLinSwitchType;
 
 	bool Heating = false; //ogrzewanie 'Winger 020304
 	int DoubleTr = 1; //trakcja ukrotniona - przedni pojazd 'Winger 160304
@@ -1043,7 +1060,7 @@ public:
 
 	bool AddPulseForce(int Multipler);/*dla drezyny*/
 
-    bool Sandbox( bool const State, int const Notify = command_range::consist );/*wlacza/wylacza sypanie piasku*/
+    bool Sandbox( bool const State, int const Notify = range::consist );/*wlacza/wylacza sypanie piasku*/
 
 						  /*! zbijanie czuwaka/SHP*/
 	void SSReset(void);
@@ -1099,12 +1116,12 @@ public:
 
 	/*--funkcje dla lokomotyw*/
 	bool DirectionBackward(void);/*! kierunek ruchu*/
-    bool MainSwitch( bool const State, int const Notify = command_range::consist );/*! wylacznik glowny*/
-    bool ConverterSwitch( bool State, int const Notify = command_range::consist );/*! wl/wyl przetwornicy*/
-    bool CompressorSwitch( bool State, int const Notify = command_range::consist );/*! wl/wyl sprezarki*/
+    bool MainSwitch( bool const State, int const Notify = range::consist );/*! wylacznik glowny*/
+    bool ConverterSwitch( bool State, int const Notify = range::consist );/*! wl/wyl przetwornicy*/
+    bool CompressorSwitch( bool State, int const Notify = range::consist );/*! wl/wyl sprezarki*/
 
 									  /*-funkcje typowe dla lokomotywy elektrycznej*/
-	void ConverterCheck(); // przetwornica
+	void ConverterCheck( double const Timestep ); // przetwornica
 	bool FuseOn(void); //bezpiecznik nadamiary
 	bool FuseFlagCheck(void); // sprawdzanie flagi nadmiarowego
 	void FuseOff(void); // wylaczenie nadmiarowego
@@ -1127,8 +1144,8 @@ public:
 	bool AutoRelayCheck(void);//symulacja automatycznego rozruchu
 
 	bool ResistorsFlagCheck(void); //sprawdzenie kontrolki oporow rozruchowych NBMX
-    bool PantFront( bool const State, int const Notify = command_range::consist ); //obsluga pantografou przedniego
-    bool PantRear( bool const State, int const Notify = command_range::consist ); //obsluga pantografu tylnego
+    bool PantFront( bool const State, int const Notify = range::consist ); //obsluga pantografou przedniego
+    bool PantRear( bool const State, int const Notify = range::consist ); //obsluga pantografu tylnego
 
 							   /*-funkcje typowe dla lokomotywy spalinowej z przekladnia mechaniczna*/
 	bool dizel_EngageSwitch(double state);

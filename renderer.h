@@ -15,6 +15,7 @@ http://mozilla.org/MPL/2.0/.
 #include "dumb3d.h"
 #include "frustum.h"
 #include "world.h"
+#include "memcell.h"
 
 struct opengl_light {
 
@@ -93,7 +94,7 @@ public:
         update_frustum() { m_frustum.calculate(); }
     inline
     void
-        update_frustum(glm::mat4 &Projection, glm::mat4 &Modelview) { m_frustum.calculate(Projection, Modelview); }
+        update_frustum(glm::mat4 const &Projection, glm::mat4 const &Modelview) { m_frustum.calculate(Projection, Modelview); }
     bool
         visible( bounding_area const &Area ) const;
     bool
@@ -110,6 +111,9 @@ class opengl_renderer {
 public:
 // types
 
+// destructor
+    ~opengl_renderer() { gluDeleteQuadric( m_quadric ); }
+
 // methods
     bool
         Init( GLFWwindow *Window );
@@ -121,6 +125,12 @@ public:
     bool
         Render( TGround *Ground );
     bool
+        Render( TGroundRect *Groundcell );
+    bool
+        Render( TSubRect *Groundsubcell );
+    bool
+        Render( TGroundNode *Node );
+    bool
         Render( TDynamicObject *Dynamic );
     bool
         Render( TModel3d *Model, material_data const *Material, double const Squaredistance );
@@ -128,6 +138,14 @@ public:
         Render( TModel3d *Model, material_data const *Material, Math3D::vector3 const &Position, Math3D::vector3 const &Angle );
     void
         Render( TSubModel *Submodel );
+    void
+        Render( TMemCell *Memcell );
+    bool
+        Render_Alpha( TGround *Ground );
+    bool
+        Render_Alpha( TSubRect *Groundsubcell );
+    bool
+        Render_Alpha( TGroundNode *Node );
     bool
         Render_Alpha( TDynamicObject *Dynamic );
     bool
@@ -196,6 +214,8 @@ private:
     texture_manager::size_type m_glaretextureid{ -1 };
     texture_manager::size_type m_suntextureid{ -1 };
     texture_manager::size_type m_moontextureid{ -1 };
+    GLUquadricObj *m_quadric; // helper object for drawing debug mode scene elements
+
 };
 
 extern opengl_renderer GfxRenderer;
