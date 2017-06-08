@@ -222,6 +222,7 @@
     <ClInclude Include="uilayer.h" />
     <ClInclude Include="usefull.h" />
     <ClInclude Include="VBO.h" />
+    <ClInclude Include="version.h" />
     <ClInclude Include="wavread.h" />
     <ClInclude Include="World.h" />
   </ItemGroup>

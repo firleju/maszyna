@@ -110,25 +110,26 @@ double GetDistanceToEvent(TTrack* track, TEvent* event, double scan_dir, double 
     vector3 pos_event = event->PositionGet();
     double len1, len2;
     double sd = scan_dir;
-    double seg_len = scan_dir > 0 ? 0.0 : 1.0; // dzielimy na 10 odcinków i już
+    double seg_len = scan_dir > 0 ? 0.0 : 1.0; 
+    double dzielnik = 1.0 / segment->GetLength();// rozdzielczosc mniej wiecej 1m
     len2 = (pos_event - segment->FastGetPoint(seg_len)).Length();
     do
     {
         len1 = len2;
-        seg_len += scan_dir > 0 ? 0.1 : -0.1;
+        seg_len += scan_dir > 0 ? dzielnik : -dzielnik;
         len2 = (pos_event - segment->FastGetPoint(seg_len)).Length();
     } 
-    while ((len1 > len2) && (seg_len >= 0.1) && (seg_len <= 0.9));
+    while ((len1 > len2) && (seg_len >= dzielnik && (seg_len <= (1 - dzielnik))));
     //trzeba sprawdzić czy seg_len nie osiągnął skrajnych wartości, bo wtedy
     // trzeba sprawdzić tor obok
-    if ((seg_len < 0.1) || (seg_len > 0.9))
+    if ((seg_len < dzielnik) || (seg_len > (1 - dzielnik)))
     {
         track = track->Neightbour(int(sd), sd);
         return GetDistanceToEvent(track, event, sd, start_dist + segment->GetLength());
     }
     else
     {
-        seg_len -= scan_dir > 0 ? 0.1 : -0.1; //trzeba wrócić do pozycji len1
+        seg_len -= scan_dir > 0 ? dzielnik : -dzielnik; //trzeba wrócić do pozycji len1
         seg_len = scan_dir < 0 ? 1 - seg_len : seg_len;
         return start_dist + (segment->GetLength() * seg_len);
     }
@@ -638,9 +639,9 @@ void TController::TableCheckForChanges(double fDistance)
             {
                 if (it->fDist > stt.fDist)
                 {
-                    if (it->evEvent == sSemNext->evEvent)
+                    if (sSemNext && (it->evEvent == sSemNext->evEvent))
                         sSemNext = nullptr;
-                    if (it->evEvent == sSemNextStop->evEvent)
+                    if (sSemNextStop && (it->evEvent == sSemNextStop->evEvent))
                         sSemNextStop = nullptr;
                     it = speedTableSigns.erase(it);
                 }
