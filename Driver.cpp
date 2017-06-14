@@ -104,7 +104,7 @@ std::string StopReasonTable[] = {
     "Error", // stopError //z powodu błędu w obliczeniu drogi hamowania
 };
 
-double GetDistanceToEvent(TTrack* track, TEvent* event, double scan_dir, double start_dist)
+double GetDistanceToEvent(TTrack* track, TEvent* event, double scan_dir, double start_dist, int iter = 0, bool back = false)
 {
     std::shared_ptr<TSegment> segment = track->CurrentSegment();
     vector3 pos_event = event->PositionGet();
@@ -112,25 +112,32 @@ double GetDistanceToEvent(TTrack* track, TEvent* event, double scan_dir, double 
     double sd = scan_dir;
     double seg_len = scan_dir > 0 ? 0.0 : 1.0; 
     double dzielnik = 1.0 / segment->GetLength();// rozdzielczosc mniej wiecej 1m
+    int krok = 0; // krok obliczeniowy do sprawdzania czy odwracamy
     len2 = (pos_event - segment->FastGetPoint(seg_len)).Length();
     do
     {
         len1 = len2;
         seg_len += scan_dir > 0 ? dzielnik : -dzielnik;
         len2 = (pos_event - segment->FastGetPoint(seg_len)).Length();
+        krok++;
     } 
     while ((len1 > len2) && (seg_len >= dzielnik && (seg_len <= (1 - dzielnik))));
     //trzeba sprawdzić czy seg_len nie osiągnął skrajnych wartości, bo wtedy
     // trzeba sprawdzić tor obok
-    if ((seg_len < dzielnik) || (seg_len > (1 - dzielnik)))
-    {
+    if (1 == krok)
+        sd = -sd; // jeśli tylko jeden krok tzn, że event przy poprzednim sprawdzaym torze
+    if (((seg_len <= dzielnik) || (seg_len > (1 - dzielnik))) && (iter < 3))
+    { // przejście na inny tor
         track = track->Neightbour(int(sd), sd);
-        return GetDistanceToEvent(track, event, sd, start_dist + segment->GetLength());
+        start_dist += (1 == krok) ? 0 : back ? -segment->GetLength() : segment->GetLength();
+        return GetDistanceToEvent(track, event, sd, start_dist, ++iter, 1 == krok ? true : false);
     }
     else
-    {
+    { // obliczenie mojego toru
         seg_len -= scan_dir > 0 ? dzielnik : -dzielnik; //trzeba wrócić do pozycji len1
         seg_len = scan_dir < 0 ? 1 - seg_len : seg_len;
+        seg_len = back ? 1 - seg_len : seg_len; // odwracamy jeśli idzie do tyłu
+        start_dist -= back ? segment->GetLength() : 0;
         return start_dist + (segment->GetLength() * seg_len);
     }
 };
