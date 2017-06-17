@@ -606,6 +606,25 @@ void TController::TableTraceRoute(double fDistance, TDynamicObject *pVehicle)
             std::string n = pTrack->NameGet();
             fCurrentDistance += tLast->Length(); // dodajemy do skanowania długość poprzedniego toru
             speedTableTracks.emplace_back(TSpeedPos(pTrack, fCurrentDistance, fLastDir > 0 ? spEnabled : (spEnabled | spReverse)));
+            if (pTrack->eType == tt_Cross)
+            {
+                // na skrzyżowaniach trzeba wybrać segment, po którym pojedzie pojazd
+                // dopiero tutaj jest ustalany kierunek segmentu na skrzyżowaniu
+                TSpeedPos &sp_last = speedTableTracks.back();
+                sp_last.iFlags |= ((pTrack->CrossSegment((fLastDir < 0 ? tLast->iPrevDirection : tLast->iNextDirection), iRouteWanted) & 0xf)
+                                   << 28); // ostatnie 4 bity pola flag
+                sp_last.iFlags &= ~spReverse; // usunięcie flagi kierunku, bo może być błędna
+                if (sp_last.iFlags < 0)
+                {
+                    sp_last.iFlags |= spReverse; // ustawienie flagi kierunku na podstawie wybranego segmentu
+                }
+                if (int(fLastDir) * sp_last.iFlags < 0)
+                {
+                    fLastDir = -fLastDir;
+                }
+                // losujemy kierunek na kolejnym skrzyżowaniu
+                iRouteWanted = Random(1, 4);
+            }
             pEvent = CheckTrackEvent(fLastDir, pTrack);
             if (TableEventNotExistIn(pEvent))
                 speedTableSigns.emplace_back(TSpeedPos(pEvent, GetDistanceToEvent(pTrack, pEvent, fLastDir, fCurrentDistance), OrderCurrentGet()));
@@ -5316,15 +5335,15 @@ int TController::CrossRoute(TTrack *tr)
     // pożądany numer segmentu jest określany podczas skanowania drogi
     // droga powinna być określona sposobem przejazdu przez skrzyżowania albo współrzędnymi miejsca
     // docelowego
-    for( std::size_t i = 0; i < sSpeedTable.size(); ++i )
+    for (auto &stt : speedTableTracks)
     { // trzeba przejrzeć tabelę skanowania w poszukiwaniu (tr)
         // i jak się znajdzie, to zwrócić zapamiętany numer segmentu i kierunek przejazdu
         // (-6..-1,1..6)
-        if( ( true == TestFlag( sSpeedTable[ i ].iFlags, spEnabled | spTrack ) )
-         && ( sSpeedTable[ i ].trTrack == tr ) ) {
+        if ((true == TestFlag(stt.iFlags, spEnabled | spTrack)) && (stt.trTrack == tr))
+        {
             // jeśli pozycja odpowiadająca skrzyżowaniu (tr)
-                return (sSpeedTable[i].iFlags >> 28); // najstarsze 4 bity jako liczba -8..7
-    }
+            return (stt.iFlags >> 28); // najstarsze 4 bity jako liczba -8..7
+        }
     }
     return 0; // nic nie znaleziono?
 };
@@ -5332,20 +5351,27 @@ int TController::CrossRoute(TTrack *tr)
 void TController::RouteSwitch(int d)
 { // ustawienie kierunku jazdy z kabiny
     d &= 3;
-    if( d ) {
-        if( iRouteWanted != d ) { // nowy kierunek
+    if (d)
+    {
+        if (iRouteWanted != d)
+        { // nowy kierunek
             iRouteWanted = d; // zapamiętanie
-            if( mvOccupied->CategoryFlag & 2 ) {
+            if (mvOccupied->CategoryFlag & 2)
+            {
                 // jeśli samochód
-                for( std::size_t i = 0; i < sSpeedTable.size(); ++i ) {
+                for (std::size_t i = 0; i < sSpeedTable.size(); ++i)
+                {
                     // szukanie pierwszego skrzyżowania i resetowanie kierunku na nim
-                    if( true == TestFlag( sSpeedTable[ i ].iFlags, spEnabled | spTrack ) ) {
+                    if (true == TestFlag(sSpeedTable[i].iFlags, spEnabled | spTrack))
+                    {
                         // jeśli pozycja istotna (1) oraz odcinek (2)
-                        if( false == TestFlag( sSpeedTable[ i ].iFlags, spElapsed ) ) {
+                        if (false == TestFlag(sSpeedTable[i].iFlags, spElapsed))
+                        {
                             // odcinek nie może być miniętym
                             if (sSpeedTable[i].trTrack->eType == tt_Cross) // jeśli skrzyżowanie
                             {
-                                while( sSpeedTable.size() >= i ) {
+                                while (sSpeedTable.size() >= i)
+                                {
                                     // NOTE: we're ignoring semaphor flags and not resetting them like we do for train route trimming
                                     // but what if there's street lights?
                                     // TODO: investigate
@@ -5356,9 +5382,9 @@ void TController::RouteSwitch(int d)
                         }
                     }
                 }
-                            }
-                }
+            }
         }
+    }
 };
 std::string TController::OwnerName() const
 {
