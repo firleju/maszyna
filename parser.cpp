@@ -30,6 +30,9 @@ cParser::cParser( std::string const &Stream, buffertype const Type, std::string 
     // mComments.insert(commentmap::value_type("--","\n")); //Ra: to chyba nie używane
     // store to calculate sub-sequent includes from relative path
     mPath = Path;
+    if( Type == buffertype::buffer_FILE ) {
+        mFile = Stream;
+    }
     // reset pointers and attach proper type of buffer
     switch (Type)
     {
@@ -198,14 +201,19 @@ std::string cParser::readQuotes(char const Quote) { // read the stream until spe
     return token;
 }
 
-std::string cParser::readComment( std::string const &Break ) { // pobieranie znaków aż do znalezienia znacznika końca
-    std::string token = "";
+void cParser::skipComment( std::string const &Endmark ) { // pobieranie znaków aż do znalezienia znacznika końca
+    std::string input = "";
+    auto const endmarksize = Endmark.size();
     while( mStream->peek() != EOF ) { // o ile nie koniec pliku
-        token += mStream->get(); // pobranie znaku
-        if( token.rfind( Break ) != std::string::npos ) // szukanie znacznika końca
+        input += mStream->get(); // pobranie znaku
+        if( input.find( Endmark ) != std::string::npos ) // szukanie znacznika końca
             break;
+        if( input.size() >= endmarksize ) {
+            // keep the read text short, to avoid pointless string re-allocations on longer comments
+            input = input.substr( 1 );
+        }
     }
-    return token;
+    return;
 }
 
 bool cParser::findQuotes( std::string &String ) {
@@ -225,7 +233,7 @@ bool cParser::trimComments(std::string &String)
     {
         if (String.rfind((*cmIt).first) != std::string::npos)
         {
-            readComment((*cmIt).second);
+            skipComment((*cmIt).second);
             String.resize(String.rfind((*cmIt).first));
             return true;
         }
@@ -263,8 +271,15 @@ std::size_t cParser::count() {
     return count - 1;
 }
 
-
 void cParser::addCommentStyle( std::string const &Commentstart, std::string const &Commentend ) {
 
     mComments.insert( commentmap::value_type(Commentstart, Commentend) );
+}
+
+// returns name of currently open file, or empty string for text type stream
+std::string
+cParser::Name() {
+
+    if( mIncludeParser ) { return mIncludeParser->Name(); }
+    else                 { return mPath + mFile; }
 }
