@@ -1621,17 +1621,18 @@ TWorld::Update_UI() {
                         //żeby była tabelka, musi być AI
                         break;
                     }
-                    float4 linecolor(225.0 / 255.0f, 225.0f / 255.0f, 225.0f / 255.0f, 1.0f);
-                    std::vector<std::string> table = tmp->Mechanik->TableGetTextForTrakcs();
-                    //UITable->text_lines.reserve(UITable->text_lines.size() + table.size());
-                    for (auto &l : table)
-                        UITable->text_lines.emplace_back(l, linecolor);
-
-                    table = tmp->Mechanik->TableGetTextForSigns();
+                    std::vector<std::string> table = tmp->Mechanik->TableGetTextForSigns();
                     float4 linecolor2(255.0 / 255.0f, 255 / 255.0f, 28.0 / 255.0f, 1.0f);
                     //UITable->text_lines.reserve(UITable->text_lines.size() + table.size());
                     for (auto &l : table)
                         UITable->text_lines.emplace_back(l, linecolor2);
+
+                    float4 linecolor(225.0 / 255.0f, 225.0f / 255.0f, 225.0f / 255.0f, 1.0f);
+                    table = tmp->Mechanik->TableGetTextForTrakcs();
+                    //UITable->text_lines.reserve(UITable->text_lines.size() + table.size());
+                    for (auto &l : table)
+                        UITable->text_lines.emplace_back(l, linecolor);
+
                 }
             }
             else {

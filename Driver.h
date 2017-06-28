@@ -148,8 +148,7 @@ class TSpeedPos
       TSpeedPos(TEvent *event, double dist, TOrders order);
       TSpeedPos() {};
     void Clear();
-    bool Update(vector3 *p, vector3 *dir, double &len);
-    bool UpdateTrackStatus();
+    bool UpdateTrackStatus(std::string vehname);
     void UpdateDistance(double dist);
     void UpdateEventStatus();
     bool Set(TEvent *e, double dist, TOrders order = Wait_for_orders);
@@ -381,7 +380,7 @@ class TController
     public:
         inline void MoveDistanceAdd(double distance)
         {
-            dMoveLen += distance;
+            dMoveLen += distance * iDirection; //jak jedzie do tyłu to trzeba uwzględniać, że distance jest ujemna
         }
 public:
     int TableDirection() { return iTableDirection; }
