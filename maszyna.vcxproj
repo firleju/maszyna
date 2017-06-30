@@ -39,7 +39,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <TargetName>eu07++d</TargetName>
     <IntDir>$(SolutionDir)tmp\$(PlatformShortName)-$(Configuration)\$(ProjectName)\</IntDir>
-    <OutDir>E:\Gry\MaSzyna_15_04_s\</OutDir>
+    <OutDir>E:\Gry\MaSzyna_15_04\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <TargetName>eu07++</TargetName>
@@ -122,6 +122,7 @@
     <ClCompile Include="moon.cpp" />
     <ClCompile Include="mtable.cpp" />
     <ClCompile Include="Names.cpp" />
+    <ClCompile Include="openglgeometrybank.cpp" />
     <ClCompile Include="openglmatrixstack.cpp" />
     <ClCompile Include="parser.cpp" />
     <ClCompile Include="PyInt.cpp" />
@@ -194,6 +195,7 @@
     <ClInclude Include="moon.h" />
     <ClInclude Include="mtable.h" />
     <ClInclude Include="Names.h" />
+    <ClInclude Include="openglgeometrybank.h" />
     <ClInclude Include="openglmatrixstack.h" />
     <ClInclude Include="parser.h" />
     <ClInclude Include="PyInt.h" />
