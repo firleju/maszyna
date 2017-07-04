@@ -553,6 +553,10 @@ void TController::TableCheckForChanges(double fDistance)
         ste.UpdateDistance(MoveDistanceGet());
 	}
 
+    // trasujemy brakującą cześć trasy
+    TableTraceRoute(fDistance, pVehicles[1]); // trasujemy od ostatniego pojazdu
+
+    //ususwamy niepotrzebne wpisy
     speedTableTracks.erase(std::remove_if(speedTableTracks.begin(), speedTableTracks.end(),
         [&](TSpeedPos sp) {return ((((sp.iFlags & spEnabled) == 0) // jeśli minięty przez pociąg
             || ((sp.trTrack->VelocityGet() != 0.0) // brak zatrzymania
@@ -565,10 +569,6 @@ void TController::TableCheckForChanges(double fDistance)
         speedTableSigns.end());
 
     MoveDistanceReset(); // resetujemy licznik przejechanej odległości
-
-    // trasujemy brakującą cześć trasy
-    TableTraceRoute(fDistance, pVehicles[1]); // trasujemy od ostatniego pojazdu
-
 
 }
 
@@ -965,6 +965,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 	double d_to_next_sem = 10000.0; //ustaiwamy na pewno dalej niż widzi AI
     TCommandType go = cm_Unknown;
     eSignNext = nullptr;
+    auto n = VehicleName;
     iDrivigFlags &= ~(moveTrackEnd | moveSwitchFound | moveSemaphorFound |
                       moveSpeedLimitFound); // te flagi są ustawiane tutaj, w razie potrzeby
     // najpierw sprawdzanie torów
@@ -1000,7 +1001,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                 fVelDes = v; // ograniczenie aktualnej prędkości aż do wyjechania za ograniczenie
         }
 		// sprawdzenie warunków dla torów
-        if (a < fAcc && v == Min0RSpeed(v, fNext))
+        if ((a < fAcc && v == Min0RSpeed(v, fNext)) || (mvOccupied->Vel == 0 && d < fDist && v == Min0RSpeed(v, fNext)))
         { // mniejsze przyspieszenie to mniejsza możliwość rozpędzenia się albo konieczność
           // hamowania
           // jeśli droga wolna, to może być a>1.0 i się tu nie załapuje
@@ -1047,12 +1048,10 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 		v = ste.fVelNext; // odczyt prędkości do zmiennej pomocniczej
 		d = ste.fDist; // odczyt odległości do zmiennej pomocniczej (nie ma znaczenia, że v = -1)
 
-		if ((mvOccupied->CategoryFlag & 1) ?
-			ste.fDist > pVehicles[0]->fTrackBlock - 20.0 :
+		if ((mvOccupied->CategoryFlag & 1) ? ste.fDist > pVehicles[0]->fTrackBlock - 20.0 :
 		false) // jak sygnał jest dalej niż zawalidroga
 		{
 			v = 0.0; // to może być podany dla tamtego: jechać tak, jakby tam stop był
-			d = pVehicles[0]->fTrackBlock - 20.0;
 		}
 		else
 		{ // zawalidrogi nie ma (albo pojazd jest samochodem), sprawdzić sygnał
@@ -1133,7 +1132,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 		else // event trzyma tylko jeśli VelNext=0, nawet po przejechaniu (nie powinno
 			 // dotyczyć samochodów?)
 			a = (v == 0.0 ? -1.0 : fAcc); // ruszanie albo hamowanie
-		if (a < fAcc && v == Min0RSpeed(v, fNext))
+		if ((a < fAcc && v == Min0RSpeed(v, fNext)) || (mvOccupied->Vel == 0 && d < fDist && v == Min0RSpeed(v, fNext)))
 		{ // mniejsze przyspieszenie to mniejsza możliwość rozpędzenia się albo konieczność
 		  // hamowania
 		  // jeśli droga wolna, to może być a>1.0 i się tu nie załapuje
