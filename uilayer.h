@@ -41,22 +41,28 @@ class ui_layer
     // destructor:
     ~ui_layer();
 
-    // methods:
-    bool init(GLFWwindow *Window);
-    // draws requested UI elements
-    void render();
-    // stores operation progress
-    void set_progress(float const Progress = 0.0f, float const Subtaskprogress = 0.0f);
-    // sets the ui background texture, if any
-    void set_background(std::string const &Filename = "");
-    void clear_texts()
-    {
-        m_panels.clear();
-    }
-    void push_back(std::shared_ptr<ui_panel> Panel)
-    {
-        m_panels.emplace_back(Panel);
-    }
+// methods:
+    bool
+        init( GLFWwindow *Window );
+    void
+        set_unit( GLint const Textureunit ) { m_textureunit = Textureunit; }
+	// draws requested UI elements
+	void
+        render();
+	// stores operation progress
+	void
+        set_progress( float const Progress = 0.0f, float const Subtaskprogress = 0.0f );
+    void
+        set_progress( std::string const &Text ) { m_progresstext = Text; }
+	// sets the ui background texture, if any
+	void
+        set_background( std::string const &Filename = "" );
+    void
+        set_tooltip( std::string const &Tooltip ) { m_tooltip = Tooltip; }
+    void
+        clear_texts() { m_panels.clear(); }
+    void
+        push_back( std::shared_ptr<ui_panel> Panel ) { m_panels.emplace_back( Panel ); }
 
     // members:
 
@@ -65,8 +71,12 @@ class ui_layer
     // draws background quad with specified earlier texture
     void render_background();
     // draws a progress bar in defined earlier state
-    void render_progress();
-    void render_panels();
+    void
+        render_progress();
+    void
+        render_panels();
+    void
+        render_tooltip();
     // prints specified text, using display lists font
     void print(std::string const &Text);
     // draws a quad between coordinates x,y and z,w with uv-coordinates spanning 0-1
@@ -74,11 +84,19 @@ class ui_layer
 
 
 // members:
-    GLuint m_fontbase{ static_cast<GLuint>(-1) }; // numer DL dla znaków w napisach
-    float m_progress{ 0.0f };                // percentage of filled progres bar, to indicate lengthy operations.
-    float m_subtaskprogress{ 0.0f };                // percentage of filled progres bar, to indicate lengthy operations.
-    texture_handle m_background; // path to texture used as the background. size depends on mAspect.
+    GLFWwindow *m_window { nullptr };
+    GLint m_textureunit{ GL_TEXTURE0 };
+    GLuint m_fontbase { (GLuint)-1 }; // numer DL dla znak�w w napisach
+
+    // progress bar config. TODO: put these together into an object
+    float m_progress { 0.0f }; // percentage of filled progres bar, to indicate lengthy operations.
+    float m_subtaskprogress{ 0.0f }; // percentage of filled progres bar, to indicate lengthy operations.
+    std::string m_progresstext; // label placed over the progress bar
+    bool m_progressbottom { false }; // location of the progress bar
+
+    texture_handle m_background { NULL }; // path to texture used as the background. size depends on mAspect.
     std::vector<std::shared_ptr<ui_panel> > m_panels;
+    std::string m_tooltip;
 };
 
 extern ui_layer UILayer;

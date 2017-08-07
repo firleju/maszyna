@@ -225,6 +225,15 @@
     <ClCompile Include="gamepadinput.cpp">
       <Filter>Source Files\input</Filter>
     </ClCompile>
+    <ClCompile Include="openglgeometrybank.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="mouseinput.cpp">
+      <Filter>Source Files\input</Filter>
+    </ClCompile>
+    <ClCompile Include="translation.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Globals.h">
@@ -434,11 +443,11 @@
     <ClInclude Include="openglgeometrybank.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="gamepadinput.h">
+    <ClInclude Include="mouseinput.h">
       <Filter>Header Files\input</Filter>
     </ClInclude>
-    <ClInclude Include="keyboardinput.h">
-      <Filter>Header Files\input</Filter>
+    <ClInclude Include="translation.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
