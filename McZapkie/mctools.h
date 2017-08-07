@@ -20,6 +20,7 @@ http://mozilla.org/MPL/2.0/.
 
 extern bool DebugModeFlag;
 extern bool FreeFlyModeFlag;
+extern bool DebugCameraFlag;
 
 /*funkcje matematyczne*/
 int Max0(int x1, int x2);

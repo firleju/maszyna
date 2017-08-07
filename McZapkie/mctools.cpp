@@ -19,6 +19,7 @@ Copyright (C) 2007-2014 Maciej Cierniak
 
 bool DebugModeFlag = false;
 bool FreeFlyModeFlag = false;
+bool DebugCameraFlag = false;
 
 //std::string Ups(std::string s)
 //{
