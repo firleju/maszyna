@@ -443,6 +443,12 @@
     <ClInclude Include="openglgeometrybank.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="gamepadinput.h">
+      <Filter>Header Files\input</Filter>
+    </ClInclude>
+    <ClInclude Include="keyboardinput.h">
+      <Filter>Header Files\input</Filter>
+    </ClInclude>
     <ClInclude Include="mouseinput.h">
       <Filter>Header Files\input</Filter>
     </ClInclude>
