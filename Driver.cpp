@@ -3804,8 +3804,8 @@ bool TController::UpdateSituation(double dt)
                     break;
                 }
                 if (VelNext == 0.0)
-                    if (!(OrderList[OrderPos] &
-                          ~(Shunt | Connect))) // jedzie w Shunt albo Connect, albo Wait_for_orders
+                {
+                    if (!(OrderList[OrderPos] & ~(Shunt | Connect))) // jedzie w Shunt albo Connect, albo Wait_for_orders
                     { // jeżeli wolnej drogi nie ma, a jest w trybie manewrowym albo oczekiwania
                         // if
                         // ((OrderList[OrderPos]&Connect)?pVehicles[0]->fTrackBlock>ActualProximityDist:true)
@@ -3815,7 +3815,8 @@ bool TController::UpdateSituation(double dt)
                         // Ra 2F1H: z tym (fTrackBlock) to nie jest najlepszy pomysł, bo lepiej by
                         // było porównać z odległością od sygnalizatora z przodu
                         if ((OrderList[OrderPos] & Connect) ? (pVehicles[0]->fTrackBlock > 2000 || pVehicles[0]->fTrackBlock > FirstSemaphorDist) :
-                                true)
+                                                              true)
+                        {
                             if ((comm = BackwardScan()) != cm_Unknown) // jeśli w drugą można jechać
                             { // należy sprawdzać odległość od znalezionego sygnalizatora,
                                 // aby w przypadku prędkości 0.1 wyciągnąć najpierw skład za
@@ -3823,16 +3824,18 @@ bool TController::UpdateSituation(double dt)
                                 // i dopiero wtedy zmienić kierunek jazdy, oczekując podania
                                 // prędkości >0.5
                                 if (comm == cm_Command) // jeśli komenda Shunt
-                                    iDrivigFlags |=
-                                        moveStopHere; // to ją odbierz bez przemieszczania się (np.
-                                // odczep wagony po dopchnięciu do końca toru)
+                                {
+                                    iDrivigFlags |= moveStopHere; // to ją odbierz bez przemieszczania się (np.
+                                    // odczep wagony po dopchnięciu do końca toru)
+                                }
                                 iDirectionOrder = -iDirection; // zmiana kierunku jazdy
-                                OrderList[OrderPos] = TOrders(OrderList[OrderPos] |
-                                                              Change_direction); // zmiana kierunku
+                                OrderList[OrderPos] = TOrders(OrderList[OrderPos] | Change_direction); // zmiana kierunku
                                 // bez psucia
                                 // kolejnych komend
                             }
+                        }
                     }
+                }
                 double vel = mvOccupied->Vel; // prędkość w kierunku jazdy
                 if (iDirection * mvOccupied->V < 0)
                     vel = -vel; // ujemna, gdy jedzie w przeciwną stronę, niż powinien

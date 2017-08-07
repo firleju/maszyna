@@ -101,7 +101,6 @@
     <ClCompile Include="EU07.cpp" />
     <ClCompile Include="Event.cpp" />
     <ClCompile Include="EvLaunch.cpp" />
-    <ClCompile Include="FadeSound.cpp" />
     <ClCompile Include="Float3d.cpp" />
     <ClCompile Include="frustum.cpp" />
     <ClCompile Include="gamepadinput.cpp" />
@@ -176,7 +175,6 @@
     <ClInclude Include="DynObj.h" />
     <ClInclude Include="Event.h" />
     <ClInclude Include="EvLaunch.h" />
-    <ClInclude Include="FadeSound.h" />
     <ClInclude Include="Float3d.h" />
     <ClInclude Include="frustum.h" />
     <ClInclude Include="gamepadinput.h" />
