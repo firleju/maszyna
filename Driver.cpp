@@ -572,7 +572,7 @@ void TController::TableCheckForChanges(double fDistance)
 
 }
 
-void TController::TableCheckStopPoint(TSpeedPos &ste, double & fVelDes, double & fDist, double & fNext, double & fAcc, TCommandType &go)
+void TController::TableCheckStopPoint(TSpeedPos &ste, TCommandType &go)
 {
  // jeśli przystanek, trzeba obsłużyć wg rozkładu
     // first 19 chars of the command is expected to be "PassengerStopPoint:" so we skip them
@@ -814,7 +814,7 @@ void TController::TableCheckStopPoint(TSpeedPos &ste, double & fVelDes, double &
 
 }
 
-void TController::TableCheckSemaphor(TSpeedPos &ste, double & fVelDes, double & fDist, double & fNext, double & fAcc)
+void TController::TableCheckSemaphor(TSpeedPos &ste)
 {
 	if (ste.fDist < 0.0 && sSemNext == &ste)
 	{
@@ -932,7 +932,7 @@ void TController::TableCheckSectionVelocity(TSpeedPos &ste)
 	}
 }
 
-void TController::TableCheckOutsideStation(TSpeedPos & ste, double & fVelDes, double & fDist, double & fNext, double & fAcc)
+void TController::TableCheckOutsideStation(TSpeedPos & ste)
 {
 	if (OrderCurrentGet() & Obey_train)
 	{ // w trybie pociągowym: można przyspieszyć do wskazanej prędkości (po
@@ -959,9 +959,9 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
     // fDist - dystans w jakim należy rozważyć ruch
     // fNext - prędkość na końcu tego dystansu
     // fAcc - zalecane przyspieszenie w chwili obecnej - kryterium wyboru dystansu
-    double a = 3.5; // przyspieszenie
-    double v; // prędkość
-    double d; // droga
+    double a_tracks = 3.5, a_events = 3.5; // przyspieszenie
+    double v_tracks = -1, v_events = -1; // prędkość
+    double d_tracks, d_events; // droga
 	double d_to_next_sem = 10000.0; //ustaiwamy na pewno dalej niż widzi AI
     TCommandType go = cm_Unknown;
     eSignNext = nullptr;
@@ -971,49 +971,50 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
     // najpierw sprawdzanie torów
     for (auto &stt : speedTableTracks)
     {
-        v = stt.fVelNext; // odczyt prędkości do zmiennej pomocniczej
-        d = stt.fDist; // odczyt odległości do zmiennej pomocniczej (nie ma znaczenia, że v = -1)
+        v_tracks = stt.fVelNext; // odczyt prędkości do zmiennej pomocniczej
+        d_tracks = stt.fDist; // odczyt odległości do zmiennej pomocniczej (nie ma znaczenia, że v = -1)
         if (stt.iFlags & spSwitch) // zwrotnice są usuwane z tabelki dopiero po zjechaniu z nich
             iDrivigFlags |= moveSwitchFound; // rozjazd z przodu/pod ogranicza np. sens skanowania wstecz
         // sprawdzenie warunków
-        if ((stt.iFlags & spElapsed) == 0 && (d > 0.0)) // nie minięty i sygnał lub ograniczenie z przodu (+32=przejechane)
+        if ((stt.iFlags & spElapsed) == 0 && (d_tracks > 0.0)) // nie minięty i sygnał lub ograniczenie z przodu (+32=przejechane)
         { // 2014-02: jeśli stoi, a ma do przejechania kawałek, to niech jedzie
-            if ((mvOccupied->Vel == 0.0) ? (d > fMaxProximityDist) : false)
-                a = (iDrivigFlags & moveStopCloser) ? fAcc : 0.0; // ma podjechać bliżej
+            if ((mvOccupied->Vel == 0.0) ? (d_tracks > fMaxProximityDist) : false)
+                a_tracks = (iDrivigFlags & moveStopCloser) ? fAcc : 0.0; // ma podjechać bliżej
             else
             {
-                a = (v * v - mvOccupied->Vel * mvOccupied->Vel) /
-                    (25.92 * d); // przyspieszenie: ujemne, gdy trzeba hamować
-                if (d < fMinProximityDist && v < fVelDes) // jak jest już blisko
-                    fVelDes = v; // ograniczenie aktualnej prędkości
+                a_tracks = (v_tracks * v_tracks - mvOccupied->Vel * mvOccupied->Vel) /
+                    (25.92 * d_tracks); // przyspieszenie: ujemne, gdy trzeba hamować
+                if (d_tracks < fMinProximityDist && v_tracks < fVelDes) // jak jest już blisko
+                    fVelDes = v_tracks; // ograniczenie aktualnej prędkości
             }
         }
         else
         { // mieięty tor ogranicza prędkość, dopóki cały skład nie przejedzie,
           // d=fLength+d; //zamiana na długość liczoną do przodu
             //if (v >= 1.0) // EU06 się zawieszało po dojechaniu na koniec toru postojowego
-                if ((d + stt.trTrack->Length()) < -fLength)
+                if ((d_tracks + stt.trTrack->Length()) < -fLength)
                 {
                     stt.iFlags = 0; // wyłączenie, jeśli już wyjechał za ten odcinek
                     continue;
                 }
-            if (v < fVelDes)
-                fVelDes = v; // ograniczenie aktualnej prędkości aż do wyjechania za ograniczenie
+            if (v_tracks < fVelDes)
+                fVelDes = v_tracks; // ograniczenie aktualnej prędkości aż do wyjechania za ograniczenie
         }
 		// sprawdzenie warunków dla torów
-        if ((a < fAcc && v == Min0RSpeed(v, fNext)) || (mvOccupied->Vel == 0 && d < fDist && v == Min0RSpeed(v, fNext)))
+        if ((a_tracks < fAcc && v_tracks == Min0RSpeed(v_tracks, fNext)) || 
+            (mvOccupied->Vel == 0 && d_tracks < fDist && v_tracks == Min0RSpeed(v_tracks, fNext)))
         { // mniejsze przyspieszenie to mniejsza możliwość rozpędzenia się albo konieczność
           // hamowania
           // jeśli droga wolna, to może być a>1.0 i się tu nie załapuje
           // if (mvOccupied->Vel>10.0)
-            fAcc = a; // zalecane przyspieszenie (nie musi być uwzględniane przez AI)
-            fNext = v; // istotna jest prędkość na końcu tego odcinka
-            fDist = d; // dlugość odcinka
+            fAcc = a_tracks; // zalecane przyspieszenie (nie musi być uwzględniane przez AI)
+            fNext = v_tracks; // istotna jest prędkość na końcu tego odcinka
+            fDist = d_tracks; // dlugość odcinka
         }
-        else if ((fAcc > 0) && (v > 0) && (v <= fNext))
+        else if ((fAcc > 0) && (v_tracks > 0) && (v_tracks <= fNext))
         { // jeśli nie ma wskazań do hamowania, można podać drogę i prędkość na jej końcu
-            fNext = v; // istotna jest prędkość na końcu tego odcinka
-            fDist = d; // dlugość odcinka (kolejne pozycje mogą wydłużać drogę, jeśli
+            fNext = v_tracks; // istotna jest prędkość na końcu tego odcinka
+            fDist = d_tracks; // dlugość odcinka (kolejne pozycje mogą wydłużać drogę, jeśli
                        // prędkość jest stała)
         }
     }
@@ -1024,10 +1025,10 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 
         // jeśli StopPoint
         if (ste.iFlags & spPassengerStopPoint)
-            TableCheckStopPoint(ste, fVelDes,fDist, fNext, fAcc, go);
+            TableCheckStopPoint(ste, go);
         // jeśli semafor
         else if (ste.iFlags & (spSemaphor | spShuntSemaphor))
-            TableCheckSemaphor(ste, fVelDes,fDist, fNext, fAcc);
+            TableCheckSemaphor(ste);
         // jeśli ograniczenie predkości
         else if ((ste.iFlags & spSectionVel) && (ste.fDist < 0))
         {
@@ -1041,37 +1042,37 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 		// jeśli koniec manewrów
 		else if (ste.iFlags & spOutsideStation)
 		{
-			TableCheckOutsideStation(ste, fVelDes, fDist, fNext, fAcc);
+			TableCheckOutsideStation(ste);
 		}
 		// koniec sprawdzania tabelki, teraz warunki zmiany zapisów
 		// na początek przepisanie prędkości i odległości z tabelki
-		v = ste.fVelNext; // odczyt prędkości do zmiennej pomocniczej
-		d = ste.fDist; // odczyt odległości do zmiennej pomocniczej (nie ma znaczenia, że v = -1)
+		v_events = ste.fVelNext; // odczyt prędkości do zmiennej pomocniczej
+		d_events = ste.fDist; // odczyt odległości do zmiennej pomocniczej (nie ma znaczenia, że v = -1)
 
 		if ((mvOccupied->CategoryFlag & 1) ? ste.fDist > pVehicles[0]->fTrackBlock - 20.0 :
 		false) // jak sygnał jest dalej niż zawalidroga
 		{
-			v = 0.0; // to może być podany dla tamtego: jechać tak, jakby tam stop był
+			v_events = 0.0; // to może być podany dla tamtego: jechać tak, jakby tam stop był
 		}
 		else
 		{ // zawalidrogi nie ma (albo pojazd jest samochodem), sprawdzić sygnał
 			if (ste.iFlags & spShuntSemaphor) // jeśli Tm - w zasadzie to sprawdzić komendę!
 			{ // jeśli podana prędkość manewrowa
-				if ((OrderCurrentGet() & Obey_train) ? v == 0.0 : false)
+				if ((OrderCurrentGet() & Obey_train) ? v_events == 0.0 : false)
 				{ // jeśli tryb pociągowy a tarcze ma ShuntVelocity 0 0
-					    v = -1; // ignorować, chyba że prędkość stanie się niezerowa
+					    v_events = -1; // ignorować, chyba że prędkość stanie się niezerowa
 					if (ste.iFlags & spElapsed) // a jak przejechana
 						ste.iFlags = 0; // to można usunąć, bo podstawowy automat usuwa tylko niezerowe
 				}
 				else if (go == cm_Unknown) // jeśli jeszcze nie ma komendy
-					if (v != 0.0) // komenda jest tylko gdy ma jechać, bo stoi na podstawie tabelki
+					if (v_events != 0.0) // komenda jest tylko gdy ma jechać, bo stoi na podstawie tabelki
 					{ // jeśli nie było komendy wcześniej - pierwsza się liczy - ustawianie VelSignal
 						go = cm_ShuntVelocity; // w trybie pociągowym tylko jeśli włącza tryb manewrowy (v!=0.0)
 						if (VelSignal == 0.0)
-							VelSignal = v; // aby stojący ruszył
+							VelSignal = v_events; // aby stojący ruszył
 						if (ste.fDist < 0.0) // jeśli przejechany
 						{
-							VelSignal = v; //!!! ustawienie, gdy przejechany jest lepsze niż wcale, ale to jeszcze nie to
+							VelSignal = v_events; //!!! ustawienie, gdy przejechany jest lepsze niż wcale, ale to jeszcze nie to
 							ste.iFlags = 0; // to można usunąć (nie mogą być usuwane w skanowaniu)
 						}
 					}
@@ -1079,7 +1080,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 			else if (!(ste.iFlags & spSectionVel) && (go == cm_Unknown)) //jeśli jakiś event pasywny ale nie ograniczenie
 				// jeśli nie było komendy wcześniej - pierwsza się liczy
 				// - ustawianie VelSignal
-				if (v < 0.0 ? true : v >= 1.0) // bo wartość 0.1 służy do hamowania tylko
+				if (v_events < 0.0 ? true : v_events >= 1.0) // bo wartość 0.1 służy do hamowania tylko
 				{
 					go = cm_SetVelocity; // może odjechać
 											// Ra 2014-06: (VelSignal) nie może być tu ustawiane, bo semafor może
@@ -1090,7 +1091,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 						VelSignal = -1.0; // aby stojący ruszył
 					if (ste.fDist < 0.0) // jeśli przejechany
 					{
-						VelSignal = (v != 0 ? -1.0 : 0.0);
+						VelSignal = (v_events != 0 ? -1.0 : 0.0);
 						// ustawienie, gdy przejechany jest lepsze niż
 						// wcale, ale to jeszcze nie to
 						if ((ste.evEvent != eSignSkip) ?
@@ -1111,41 +1112,42 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 						go = cm_Command; // komenda z komórki, do wykonania po zatrzymaniu
 				}
 		} // jeśli nie ma zawalidrogi
-		if ((ste.iFlags & spElapsed) ? false : d > 0.0) // sygnał lub ograniczenie z przodu (+32=przejechane)
+		if ((ste.iFlags & spElapsed) ? false : d_events > 0.0) // sygnał lub ograniczenie z przodu (+32=przejechane)
 		{ // 2014-02: jeśli stoi, a ma do przejechania kawałek, to niech jedzie
 			if ((mvOccupied->Vel == 0.0) ?
 				((ste.iFlags &
 				(spEnabled | spPassengerStopPoint)) ==
 					(spEnabled | spPassengerStopPoint)) &&
-					(d > fMaxProximityDist) :
+					(d_events > fMaxProximityDist) :
 				false)
-				a = (iDrivigFlags & moveStopCloser) ? fAcc : 0.0; // ma podjechać bliżej - czy na pewno w tym miejscu taki warunek?
+				a_events = (iDrivigFlags & moveStopCloser) ? fAcc : 0.0; // ma podjechać bliżej - czy na pewno w tym miejscu taki warunek?
 			else
 			{
-				a = (v * v - mvOccupied->Vel * mvOccupied->Vel) /
-					(25.92 * d); // przyspieszenie: ujemne, gdy trzeba hamować
-				if (d < fMinProximityDist) // jak jest już blisko
-					if (v < fVelDes)
-						fVelDes = v; // ograniczenie aktualnej prędkości
+				a_events = (v_events * v_events - mvOccupied->Vel * mvOccupied->Vel) /
+					(25.92 * d_events); // przyspieszenie: ujemne, gdy trzeba hamować
+				if (d_events < fMinProximityDist) // jak jest już blisko
+					if (v_events < fVelDes)
+						fVelDes = v_events; // ograniczenie aktualnej prędkości
 			}
 		}
 		else // event trzyma tylko jeśli VelNext=0, nawet po przejechaniu (nie powinno
 			 // dotyczyć samochodów?)
-			a = (v == 0.0 ? -1.0 : fAcc); // ruszanie albo hamowanie
-		if ((a < fAcc && v == Min0RSpeed(v, fNext)) || (mvOccupied->Vel == 0 && d < fDist && v == Min0RSpeed(v, fNext)))
+			a_events = (v_events == 0.0 ? -1.0 : fAcc); // ruszanie albo hamowanie
+		if (((a_events < fAcc || (a_events == fAcc && eSignNext == nullptr)) && v_events == Min0RSpeed(v_events, fNext)) || 
+            (mvOccupied->Vel == 0 && d_events < fDist && v_events == Min0RSpeed(v_events, fNext)))
 		{ // mniejsze przyspieszenie to mniejsza możliwość rozpędzenia się albo konieczność
 		  // hamowania
 		  // jeśli droga wolna, to może być a>1.0 i się tu nie załapuje
 		  // if (mvOccupied->Vel>10.0)
             eSignNext = ste.evEvent;
-			fAcc = a; // zalecane przyspieszenie (nie musi być uwzględniane przez AI)
-			fNext = v; // istotna jest prędkość na końcu tego odcinka
-			fDist = d; // dlugość odcinka
+			fAcc = a_events; // zalecane przyspieszenie (nie musi być uwzględniane przez AI)
+			fNext = v_events; // istotna jest prędkość na końcu tego odcinka
+			fDist = d_events; // dlugość odcinka
 		}
-		else if ((fAcc > 0) && (v > 0) && (v <= fNext))
+		else if ((fAcc > 0) && (v_events > 0) && (v_events <= fNext))
 		{ // jeśli nie ma wskazań do hamowania, można podać drogę i prędkość na jej końcu
-			fNext = v; // istotna jest prędkość na końcu tego odcinka
-			fDist = d; // dlugość odcinka (kolejne pozycje mogą wydłużać drogę, jeśli
+			fNext = v_events; // istotna jest prędkość na końcu tego odcinka
+			fDist = d_events; // dlugość odcinka (kolejne pozycje mogą wydłużać drogę, jeśli
 					   // prędkość jest stała)
 		}
 		//if (fNext >= 0.0)

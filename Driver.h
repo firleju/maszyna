@@ -363,11 +363,11 @@ class TController
     void TableClear();
     void TableTraceRoute(double fDistance, TDynamicObject *pVehicle = NULL);
     void TableCheckForChanges(double fDistance);
-	void TableCheckStopPoint(TSpeedPos & ste, double & fVelDes, double & fDist, double & fNext, double & fAcc, TCommandType & go);
-	void TableCheckSemaphor(TSpeedPos &ste, double &fVelDes, double &fDist, double &fNext, double &fAcc);
+	void TableCheckStopPoint(TSpeedPos & ste, TCommandType & go);
+	void TableCheckSemaphor(TSpeedPos &ste);
 	void TableCheckRoadVelocity(TSpeedPos &ste);
 	void TableCheckSectionVelocity(TSpeedPos &ste);
-	void TableCheckOutsideStation(TSpeedPos &ste, double &fVelDes, double &fDist, double &fNext, double &fAcc);
+	void TableCheckOutsideStation(TSpeedPos &ste);
     TCommandType TableUpdate(double &fVelDes, double &fDist, double &fNext, double &fAcc);
     inline double MoveDistanceGet()
     {
