@@ -1797,7 +1797,7 @@ void TController::AutoRewident()
 	}
 	if (mvOccupied->TrainType == dt_EZT)
 	{
-		fAccThreshold = std::max(-fBrake_a0[BrakeAccTableSize] - 8 * fBrake_a1[BrakeAccTableSize], -0.75);
+		fAccThreshold = std::max(-fBrake_a0[BrakeAccTableSize] - 8 * fBrake_a1[BrakeAccTableSize], -0.6);
 		fBrakeReaction = 0.25;
 	}
 	else if (ustaw > 16)
@@ -2688,7 +2688,15 @@ bool TController::IncSpeed()
         if (!mvControlling->FuseFlag)
 			if (Ready || (iDrivigFlags & movePress) || (mvOccupied->ShuntMode)) //{(BrakePress<=0.01*MaxBrakePress)}
             {
-                OK = mvControlling->IncMainCtrl(1);
+                OK = mvControlling->IncMainCtrl(std::max(1,mvOccupied->MainCtrlPosNo/10));
+				//tutaj jeszcze powinien być tempomat
+				mvControlling->IncScndCtrl(1);
+				double SpeedCntrl = VelDesired;
+				if (fProximityDist < 50)
+				{
+					SpeedCntrl = std::min(SpeedCntrl, VelNext);
+				}
+				mvControlling->RunCommand("SpeedCntrl", VelDesired, mvControlling->CabNo);
             }
         break;
     case WheelsDriven:
@@ -2741,11 +2749,22 @@ bool TController::DecSpeed(bool force)
         break;
     case Dumb:
     case DieselElectric:
-    case ElectricInductionMotor:
         OK = mvControlling->DecScndCtrl(2);
         if (!OK)
             OK = mvControlling->DecMainCtrl(2 + (mvControlling->MainCtrlPos / 2));
         break;
+	case ElectricInductionMotor:
+		OK = mvControlling->DecMainCtrl(1);
+		if ((mvControlling->ScndCtrlPosNo > 0)&&(mvControlling->Mains)) //jeżeli tempomat
+		{
+			mvControlling->IncScndCtrl(1);
+			mvControlling->RunCommand("SpeedCntrl", VelDesired, mvControlling->CabNo);
+		}
+		else
+		{
+			mvControlling->DecScndCtrl(2);
+		}
+		break;
     case WheelsDriven:
         if (!mvControlling->CabNo)
             mvControlling->CabActivisation();
@@ -5668,7 +5687,7 @@ bool TController::IsStop()
 double
 TController::TrackBlock() const {
 
-    return pVehicles[ TMoverParameters::side::front ]->fTrackBlock;
+    return pVehicles[ side::front ]->fTrackBlock;
 }
 
 void TController::MoveTo(TDynamicObject *to)

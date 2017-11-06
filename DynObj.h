@@ -338,7 +338,7 @@ private:
     bool bBrakeAcc;
     sound* rsUnbrake = nullptr; // yB - odglos luzowania
     float ModCamRot;
-    int iInventory; // flagi bitowe posiadanych submodeli (np. świateł)
+    int iInventory[ 2 ] { 0, 0 }; // flagi bitowe posiadanych submodeli (np. świateł)
     void TurnOff();
 
   public:
@@ -400,17 +400,17 @@ private:
     int iCabs; // maski bitowe modeli kabin
     TTrack *MyTrack; // McZapkie-030303: tor na ktorym stoi, ABu
     std::string asBaseDir;
-    int iOverheadMask; // maska przydzielana przez AI pojazdom posiadającym pantograf, aby wymuszały
-    // jazdę bezprądową
+    int iOverheadMask; // maska przydzielana przez AI pojazdom posiadającym pantograf, aby wymuszały jazdę bezprądową
     TTractionParam tmpTraction;
-    double fAdjustment; // korekcja - docelowo przenieść do TrkFoll.cpp wraz z odległością od
-    // poprzedniego
+    double fAdjustment; // korekcja - docelowo przenieść do TrkFoll.cpp wraz z odległością od poprzedniego
+
     TDynamicObject();
     ~TDynamicObject();
     double Init( // zwraca długość pojazdu albo 0, jeśli błąd
         std::string Name, std::string BaseDir, std::string asReplacableSkin, std::string Type_Name,
         TTrack *Track, double fDist, std::string DriverType, double fVel, std::string TrainName,
         float Load, std::string LoadType, bool Reversed, std::string);
+    void create_controller( std::string const Type, bool const Trainset );
     void AttachPrev(TDynamicObject *Object, int iType = 1);
     bool UpdateForce(double dt, double dt1, bool FullVer);
     void LoadUpdate();
@@ -464,6 +464,7 @@ private:
     void RadioStop();
 	void Damage(char flag);
 	void RaLightsSet(int head, int rear);
+    int LightList( side const Side ) const { return iInventory[ Side ]; }
     TDynamicObject * FirstFind(int &coupler_nr, int cf = 1);
     float GetEPP(); // wyliczanie sredniego cisnienia w PG
     int DirectionSet(int d); // ustawienie kierunku w składzie
