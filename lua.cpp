@@ -43,7 +43,11 @@ void lua::interpret(std::string file)
 
 int lua::atpanic(lua_State *s)
 {
-    ErrorLog(std::string(lua_tostring(s, -1)));
+	std::string err(lua_tostring(s, -1));
+    ErrorLog(err);
+#ifdef _WIN32
+        MessageBox(NULL, err.c_str(), "MaSzyna", MB_OK);
+#endif
     return 0;
 }
 
@@ -65,13 +69,14 @@ int lua::openffi(lua_State *s)
 
 extern "C"
 {
-    EXPORT TEvent* scriptapi_event_create(const char* name, lua::eventhandler_t handler, double delay)
+    EXPORT TEvent* scriptapi_event_create(const char* name, double delay, double randomdelay, lua::eventhandler_t handler)
     {
         TEvent *event = new TEvent();
         event->bEnabled = true;
         event->Type = tp_Lua;
         event->asName = std::string(name);
         event->fDelay = delay;
+        event->fRandomDelay = randomdelay;
         event->Params[0].asPointer = (void*)handler;
 		if (simulation::Events.insert(event))
 			return event;
@@ -108,6 +113,24 @@ extern "C"
         return false;
     }
 
+	EXPORT TIsolated* scriptapi_isolated_find(const char* name)
+	{
+		std::string str(name);
+		TIsolated *isolated = TIsolated::Find(name, false);
+		if (isolated)
+			return isolated;
+		else
+			WriteLog("lua: missing isolated: " + str);
+		return nullptr;
+	}
+
+	EXPORT bool scriptapi_isolated_isoccupied(TIsolated* isolated)
+	{
+		if (isolated)
+			return isolated->Busy();
+		return false;
+	}
+
     EXPORT const char* scriptapi_event_getname(TEvent *e)
     {
         if (e)
@@ -122,10 +145,10 @@ extern "C"
         return nullptr;
     }
 
-    EXPORT void scriptapi_event_dispatch(TEvent *e, TDynamicObject *activator)
+    EXPORT void scriptapi_event_dispatch(TEvent *e, TDynamicObject *activator, double delay)
     {
         if (e)
-            simulation::Events.AddToQuery(e, activator);
+            simulation::Events.AddToQuery(e, activator, delay);
     }
 
     EXPORT double scriptapi_random(double a, double b)

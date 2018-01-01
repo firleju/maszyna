@@ -21,8 +21,8 @@ http://mozilla.org/MPL/2.0/.
 
 #define EU07_USE_PICKING_FRAMEBUFFER
 //#define EU07_USE_DEBUG_SHADOWMAP
+//#define EU07_USE_DEBUG_CABSHADOWMAP
 //#define EU07_USE_DEBUG_CAMERA
-//#define EU07_USE_DEBUG_CULLING
 
 struct opengl_light {
 
@@ -156,20 +156,20 @@ public:
     // geometry methods
     // NOTE: hands-on geometry management is exposed as a temporary measure; ultimately all visualization data should be generated/handled automatically by the renderer itself
     // creates a new geometry bank. returns: handle to the bank or NULL
-    geometrybank_handle
+    gfx::geometrybank_handle
         Create_Bank();
     // creates a new geometry chunk of specified type from supplied vertex data, in specified bank. returns: handle to the chunk or NULL
-    geometry_handle
-        Insert( vertex_array &Vertices, geometrybank_handle const &Geometry, int const Type );
+    gfx::geometry_handle
+        Insert( gfx::vertex_array &Vertices, gfx::geometrybank_handle const &Geometry, int const Type );
     // replaces data of specified chunk with the supplied vertex data, starting from specified offset
     bool
-        Replace( vertex_array &Vertices, geometry_handle const &Geometry, std::size_t const Offset = 0 );
+        Replace( gfx::vertex_array &Vertices, gfx::geometry_handle const &Geometry, std::size_t const Offset = 0 );
     // adds supplied vertex data at the end of specified chunk
     bool
-        Append( vertex_array &Vertices, geometry_handle const &Geometry );
+        Append( gfx::vertex_array &Vertices, gfx::geometry_handle const &Geometry );
     // provides direct access to vertex data of specfied chunk
-    vertex_array const &
-        Vertices( geometry_handle const &Geometry ) const;
+    gfx::vertex_array const &
+        Vertices( gfx::geometry_handle const &Geometry ) const;
     // material methods
     material_handle
         Fetch_Material( std::string const &Filename, bool const Loadnow = true );
@@ -178,8 +178,6 @@ public:
     opengl_material const &
         Material( material_handle const Material ) const;
     // texture methods
-    void
-        Active_Texture( GLint const Textureunit );
     texture_handle
         Fetch_Texture( std::string const &Filename, bool const Loadnow = true );
     void
@@ -194,21 +192,21 @@ public:
         Pick_Control() const { return m_pickcontrolitem; }
     editor::basic_node const *
         Pick_Node() const { return m_picksceneryitem; }
-    // maintenance jobs
+    // maintenance methods
     void
         Update( double const Deltatime );
     TSubModel const *
         Update_Pick_Control();
     editor::basic_node const *
         Update_Pick_Node();
-    // debug performance string
+    // debug methods
     std::string const &
         info_times() const;
     std::string const &
         info_stats() const;
 
 // members
-    GLenum static const sunlight{ GL_LIGHT0 };
+    GLenum static const sunlight { GL_LIGHT0 };
     std::size_t m_drawcount { 0 };
 
 private:
@@ -217,6 +215,7 @@ private:
         none,
         color,
         shadows,
+        cabshadows,
         reflections,
         pickcontrols,
         pickscenery
@@ -272,9 +271,14 @@ private:
     void
         setup_units( bool const Diffuse, bool const Shadows, bool const Reflections );
     void
+        setup_shadow_map( GLuint const Texture, glm::mat4 const &Transformation );
+    void
         setup_shadow_color( glm::vec4 const &Shadowcolor );
     void
         switch_units( bool const Diffuse, bool const Shadows, bool const Reflections );
+    // helper, texture manager method; activates specified texture unit
+    void
+        select_unit( GLint const Textureunit );
     // runs jobs needed to generate graphics for specified render pass
     void
         Render_pass( rendermode const Mode );
@@ -306,7 +310,7 @@ private:
     void
         Render( scene::basic_cell::path_sequence::const_iterator First, scene::basic_cell::path_sequence::const_iterator Last );
     bool
-        Render_cab( TDynamicObject *Dynamic, bool const Alpha = false );
+        Render_cab( TDynamicObject const *Dynamic, bool const Alpha = false );
     void
         Render( TMemCell *Memcell );
     void
@@ -336,12 +340,12 @@ private:
 
 // members
     GLFWwindow *m_window { nullptr };
-    geometrybank_manager m_geometry;
+    gfx::geometrybank_manager m_geometry;
     material_manager m_materials;
     texture_manager m_textures;
     opengllight_array m_lights;
 
-    geometry_handle m_billboardgeometry { 0, 0 };
+    gfx::geometry_handle m_billboardgeometry { 0, 0 };
     texture_handle m_glaretexture { -1 };
     texture_handle m_suntexture { -1 };
     texture_handle m_moontexture { -1 };
@@ -354,13 +358,22 @@ private:
     GLuint m_picktexture { 0 };
     GLuint m_pickdepthbuffer { 0 };
 #endif
+    // main shadowmap resources
     int m_shadowbuffersize { 2048 };
     GLuint m_shadowframebuffer { 0 };
     GLuint m_shadowtexture { 0 };
 #ifdef EU07_USE_DEBUG_SHADOWMAP
     GLuint m_shadowdebugtexture{ 0 };
 #endif
+#ifdef EU07_USE_DEBUG_CABSHADOWMAP
+    GLuint m_cabshadowdebugtexture{ 0 };
+#endif
     glm::mat4 m_shadowtexturematrix; // conversion from camera-centric world space to light-centric clip space
+    // cab shadowmap resources
+    GLuint m_cabshadowframebuffer { 0 };
+    GLuint m_cabshadowtexture { 0 };
+    glm::mat4 m_cabshadowtexturematrix; // conversion from cab-centric world space to light-centric clip space
+    // environment map resources
     GLuint m_environmentframebuffer { 0 };
     GLuint m_environmentcubetexture { 0 };
     GLuint m_environmentdepthbuffer { 0 };
@@ -389,9 +402,11 @@ private:
     float m_speculartranslucentscalefactor { 1.f };
     bool m_renderspecular{ false }; // controls whether to include specular component in the calculations
 
-    renderpass_config m_renderpass;
+    renderpass_config m_renderpass; // parameters for current render pass
     section_sequence m_sectionqueue; // list of sections in current render pass
     cell_sequence m_cellqueue;
+    renderpass_config m_shadowpass; // parametrs of most recent shadowmap pass
+    renderpass_config m_cabshadowpass; // parameters of most recent cab shadowmap pass
     std::vector<TSubModel const *> m_pickcontrolsitems;
     TSubModel const *m_pickcontrolitem { nullptr };
     std::vector<editor::basic_node const *> m_picksceneryitems;

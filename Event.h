@@ -75,7 +75,7 @@ union TParam
     bool asBool;
     double asdouble;
     int asInt;
-    sound *tsTextSound;
+    sound_source *tsTextSound;
     char *asText;
     TCommandType asCommand;
     TTractionPowerSource *psPower;
@@ -140,7 +140,7 @@ public:
         FindEvent( std::string const &Name );
     // legacy method, inserts specified event in the event query
     bool
-        AddToQuery( TEvent *Event, TDynamicObject *Owner );
+        AddToQuery( TEvent *Event, TDynamicObject *Owner, double delay = 0.0 );
     // legacy method, executes queued events
     bool
         CheckQuery();

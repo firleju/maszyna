@@ -404,14 +404,15 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
         *parser >> token;
         break;
     case tp_Sound:
-        // Params[0].asRealSound->Init(asNodeName.c_str(),Parser->GetNextSymbol().ToDouble(),Parser->GetNextSymbol().ToDouble(),Parser->GetNextSymbol().ToDouble(),Parser->GetNextSymbol().ToDouble());
-        // McZapkie-070502: dzwiek przestrzenny (ale do poprawy)
-        // Params[1].asdouble=Parser->GetNextSymbol().ToDouble();
-        // Params[2].asdouble=Parser->GetNextSymbol().ToDouble();
-        // Params[3].asdouble=Parser->GetNextSymbol().ToDouble(); //polozenie X,Y,Z - do poprawy!
         parser->getTokens();
         *parser >> Params[0].asInt; // 0: wylaczyc, 1: wlaczyc; -1: wlaczyc zapetlone
+        Params[1].asdouble = 0.0;
         parser->getTokens();
+        if( parser->peek() != "endevent" ) {
+            // optional parameter, radio channel to receive/broadcast the sound
+            *parser >> Params[1].asdouble;
+            parser->getTokens();
+        }
         *parser >> token;
         break;
     case tp_Exit:
@@ -818,7 +819,7 @@ event_manager::FindEvent( std::string const &Name ) {
 
 // legacy method, inserts specified event in the event query
 bool
-event_manager::AddToQuery( TEvent *Event, TDynamicObject *Owner ) {
+event_manager::AddToQuery( TEvent *Event, TDynamicObject *Owner, double delay ) {
 
     if( ( false == Event->m_ignored ) && ( true == Event->bEnabled ) ) {
         // jeśli może być dodany do kolejki (nie używany w skanowaniu)
@@ -868,7 +869,7 @@ event_manager::AddToQuery( TEvent *Event, TDynamicObject *Owner ) {
                 // standardowe dodanie do kolejki
                 ++Event->iQueued; // zabezpieczenie przed podwójnym dodaniem do kolejki
                 WriteLog( "EVENT ADDED TO QUEUE" + ( Owner ? ( " by " + Owner->asName ) : "" ) + ": " + Event->asName );
-                Event->fStartTime = std::abs( Event->fDelay ) + Timer::GetTime(); // czas od uruchomienia scenerii
+                Event->fStartTime = delay + std::abs( Event->fDelay ) + Timer::GetTime(); // czas od uruchomienia scenerii
                 if( Event->fRandomDelay > 0.0 ) {
                     // doliczenie losowego czasu opóźnienia
                     Event->fStartTime += Event->fRandomDelay * Random( 10000 ) * 0.0001;
@@ -1027,11 +1028,18 @@ event_manager::CheckQuery() {
                         break;
                     }
                     case 1: {
-                        m_workevent->Params[ 9 ].tsTextSound->loop(false).play();
+                        if( m_workevent->Params[ 1 ].asdouble > 0.0 ) {
+                            Global::pWorld->radio_message(
+                                m_workevent->Params[ 9 ].tsTextSound,
+                                static_cast<int>( m_workevent->Params[ 1 ].asdouble ) );
+                        }
+                        else {
+                            m_workevent->Params[ 9 ].tsTextSound->play( sound_flags::exclusive );
+                        }
                         break;
                     }
                     case -1: {
-                        m_workevent->Params[ 9 ].tsTextSound->loop().play();
+                        m_workevent->Params[ 9 ].tsTextSound->play( sound_flags::exclusive | sound_flags::looping );
                         break;
                     }
                     default: {
@@ -1449,7 +1457,7 @@ event_manager::InitEvents() {
         }
         case tp_Sound: {
             // odtworzenie dźwięku
-            auto *sound = sound_man->create_sound(event->asNodeName);
+            auto *sound = simulation::Sounds.find( event->asNodeName );
             if( sound != nullptr )
                 event->Params[ 9 ].tsTextSound = sound;
             else
@@ -1565,14 +1573,19 @@ event_manager::InitLaunchers() {
             }
         }
 
-        launcher->Event1 = (
-            launcher->asEvent1Name != "none" ?
-                simulation::Events.FindEvent( launcher->asEvent1Name ) :
-                nullptr );
-        launcher->Event2 = (
-            launcher->asEvent2Name != "none" ?
-                simulation::Events.FindEvent( launcher->asEvent2Name ) :
-                nullptr );
+        if( launcher->asEvent1Name != "none" ) {
+            launcher->Event1 = simulation::Events.FindEvent( launcher->asEvent1Name );
+            if( launcher->Event1 == nullptr ) {
+                ErrorLog( "Bad scenario: event launcher \"" + launcher->name() + "\" cannot find event \"" + launcher->asEvent1Name + "\"" );
+            }
+        }
+
+        if( launcher->asEvent2Name != "none" ) {
+            launcher->Event2 = simulation::Events.FindEvent( launcher->asEvent2Name );
+            if( launcher->Event2 == nullptr ) {
+                ErrorLog( "Bad scenario: event launcher \"" + launcher->name() + "\" cannot find event \"" + launcher->asEvent2Name + "\"" );
+            }
+        }
     }
 }
 

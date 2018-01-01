@@ -25,6 +25,9 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #include "Globals.h"
 #include "Timer.h"
 #include "Logs.h"
+#include "renderer.h"
+#include "uilayer.h"
+#include "audiorenderer.h"
 #include "keyboardinput.h"
 #include "mouseinput.h"
 #include "gamepadinput.h"
@@ -49,7 +52,6 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #pragma comment(linker, "/subsystem:windows /ENTRY:mainCRTStartup") 
 #endif 
 
-std::unique_ptr<sound_manager> sound_man;
 TWorld World;
 
 namespace input {
@@ -346,10 +348,9 @@ int main(int argc, char *argv[])
 			|| (false == UILayer.init(window)))
 			return -1;
 
-		sound_man = std::make_unique<sound_manager>();
-
 		Global::pWorld = &World;
 
+		audio::renderer.init();
 		input::Keyboard.init();
 		input::Mouse.init();
 		input::Gamepad.init();
@@ -370,6 +371,9 @@ int main(int argc, char *argv[])
 	catch (std::runtime_error e)
 	{
         ErrorLog(e.what());
+#ifdef _WIN32
+		MessageBox(NULL, e.what(), "MaSzyna", MB_OK);
+#endif
 		return -1;
 	}
 
@@ -398,6 +402,7 @@ int main(int argc, char *argv[])
             input::Keyboard.poll();
             if (input::uart)
                 input::uart->poll();
+			simulation::Commands.update();
             if( true == Global::InputMouse )   { input::Mouse.poll(); }
             if( true == Global::InputGamepad ) { input::Gamepad.poll(); }
         }
@@ -405,6 +410,9 @@ int main(int argc, char *argv[])
 	catch (std::runtime_error e)
     {
     	ErrorLog(e.what());
+#ifdef _WIN32
+		MessageBox(NULL, e.what(), "MaSzyna", MB_OK);
+#endif
 		return -1;
 	}
 	catch( std::bad_alloc const &Error ) {
