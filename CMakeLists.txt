@@ -97,7 +97,9 @@ if (WIN32)
 	set(LUAJIT_INCLUDE_DIR ${LUAJIT_INCLUDE_DIR} "${DEPS_DIR}/luajit/include")
 	set(PYTHON_INCLUDE_DIR ${PYTHON_INCLUDE_DIR} "${DEPS_DIR}/python/include")
 	set(libserialport_INCLUDE_DIR ${LIBSERIALPORT_INCLUDE_DIR} "${DEPS_DIR}/libserialport/include")
-	
+	set(ZEROMQ_INCLUDE_DIR ${ZEROMQ_INCLUDE_DIR} "${DEPS_DIR}/zeromq/include")
+	set(CPPEROMQ_INCLUDE_DIR ${CPPEROMQ_INCLUDE_DIR} "${DEPS_DIR}/cpperomq/include")
+
 	if(${CMAKE_EXE_LINKER_FLAGS} STREQUAL "/machine:x64")
 		set (ARCH "x64")
 	else()
@@ -115,7 +117,8 @@ if (WIN32)
 	set(LUAJIT_LIBRARIES ${LUAJIT_LIBRARIES} "${DEPS_DIR}/luajit/lib/${ARCH}/lua51.lib")
 	set(PYTHON_LIBRARY ${PYTHON_LIBRARY} "${DEPS_DIR}/python/lib/${ARCH}/python27.lib")	
 	set(libserialport_LIBRARY ${LIBSERIALPORT_LIBRARY} "${DEPS_DIR}/libserialport/lib/${ARCH}/libserialport-0.lib")	
-	
+	set(ZEROMQ_LIBRARY ${ZEROMQ_LIBRARY} "${DEPS_DIR}/zeromq/lib/${ARCH}/libzmq.lib")	
+
 endif()
 
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL MSVC)
@@ -139,7 +142,7 @@ set_target_properties( ${PROJECT_NAME}
     PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR_DIR}/bin"
     PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/pdb"
 	OUTPUT_NAME "${PROJECT_NAME}${PREFIX}_${data_exe}"
 	DEBUG_POSTFIX "_d"
@@ -191,3 +194,10 @@ target_link_libraries(${PROJECT_NAME} ${LUAJIT_LIBRARIES})
 find_package(libserialport REQUIRED)
 include_directories(${libserialport_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} ${libserialport_LIBRARY})
+
+find_package(ZeroMQ REQUIRED)
+include_directories(${ZEROMQ_INCLUDE_DIR})
+target_link_libraries(${PROJECT_NAME} ${ZEROMQ_LIBRARY})
+
+find_package(CpperoMQ REQUIRED)
+include_directories(${CPPEROMQ_INCLUDE_DIR})

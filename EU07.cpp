@@ -19,6 +19,7 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #include "stdafx.h"
 #include <png.h>
 #include <thread>
+#include <CpperoMQ/All.hpp>
 
 #include "World.h"
 #include "simulation.h"
@@ -40,6 +41,7 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #include "resource.h"
 #include "uilayer.h"
 #include "uart.h"
+
 
 #pragma comment (lib, "glu32.lib")
 #pragma comment (lib, "dsound.lib")
@@ -394,6 +396,23 @@ int main(int argc, char *argv[])
     Console::On(); // włączenie konsoli
 #endif
 
+	auto net_context = CpperoMQ::Context();
+	auto net_client = net_context.createDealerSocket();
+	net_client.setIdentity("EU07");
+	net_client.connect("tcp://127.0.0.1:5555");
+	CpperoMQ::Poller net_poller = CpperoMQ::Poller(0);
+	auto net_clientPollItem = CpperoMQ::isReceiveReady(net_client, [&net_client]()
+	{
+		bool more = true;
+		while (more)
+		{
+			CpperoMQ::IncomingMessage mess;
+			mess.receive(net_client, more);
+			WriteLog("TCP: ", false);
+			WriteLog(std::string(mess.charData(),mess.size()).c_str());
+		}
+	});
+
     try {
         while( ( false == glfwWindowShouldClose( window ) )
             && ( true == World.Update() )
@@ -405,6 +424,9 @@ int main(int argc, char *argv[])
 			simulation::Commands.update();
             if( true == Global::InputMouse )   { input::Mouse.poll(); }
             if( true == Global::InputGamepad ) { input::Gamepad.poll(); }
+			net_poller.poll(net_clientPollItem);
+			auto mess = CpperoMQ::OutgoingMessage("Wiadomość testowa");
+			net_client.send(mess);
         }
 	}
 	catch (std::runtime_error e)
@@ -432,6 +454,5 @@ int main(int argc, char *argv[])
 
 	glfwDestroyWindow(window);
 	glfwTerminate();
-
 	return 0;
 }
