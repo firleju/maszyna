@@ -312,6 +312,17 @@ public:
     };
     static uart_conf_t uart_conf;
 
+	struct network_conf_t
+	{
+		bool enable = false;
+		std::string address = "127.0.0.1";
+		std::string port = "5555";
+		std::string identity = "EU07";
+	};
+	static network_conf_t network_conf;
+
+	static std::unique_ptr<multiplayer::ZMQConnection> network;
+
 	static opengl_light DayLight;
 
 	enum soundmode_t

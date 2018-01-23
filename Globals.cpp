@@ -165,7 +165,10 @@ bool Global::bnewAirCouplers = true;
 double Global::fTimeSpeed = 1.0; // przyspieszenie czasu, zmienna do testów
 bool Global::bHideConsole = false; // hunter-271211: ukrywanie konsoli
 
+// parametry komunikacji
 Global::uart_conf_t Global::uart_conf;
+Global::network_conf_t Global::network_conf;
+std::unique_ptr<multiplayer::ZMQConnection> Global::network = nullptr;
 
 //randomizacja
 std::mt19937 Global::random_engine = std::mt19937(std::time(NULL));
@@ -777,6 +780,15 @@ void Global::ConfigParse(cParser &Parser)
 			Parser.getTokens(1);
 			Parser >> Global::uart_conf.debug;
 		}
+		else if (token == "network")
+		{
+			Parser.getTokens(3, false);
+			Global::network_conf.enable = true;
+			Parser >> Global::network_conf.address;
+			Parser >> Global::network_conf.port;
+			Parser >> Global::network_conf.identity;
+		}
+
     } while ((token != "") && (token != "endconfig")); //(!Parser->EndOfFile)
     // na koniec trochę zależności
     if (!bLoadTraction) // wczytywanie drutów i słupów

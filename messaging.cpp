@@ -9,11 +9,11 @@ http://mozilla.org/MPL/2.0/.
 
 #include "stdafx.h"
 #include "messaging.h"
-
 #include "Globals.h"
 #include "simulation.h"
 #include "mtable.h"
 #include "Logs.h"
+#include "sn_utils.h"
 
 #ifdef _WIN32
 extern "C"
@@ -251,6 +251,90 @@ WyslijParam(int nr, int fl)
     cData.lpData = &r;
     Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global::window ), (LPARAM)&cData );
 #endif
+}
+
+ZMQMessage::ZMQMessage()
+{
+
+}
+
+bool ZMQMessage::send(const CpperoMQ::Socket & socket, const bool moreToSend) const
+{
+	using namespace CpperoMQ;
+	auto s = m_frames.size();
+	for (int i = 0; i < s; i++)
+	{
+		auto msg = OutgoingMessage(m_frames[i].size(), m_frames[i].ToByteArray());
+		if (!msg.send(socket, i != s - 1? true: moreToSend))
+			return false;
+	}
+	
+	return true;
+}
+
+bool ZMQMessage::receive(CpperoMQ::Socket& socket, bool& moreToReceive)
+{
+	using namespace CpperoMQ;
+	m_frames.clear();
+	moreToReceive = true;
+	while (moreToReceive)
+	{
+		IncomingMessage msg;
+		if (!msg.receive(socket, moreToReceive))
+			return false;
+		m_frames.emplace_back (msg.charData(), msg.size());
+	}
+	return true;
+}
+
+ZMQFrame::ZMQFrame(int32_t n)
+{
+	m_messageSize = sizeof(n);
+	m_data.reserve(m_messageSize);
+	sn_utils::ls_int32(m_data, n);
+}
+
+ZMQFrame::ZMQFrame(float n)
+{
+	m_messageSize = sizeof(n);
+	m_data.reserve(m_messageSize);
+	sn_utils::ls_float32(m_data, n);
+}
+
+std::string ZMQFrame::ToString()
+{
+	return std::string(reinterpret_cast<char*>(m_data.data()), m_data.size());
+}
+
+int32_t ZMQFrame::ToInt()
+{
+	return sn_utils::ld_int32(m_data);
+}
+
+float ZMQFrame::ToFloat()
+{
+	return sn_utils::ld_float32(m_data);
+}
+
+const uint8_t* ZMQFrame::ToByteArray() const
+{
+	return m_data.data();
+}
+
+ZMQConnection::ZMQConnection()
+{
+//net_context = CpperoMQ::Context();
+//net_socket = net_context.createDealerSocket();
+Global::network_conf_t conf = Global::network_conf;
+net_socket.setIdentity(conf.identity.c_str());
+net_socket.connect(std::string("tcp://"+conf.address+":"+conf.port).c_str());
+net_poller = CpperoMQ::Poller(0);
+
+}
+
+void ZMQConnection::poll()
+{
+	net_poller.poll(net_pollReceiver);
 }
 
 } // multiplayer

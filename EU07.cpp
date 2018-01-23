@@ -41,6 +41,7 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #include "resource.h"
 #include "uilayer.h"
 #include "uart.h"
+#include "messaging.h"
 
 
 #pragma comment (lib, "glu32.lib")
@@ -358,6 +359,9 @@ int main(int argc, char *argv[])
 		input::Gamepad.init();
         if (Global::uart_conf.enable)
             input::uart = std::make_unique<uart_input>();
+		if (Global::network_conf.enable)
+			Global::network = std::make_unique<multiplayer::ZMQConnection>();
+
 
 		Global::pWorld = &World;
 		if( false == World.Init( window ) ) {
@@ -396,22 +400,14 @@ int main(int argc, char *argv[])
     Console::On(); // włączenie konsoli
 #endif
 
-	auto net_context = CpperoMQ::Context();
-	auto net_client = net_context.createDealerSocket();
-	net_client.setIdentity("EU07");
-	net_client.connect("tcp://127.0.0.1:5555");
-	CpperoMQ::Poller net_poller = CpperoMQ::Poller(0);
-	auto net_clientPollItem = CpperoMQ::isReceiveReady(net_client, [&net_client]()
+	if (Global::network)
 	{
-		bool more = true;
-		while (more)
-		{
-			CpperoMQ::IncomingMessage mess;
-			mess.receive(net_client, more);
-			WriteLog("TCP: ", false);
-			WriteLog(std::string(mess.charData(),mess.size()).c_str());
-		}
-	});
+		using namespace multiplayer;
+		auto msg = ZMQMessage();
+		msg.AddFrame("Hello world");
+		msg.AddFrame("Witaj świecie");
+		Global::network->getSocket()->send(msg);
+	}
 
     try {
         while( ( false == glfwWindowShouldClose( window ) )
@@ -421,12 +417,11 @@ int main(int argc, char *argv[])
             input::Keyboard.poll();
             if (input::uart)
                 input::uart->poll();
+			if (Global::network)
+				Global::network->poll();
 			simulation::Commands.update();
             if( true == Global::InputMouse )   { input::Mouse.poll(); }
             if( true == Global::InputGamepad ) { input::Gamepad.poll(); }
-			net_poller.poll(net_clientPollItem);
-			auto mess = CpperoMQ::OutgoingMessage("Wiadomość testowa");
-			net_client.send(mess);
         }
 	}
 	catch (std::runtime_error e)
