@@ -169,6 +169,7 @@ bool Global::bHideConsole = false; // hunter-271211: ukrywanie konsoli
 Global::uart_conf_t Global::uart_conf;
 Global::network_conf_t Global::network_conf;
 std::unique_ptr<multiplayer::ZMQConnection> Global::network = nullptr;
+motiontelemetry::conf_t Global::motiontelemetry_conf;
 
 //randomizacja
 std::mt19937 Global::random_engine = std::mt19937(std::time(NULL));
@@ -789,6 +790,19 @@ void Global::ConfigParse(cParser &Parser)
 			Parser >> Global::network_conf.identity;
 		}
 
+		else if (token == "motiontelemetry")
+		{
+			Parser.getTokens(8);
+			Global::motiontelemetry_conf.enable = true;
+			Parser >> Global::motiontelemetry_conf.proto;
+			Parser >> Global::motiontelemetry_conf.address;
+			Parser >> Global::motiontelemetry_conf.port;
+			Parser >> Global::motiontelemetry_conf.updatetime;
+			Parser >> Global::motiontelemetry_conf.includegravity;
+			Parser >> Global::motiontelemetry_conf.fwdposbased;
+			Parser >> Global::motiontelemetry_conf.latposbased;
+			Parser >> Global::motiontelemetry_conf.axlebumpscale;
+		}
     } while ((token != "") && (token != "endconfig")); //(!Parser->EndOfFile)
     // na koniec trochę zależności
     if (!bLoadTraction) // wczytywanie drutów i słupów
@@ -1015,28 +1029,11 @@ void TTranscripts::AddLine(std::string const &txt, float show, float hide, bool 
             }
 */
 };
-void TTranscripts::Add(std::string const &txt, float len, bool backgorund)
+void TTranscripts::Add(std::string const &txt, bool backgorund)
 { // dodanie tekstów, długość dźwięku, czy istotne
     if (true == txt.empty())
         return; // pusty tekst
-/*
-    int i = 0, j = int(0.5 + 10.0 * len); //[0.1s]
-    if (*txt == '[')
-    { // powinny być dwa nawiasy
-        while (*++txt ? *txt != ']' : false)
-            if ((*txt >= '0') && (*txt <= '9'))
-                i = 10 * i + int(*txt - '0'); // pierwsza liczba aż do ]
-        if (*txt ? *++txt == '[' : false)
-        {
-            j = 0; // drugi nawias określa czas zakończenia wyświetlania
-            while (*++txt ? *txt != ']' : false)
-                if ((*txt >= '0') && (*txt <= '9'))
-                    j = 10 * j + int(*txt - '0'); // druga liczba aż do ]
-            if (*txt)
-                ++txt; // pominięcie drugiego ]
-        }
-    }
-*/
+
     std::string asciitext{ txt }; win1250_to_ascii( asciitext ); // TODO: launch relevant conversion table based on language
     cParser parser( asciitext );
     while( true == parser.getTokens( 3, false, "[]\n" ) ) {
@@ -1053,7 +1050,7 @@ void TTranscripts::Add(std::string const &txt, float len, bool backgorund)
     std::string transcript; parser >> transcript;
     while( false == transcript.empty() ) {
 
-        WriteLog( "Transcript text with no display/hide times: \"" + transcript + "\"" );
+//        WriteLog( "Transcript text with no display/hide times: \"" + transcript + "\"" );
         AddLine( transcript, 0.0, 0.12 * transcript.size(), false );
         transcript = ""; parser >> transcript;
     }

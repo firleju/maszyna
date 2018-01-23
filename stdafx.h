@@ -24,7 +24,7 @@
 #ifdef _WINDOWS
 #include "targetver.h"
 #define NOMINMAX
-#define _WINSOCKAPI_
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shlobj.h>
 #undef NOMINMAX

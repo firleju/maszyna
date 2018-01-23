@@ -77,6 +77,7 @@ set(SOURCES
 "vertex.cpp"
 "audio.cpp"
 "audiorenderer.cpp"
+"motiontelemetry.cpp"
 )
 
 set (PREFIX "")
@@ -201,3 +202,7 @@ target_link_libraries(${PROJECT_NAME} ${ZEROMQ_LIBRARY})
 
 find_package(CpperoMQ REQUIRED)
 include_directories(${CPPEROMQ_INCLUDE_DIR})
+
+if (WIN32)
+	target_link_libraries(${PROJECT_NAME} ws2_32)
+endif()

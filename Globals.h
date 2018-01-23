@@ -12,6 +12,7 @@ http://mozilla.org/MPL/2.0/.
 #include <string>
 #include "renderer.h"
 #include "dumb3d.h"
+#include "motiontelemetry.h"
 
 // definicje klawiszy
 const int k_IncMainCtrl = 0; //[Num+]
@@ -132,7 +133,7 @@ private:
     ~TTranscripts();
     void AddLine(std::string const &txt, float show, float hide, bool it);
     // dodanie tekstów, długość dźwięku, czy istotne
-    void Add(std::string const &txt, float len, bool background = false);
+    void Add(std::string const &txt, bool background = false);
     // usuwanie niepotrzebnych (ok. 10 razy na sekundę)
     void Update(); 
 };
@@ -311,6 +312,7 @@ public:
 		bool debug = false;
     };
     static uart_conf_t uart_conf;
+	static motiontelemetry::conf_t motiontelemetry_conf;
 
 	struct network_conf_t
 	{
