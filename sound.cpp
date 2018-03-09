@@ -14,6 +14,7 @@ http://mozilla.org/MPL/2.0/.
 #include "Globals.h"
 #include "World.h"
 #include "Train.h"
+#include "DynObj.h"
 
 // constructors
 sound_source::sound_source( sound_placement const Placement, float const Range ) :
@@ -35,7 +36,7 @@ sound_source::deserialize( std::string const &Input, sound_type const Legacytype
 }
 
 sound_source &
-sound_source::deserialize( cParser &Input, sound_type const Legacytype, int const Legacyparameters ) {
+sound_source::deserialize( cParser &Input, sound_type const Legacytype, int const Legacyparameters, int const Chunkrange ) {
 
     // cache parser config, as it may change during deserialization
     auto const inputautoclear { Input.autoclear() };
@@ -79,7 +80,7 @@ sound_source::deserialize( cParser &Input, sound_type const Legacytype, int cons
                         m_crossfaderange * 0.01f );
 */
             }
-            m_soundchunks.back().second.fadeout = std::max( 100, m_soundchunks.back().second.threshold );
+            m_soundchunks.back().second.fadeout = std::max( Chunkrange, m_soundchunks.back().second.threshold );
 //            m_soundchunks.back().second.fadeout = m_soundchunks.back().second.threshold;
             // test if the chunk table contains any actual samples while at it
             for( auto &soundchunk : m_soundchunks ) {
@@ -154,7 +155,7 @@ sound_source::deserialize_filename( cParser &Input ) {
         filenames.emplace_back( token );
     }
     if( false == filenames.empty() ) {
-        std::shuffle( std::begin( filenames ), std::end( filenames ), Global::random_engine );
+        std::shuffle( std::begin( filenames ), std::end( filenames ), Global.random_engine );
         return filenames.front();
     }
     else {
@@ -279,9 +280,9 @@ sound_source::deserialize_soundset( cParser &Input ) {
         soundsets.emplace_back( token );
     }
     if( false == soundsets.empty() ) {
-        std::shuffle( std::begin( soundsets ), std::end( soundsets ), Global::random_engine );
+        std::shuffle( std::begin( soundsets ), std::end( soundsets ), Global.random_engine );
 		auto cp = cParser( soundsets.front() );
-        return deserialize_soundset(cp);
+        return deserialize_soundset( cp );
     }
 }
 
@@ -301,7 +302,7 @@ sound_source::copy_sounds( sound_source const &Source ) {
 void
 sound_source::play( int const Flags ) {
 
-    if( ( false == Global::bSoundEnabled )
+    if( ( false == Global.bSoundEnabled )
      || ( true == empty() ) ) {
         // if the sound is disabled altogether or nothing can be emitted from this source, no point wasting time
         return;
@@ -312,7 +313,7 @@ sound_source::play( int const Flags ) {
 
     if( m_range > 0 ) {
         auto const cutoffrange { m_range * 5 };
-        if( glm::length2( location() - glm::dvec3 { Global::pCameraPosition } ) > std::min( 2750.f * 2750.f, cutoffrange * cutoffrange ) ) {
+        if( glm::length2( location() - glm::dvec3 { Global.pCameraPosition } ) > std::min( 2750.f * 2750.f, cutoffrange * cutoffrange ) ) {
             // while we drop sounds from beyond sensible and/or audible range
             // we act as if it was activated normally, meaning no need to include the opening bookend in subsequent calls
             m_playbeginning = false;
@@ -324,7 +325,13 @@ sound_source::play( int const Flags ) {
     if( m_pitchvariation == 0.f ) {
         m_pitchvariation = 0.01f * static_cast<float>( Random( 97.5, 102.5 ) );
     }
-
+/*
+    if( ( ( m_flags & sound_flags::exclusive ) != 0 )
+     && ( sound( sound_id::end ).playing > 0 ) ) {
+        // request termination of the optional ending bookend for single instance sounds
+        m_stopend = true;
+    }
+*/
     if( sound( sound_id::main ).buffer != null_handle ) {
         // basic variant: single main sound, with optional bookends
         play_basic();
@@ -352,8 +359,8 @@ sound_source::play_basic() {
     }
     else {
         // for single part non-looping samples we allow spawning multiple instances, if not prevented by set flags
-        if( ( sound( sound_id::begin ).buffer == null_handle )
-         && ( ( m_flags & ( sound_flags::exclusive | sound_flags::looping ) ) == 0 ) ) {
+        if( ( ( m_flags & ( sound_flags::exclusive | sound_flags::looping ) ) == 0 )
+         && ( sound( sound_id::begin ).buffer == null_handle ) ) {
             insert( sound_id::main );
         }
     }
@@ -447,8 +454,8 @@ sound_source::stop( bool const Skipend ) {
 
     if( ( false == Skipend )
      && ( sound( sound_id::end ).buffer != null_handle )
-     && ( sound( sound_id::end ).buffer != sound( sound_id::main ).buffer ) // end == main can happen in malformed legacy cases
-     && ( sound( sound_id::end ).playing == 0 ) ) {
+/*     && ( sound( sound_id::end ).buffer != sound( sound_id::main ).buffer ) */ // end == main can happen in malformed legacy cases
+/*     && ( sound( sound_id::end ).playing == 0 ) */ ) {
         // spawn potentially defined sound end sample, if the emitter is currently active
         insert( sound_id::end );
     }
@@ -475,36 +482,47 @@ sound_source::update_basic( audio::openal_source &Source ) {
 
     if( true == Source.is_playing ) {
 
-        if( ( true == m_stop )
-         && ( Source.sounds[ Source.sound_index ] != sound_id::end ) ) {
-            // kill the sound if stop was requested, unless it's sound bookend sample
-            Source.stop();
-            update_counter( Source.sounds[ Source.sound_index ], -1 );
-            if( false == is_playing() ) {
-                m_stop = false;
-            }
-            return;
-        }
+        auto const soundhandle { Source.sounds[ Source.sound_index ] };
 
         if( sound( sound_id::begin ).buffer != null_handle ) {
             // potentially a multipart sound
             // detect the moment when the sound moves from startup sample to the main
-            auto const soundhandle { Source.sounds[ Source.sound_index ] };
             if( ( false == Source.is_looping )
              && ( soundhandle == sound_id::main ) ) {
                 // when it happens update active sample counters, and activate the looping
                 update_counter( sound_id::begin, -1 );
                 update_counter( soundhandle, 1 );
-                Source.loop( true );
+                Source.loop( TestFlag( m_flags, sound_flags::looping ) );
             }
         }
+
+        if( ( true == m_stop )
+         && ( soundhandle != sound_id::end ) ) {
+            // kill the sound if stop was requested, unless it's sound bookend sample
+            update_counter( soundhandle, -1 );
+            Source.stop();
+            m_stop = is_playing(); // end the stop mode when all active sounds are dead
+            return;
+        }
+/*
+        if( ( true == m_stopend )
+         && ( soundhandle == sound_id::end ) ) {
+            // kill the sound if it's the bookend sample and stopping it was requested
+            Source.stop();
+            update_counter( sound_id::end, -1 );
+            if( sound( sound_id::end ).playing == 0 ) {
+                m_stopend = false;
+            }
+            return;
+        }
+*/
         // check and update if needed current sound properties
         update_location();
         update_soundproofing();
         Source.sync_with( m_properties );
         if( Source.sync != sync_state::good ) {
             // if the sync went wrong we let the renderer kill its part of the emitter, and update our playcounter(s) to match
-            update_counter( Source.sounds[ Source.sound_index ], -1 );
+            update_counter( soundhandle, -1 );
         }
 
     }
@@ -515,10 +533,9 @@ sound_source::update_basic( audio::openal_source &Source ) {
             // the emitter wasn't yet started
             auto const soundhandle { Source.sounds[ Source.sound_index ] };
             // emitter initialization
-            if( ( soundhandle == sound_id::main )
-             && ( true == TestFlag( m_flags, sound_flags::looping ) ) ) {
+            if( soundhandle == sound_id::main ) {
                 // main sample can be optionally set to loop
-                Source.loop( true );
+                Source.loop( TestFlag( m_flags, sound_flags::looping ) );
             }
             Source.range( m_range );
             Source.pitch( m_pitchvariation );
@@ -552,6 +569,18 @@ sound_source::update_combined( audio::openal_source &Source ) {
 
         auto const soundhandle { Source.sounds[ Source.sound_index ] };
 
+        if( sound( sound_id::begin ).buffer != null_handle ) {
+            // potentially a multipart sound
+            // detect the moment when the sound moves from startup sample to the main
+            if( ( false == Source.is_looping )
+             && ( soundhandle == ( sound_id::chunk | 0 ) ) ) {
+                // when it happens update active sample counters, and activate the looping
+                update_counter( sound_id::begin, -1 );
+                update_counter( soundhandle, 1 );
+                Source.loop( true );
+            }
+        }
+
         if( ( true == m_stop )
          && ( soundhandle != sound_id::end ) ) {
             // kill the sound if stop was requested, unless it's sound bookend sample
@@ -562,20 +591,18 @@ sound_source::update_combined( audio::openal_source &Source ) {
             }
             return;
         }
-
-        if( sound( sound_id::begin ).buffer != null_handle ) {
-            // potentially a multipart sound
-            // detect the moment when the sound moves from startup sample to the main
-            auto const soundhandle { Source.sounds[ Source.sound_index ] };
-            if( ( false == Source.is_looping )
-             && ( soundhandle == ( sound_id::chunk | 0 ) ) ) {
-                // when it happens update active sample counters, and activate the looping
-                update_counter( sound_id::begin, -1 );
-                update_counter( soundhandle, 1 );
-                Source.loop( true );
+/*
+        if( ( true == m_stopend )
+         && ( soundhandle == sound_id::end ) ) {
+            // kill the sound if it's the bookend sample and stopping it was requested
+            Source.stop();
+            update_counter( sound_id::end, -1 );
+            if( sound( sound_id::end ).playing == 0 ) {
+                m_stopend = false;
             }
+            return;
         }
-
+*/
         if( ( soundhandle & sound_id::chunk ) != 0 ) {
             // for sound chunks, test whether the chunk should still be active given current value of the controlling variable
             auto const soundpoint { compute_combined_point() };
@@ -600,7 +627,7 @@ sound_source::update_combined( audio::openal_source &Source ) {
         Source.sync_with( m_properties );
         if( Source.sync != sync_state::good ) {
             // if the sync went wrong we let the renderer kill its part of the emitter, and update our playcounter(s) to match
-            update_counter( Source.sounds[ Source.sound_index ], -1 );
+            update_counter( soundhandle, -1 );
         }
         // ...and restore base properties
         m_properties = baseproperties;
@@ -767,7 +794,7 @@ sound_source::empty() const {
 bool
 sound_source::is_playing( bool const Includesoundends ) const {
 
-    auto isplaying { ( sound( sound_id::begin ).playing + sound( sound_id::main ).playing ) > 0 };
+    auto isplaying { ( sound( sound_id::begin ).playing > 0 ) || ( sound( sound_id::main ).playing > 0 ) };
     if( ( false == isplaying )
      && ( false == m_soundchunks.empty() ) ) {
         // for emitters with sample tables check also if any of the chunks is active
@@ -807,6 +834,7 @@ sound_source::location() const {
 void
 sound_source::update_counter( sound_handle const Sound, int const Value ) {
 
+//    sound( Sound ).playing = std::max( 0, sound( Sound ).playing + Value );
     sound( Sound ).playing += Value;
     assert( sound( Sound ).playing >= 0 );
 }
@@ -826,17 +854,17 @@ sound_source::update_soundproofing() {
     // NOTE, HACK: current cab id can vary from -1 to +1, and we use another higher priority value for open cab window
     // we use this as modifier to force re-calculations when moving between compartments or changing window state
     int const activecab = (
-        Global::CabWindowOpen ? 2 :
+        Global.CabWindowOpen ? 2 :
         FreeFlyModeFlag ? 0 :
-        ( Global::pWorld->train() ?
-            Global::pWorld->train()->Dynamic()->MoverParameters->ActiveCab :
+        ( Global.pWorld->train() ?
+            Global.pWorld->train()->Dynamic()->MoverParameters->ActiveCab :
             0 ) );
     // location-based gain factor:
     std::uintptr_t soundproofingstamp = reinterpret_cast<std::uintptr_t>( (
         FreeFlyModeFlag ?
             nullptr :
-            ( Global::pWorld->train() ?
-                Global::pWorld->train()->Dynamic() :
+            ( Global.pWorld->train() ?
+                Global.pWorld->train()->Dynamic() :
                 nullptr ) ) )
         + activecab;
 
@@ -850,7 +878,7 @@ sound_source::update_soundproofing() {
         }
         case sound_placement::external: {
             m_properties.soundproofing = (
-                ( ( soundproofingstamp == 0 ) || ( true == Global::CabWindowOpen ) ) ?
+                ( ( soundproofingstamp == 0 ) || ( true == Global.CabWindowOpen ) ) ?
                     EU07_SOUNDPROOFING_NONE : // listener outside or has a window open
                     EU07_SOUNDPROOFING_STRONG ); // listener in a vehicle with windows shut
             break;
@@ -859,7 +887,7 @@ sound_source::update_soundproofing() {
             m_properties.soundproofing = (
                 soundproofingstamp == 0 ?
                     EU07_SOUNDPROOFING_STRONG : // listener outside HACK: won't be true if active vehicle has open window
-                    ( Global::pWorld->train()->Dynamic() != m_owner ?
+                    ( Global.pWorld->train()->Dynamic() != m_owner ?
                         EU07_SOUNDPROOFING_STRONG : // in another vehicle
                         ( activecab == 0 ?
                             EU07_SOUNDPROOFING_STRONG : // listener in the engine compartment
@@ -868,9 +896,9 @@ sound_source::update_soundproofing() {
         }
         case sound_placement::engine: {
             m_properties.soundproofing = (
-                ( ( soundproofingstamp == 0 ) || ( true == Global::CabWindowOpen ) ) ?
+                ( ( soundproofingstamp == 0 ) || ( true == Global.CabWindowOpen ) ) ?
                     EU07_SOUNDPROOFING_SOME : // listener outside or has a window open
-                    ( Global::pWorld->train()->Dynamic() != m_owner ?
+                    ( Global.pWorld->train()->Dynamic() != m_owner ?
                         EU07_SOUNDPROOFING_STRONG : // in another vehicle
                         ( activecab == 0 ?
                             EU07_SOUNDPROOFING_NONE : // listener in the engine compartment

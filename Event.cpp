@@ -17,6 +17,7 @@ http://mozilla.org/MPL/2.0/.
 
 #include "event.h"
 #include "simulation.h"
+#include "World.h"
 #include "Globals.h"
 #include "Timer.h"
 #include "Logs.h"
@@ -546,18 +547,12 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
             if( token != "else" ) {
                 if( token.substr( 0, 5 ) != "none_" ) {
                     // eventy rozpoczynające się od "none_" są ignorowane
-                    if( paramidx < 8 ) {
-                        Params[ paramidx ].asText = new char[ token.size() + 1 ];
-                        strcpy( Params[ paramidx ].asText, token.c_str() );
-                        if( ti ) {
-                            // oflagowanie dla eventów "else"
-                            iFlags |= conditional_else << paramidx;
-                        }
-                        ++paramidx;
-                    }
-                    else {
-                        ErrorLog( "Bad event: multi-event \"" + asName + "\" with more than 8 events; discarding link to event \"" + token + "\"" );
-                    }
+					ext_params.push_back(std::make_pair(TParam(), 0));
+                    ext_params[ paramidx ].first.asText = new char[ token.size() + 1 ];
+                    strcpy( ext_params[ paramidx ].first.asText, token.c_str() );
+                    // oflagowanie dla eventów "else"
+					ext_params[paramidx].second = (int)ti;
+                    ++paramidx;
                 }
                 else {
                     WriteLog( "Multi-event \"" + asName + "\" ignored link to event \"" + token + "\"" );
@@ -777,7 +772,7 @@ event_manager::insert( TEvent *Event ) {
         }
 
         auto *duplicate = m_events[ lookup->second ];
-        if( Global::bJoinEvents ) {
+        if( Global.bJoinEvents ) {
             // doczepka (taki wirtualny multiple bez warunków)
             duplicate->Append( Event );
         }
@@ -956,7 +951,7 @@ event_manager::CheckQuery() {
             case tp_GetValues: {
                 if( m_workevent->Activator ) {
                     // TODO: re-enable when messaging module is in place
-                    if( Global::iMultiplayer ) {
+                    if( Global.iMultiplayer ) {
                         // potwierdzenie wykonania dla serwera (odczyt semafora już tak nie działa)
                         multiplayer::WyslijEvent( m_workevent->asName, m_workevent->Activator->name() );
                     }
@@ -1007,7 +1002,7 @@ event_manager::CheckQuery() {
             }
             case tp_Visible: {
                 if( m_workevent->Params[ 9 ].asEditorNode )
-                    m_workevent->Params[ 9 ].asEditorNode->visible( m_workevent->Params[ i ].asInt > 0 );
+                    m_workevent->Params[ 9 ].asEditorNode->visible( m_workevent->Params[ 0 ].asInt > 0 );
                 break;
             }
             case tp_Velocity: {
@@ -1015,7 +1010,7 @@ event_manager::CheckQuery() {
                 break;
             }
             case tp_Exit: {
-                Global::iTextMode = -1; // wyłączenie takie samo jak sekwencja F10 -> Y
+                Global.iTextMode = -1; // wyłączenie takie samo jak sekwencja F10 -> Y
                 return false;
             }
             case tp_Sound: {
@@ -1029,7 +1024,7 @@ event_manager::CheckQuery() {
                     }
                     case 1: {
                         if( m_workevent->Params[ 1 ].asdouble > 0.0 ) {
-                            Global::pWorld->radio_message(
+                            Global.pWorld->radio_message(
                                 m_workevent->Params[ 9 ].tsTextSound,
                                 static_cast<int>( m_workevent->Params[ 1 ].asdouble ) );
                         }
@@ -1093,7 +1088,7 @@ event_manager::CheckQuery() {
                         m_workevent->Params[ 1 ].asdouble,
                         m_workevent->Params[ 2 ].asdouble );
                 }
-                if( Global::iMultiplayer ) {
+                if( Global.iMultiplayer ) {
                     // dajemy znać do serwera o przełożeniu
                     multiplayer::WyslijEvent( m_workevent->asName, "" ); // wysłanie nazwy eventu przełączajacego
                 }
@@ -1121,12 +1116,12 @@ event_manager::CheckQuery() {
                  || ( m_workevent->iFlags & conditional_anyelse ) ) {
                     // warunek spelniony albo było użyte else
                     WriteLog("Type: Multi-event");
-                    for (i = 0; i < 8; ++i) {
+                    for (i = 0; i < m_workevent->ext_params.size(); ++i) {
                         // dodawane do kolejki w kolejności zapisania
-                        if( m_workevent->Params[ i ].asEvent ) {
-                            if( bCondition != ( ( ( m_workevent->iFlags & ( conditional_else << i ) ) != 0 ) ) ) {
-                                if( m_workevent->Params[ i ].asEvent != m_workevent )
-                                    AddToQuery( m_workevent->Params[ i ].asEvent, m_workevent->Activator ); // normalnie dodać
+                        if( m_workevent->ext_params[ i ].first.asEvent ) {
+                            if( bCondition != (bool)m_workevent->ext_params[i].second  ) {
+                                if( m_workevent->ext_params[ i ].first.asEvent != m_workevent )
+                                    AddToQuery( m_workevent->ext_params[ i ].first.asEvent, m_workevent->Activator ); // normalnie dodać
                                 else {
                                     // jeśli ma być rekurencja to musi mieć sensowny okres powtarzania
                                     if( m_workevent->fDelay >= 5.0 ) {
@@ -1136,7 +1131,7 @@ event_manager::CheckQuery() {
                             }
                         }
                     }
-                    if( Global::iMultiplayer ) {
+                    if( Global.iMultiplayer ) {
                         // dajemy znać do serwera o wykonaniu
                         if( ( m_workevent->iFlags & conditional_anyelse ) == 0 ) {
                             // jednoznaczne tylko, gdy nie było else
@@ -1250,7 +1245,7 @@ event_manager::CheckQuery() {
             case tp_Friction: // zmiana tarcia na scenerii
             { // na razie takie chamskie ustawienie napięcia zasilania
                 WriteLog("Type: Friction");
-                Global::fFriction = (m_workevent->Params[0].asdouble);
+                Global.fFriction = (m_workevent->Params[0].asdouble);
             }
             break;
             case tp_Message: // wyświetlenie komunikatu
@@ -1424,8 +1419,10 @@ event_manager::InitEvents() {
             }
             if( node != nullptr )
                 event->Params[ 9 ].asEditorNode = node;
-            else
+            else {
+                event->m_ignored = true;
                 ErrorLog( "Bad event: visibility event \"" + event->asName + "\" cannot find item \"" + event->asNodeName + "\"" );
+            }
             event->asNodeName = "";
             break;
         }
@@ -1518,12 +1515,12 @@ event_manager::InitEvents() {
                     event->iFlags &= ~( conditional_memstring | conditional_memval1 | conditional_memval2 );
                 }
             }
-            for( int i = 0; i < 8; ++i ) {
-                if( event->Params[ i ].asText != nullptr ) {
-                    cellastext = event->Params[ i ].asText;
-                    SafeDeleteArray( event->Params[ i ].asText );
-                    event->Params[ i ].asEvent = FindEvent( cellastext );
-                    if( event->Params[ i ].asEvent == nullptr ) {
+            for( int i = 0; i < event->ext_params.size(); ++i ) {
+                if( event->ext_params[ i ].first.asText != nullptr ) {
+                    cellastext = event->ext_params[ i ].first.asText;
+                    SafeDeleteArray( event->ext_params[ i ].first.asText );
+                    event->ext_params[ i ].first.asEvent = FindEvent( cellastext );
+                    if( event->ext_params[ i ].first.asEvent == nullptr ) {
                         // Ra: tylko w logu informacja o braku
                         ErrorLog( "Bad event: multi-event \"" + event->asName + "\" cannot find event \"" + cellastext + "\"" );
                     }

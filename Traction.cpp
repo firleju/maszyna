@@ -18,6 +18,7 @@ http://mozilla.org/MPL/2.0/.
 #include "simulation.h"
 #include "Globals.h"
 #include "Logs.h"
+#include "renderer.h"
 
 //---------------------------------------------------------------------------
 /*
@@ -577,9 +578,9 @@ TTraction::wire_color() const {
         }
 		color *= 0.2;
         // w zaleźności od koloru swiatła
-		//color.r *= Global::daylight.ambient.x;
-		//color.g *= Global::daylight.ambient.y;
-		//color.b *= Global::daylight.ambient.z;
+        color.r *= Global.DayLight.ambient[ 0 ];
+        color.g *= Global.DayLight.ambient[ 1 ];
+        color.b *= Global.DayLight.ambient[ 2 ];
     }
     else {
         // tymczasowo pokazanie zasilanych odcinków

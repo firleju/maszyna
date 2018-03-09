@@ -12,15 +12,15 @@ http://mozilla.org/MPL/2.0/.
 #include <GLFW/glfw3.h>
 #include <string>
 
+#include "Classes.h"
 #include "Camera.h"
-#include "scene.h"
 #include "sky.h"
 #include "sun.h"
 #include "moon.h"
 #include "stars.h"
 #include "skydome.h"
-#include "McZapkie/MOVER.h"
 #include "messaging.h"
+#include "station.h"
 
 // wrapper for simulation time
 class simulation_time {
@@ -59,6 +59,8 @@ private:
 namespace simulation {
 
 extern simulation_time Time;
+
+extern basic_station Station; // temporary object, for station functionality tests
 
 }
 
@@ -112,6 +114,8 @@ TWorld();
     void ToggleDaylight();
     // calculates current season of the year based on set simulation date
     void compute_season( int const Yearday ) const;
+    // calculates current weather
+    void compute_weather() const;
 
 // members
 

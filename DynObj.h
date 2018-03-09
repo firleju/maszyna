@@ -12,8 +12,10 @@ http://mozilla.org/MPL/2.0/.
 #include <string>
 #include <functional>
 
+#include "Classes.h"
+#include "material.h"
+#include "MOVER.h"
 #include "TrkFoll.h"
-// McZapkie:
 #include "Button.h"
 #include "AirCoupler.h"
 #include "Texture.h"
@@ -193,13 +195,16 @@ public:
         TSubModel *compartment;
         TSubModel *load;
         float level;
-        section_light( TSubModel *Compartment, TSubModel *Load, float const Level ) :
-                      compartment(Compartment),      load(Load),      level(Level)
-        {}
     };
     std::vector<section_light> SectionLightLevels; // table of light levels for specific compartments of associated 3d model
     bool SectionLightsActive { false }; // flag indicating whether section lights were set.
     float fShade; // zacienienie: 0:normalnie, -1:w ciemności, +1:dodatkowe światło (brak koloru?)
+    struct section_visibility {
+        TSubModel *submodel;
+        bool visible;
+        int visible_chunks;
+    };
+    std::vector<section_visibility> SectionLoadVisibility; // visibility of specific sections of the load 3d model
 
 private:
     // zmienne i metody do animacji submodeli; Ra: sprzatam animacje w pojeździe
@@ -260,6 +265,13 @@ private:
 
 private:
 // types
+    struct exchange_data {
+        float unload_count { 0.f }; // amount to unload
+        float load_count { 0.f }; // amount to load
+        float speed_factor { 1.f }; // operation speed modifier
+        float time { 0.f }; // time spent on the operation
+    };
+
     struct coupler_sounds {
         sound_source dsbCouplerAttach { sound_placement::external }; // moved from cab
         sound_source dsbCouplerDetach { sound_placement::external }; // moved from cab
@@ -268,6 +280,7 @@ private:
     };
 
     struct pantograph_sounds {
+        // TODO: split pantograph sound into one for contact of arm with the wire, and electric arc sound
         sound_source sPantUp { sound_placement::external };
         sound_source sPantDown { sound_placement::external };
     };
@@ -277,6 +290,11 @@ private:
         sound_source rsDoorClose { sound_placement::general, 25.f };
     };
 
+    struct exchange_sounds {
+        sound_source loading { sound_placement::general };
+        sound_source unloading { sound_placement::general };
+    };
+
     struct axle_sounds {
         double distance; // distance to rail joint
         double offset; // axle offset from centre of the vehicle
@@ -284,6 +302,7 @@ private:
     };
 
     struct powertrain_sounds {
+        sound_source inverter { sound_placement::engine };
         sound_source motor { sound_placement::external }; // generally traction motor
         double motor_volume { 0.0 }; // MC: pomocnicze zeby gladziej silnik buczal
         float motor_momentum { 0.f }; // recent change in motor revolutions
@@ -312,6 +331,8 @@ private:
     void ABuBogies();
     void ABuModelRoll();
     void TurnOff();
+    // update state of load exchange operation
+    void update_exchange( double const Deltatime );
 
 // members
     TButton btCoupler1; // sprzegi
@@ -378,6 +399,9 @@ private:
     sound_source m_wheelflat { sound_placement::external, EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
     sound_source rscurve { sound_placement::external, EU07_SOUND_RUNNINGNOISECUTOFFRANGE }; // youBy
     sound_source rsDerailment { sound_placement::external, 250.f }; // McZapkie-051202
+
+    exchange_data m_exchange; // state of active load exchange procedure, if any
+    exchange_sounds m_exchangesounds; // sounds associated with the load exchange
 
     Math3D::vector3 modelShake;
 
@@ -452,14 +476,20 @@ private:
 
     TDynamicObject();
     ~TDynamicObject();
-    double Init( // zwraca długość pojazdu albo 0, jeśli błąd
+    // zwraca długość pojazdu albo 0, jeśli błąd
+    double Init(
         std::string Name, std::string BaseDir, std::string asReplacableSkin, std::string Type_Name,
         TTrack *Track, double fDist, std::string DriverType, double fVel, std::string TrainName,
         float Load, std::string LoadType, bool Reversed, std::string);
     void create_controller( std::string const Type, bool const Trainset );
     void AttachPrev(TDynamicObject *Object, int iType = 1);
     bool UpdateForce(double dt, double dt1, bool FullVer);
+    // initiates load change by specified amounts, with a platform on specified side
+    void LoadExchange( int const Disembark, int const Embark, int const Platform );
     void LoadUpdate();
+    void update_load_sections();
+    void update_load_visibility();
+    void shuffle_load_sections();
     bool Update(double dt, double dt1);
     bool FastUpdate(double dt);
     void Move(double fDistance);
@@ -543,6 +573,7 @@ private:
     void DestinationSet(std::string to, std::string numer);
     std::string TextureTest(std::string const &name);
     void OverheadTrack(float o);
+
     double MED[9][8]; // lista zmiennych do debugowania hamulca ED
     static std::string const MED_labels[ 8 ];
 };

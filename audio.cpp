@@ -9,11 +9,13 @@ http://mozilla.org/MPL/2.0/.
 
 #include "stdafx.h"
 
+#include <sndfile.h>
+
 #include "audio.h"
 #include "Globals.h"
-#include "McZapkie/mctools.h"
 #include "Logs.h"
-#include <sndfile.h>
+#include "ResourceManager.h"
+#include "utilities.h"
 
 namespace audio {
 
@@ -26,9 +28,14 @@ openal_buffer::openal_buffer( std::string const &Filename ) :
 	std::string file = Filename;
 	std::replace(file.begin(), file.end(), '\\', '/');
 
+	WriteLog("sound: loading file: " + file);
+
 	SNDFILE *sf = sf_open(file.c_str(), SFM_READ, &si);
+
 	if (sf == nullptr)
 		throw std::runtime_error("sound: sf_open failed");
+
+	sf_command(sf, SFC_SET_SCALE_FLOAT_INT_READ, NULL, SF_TRUE);
 
 	int16_t *fbuf = new int16_t[si.frames * si.channels];
 	if (sf_readf_short(sf, fbuf, si.frames) != si.frames)
@@ -72,14 +79,14 @@ openal_buffer::openal_buffer( std::string const &Filename ) :
 void
 openal_buffer::fetch_caption() {
 
-	std::string captionfilename{ name };
-	captionfilename.erase(captionfilename.rfind('.')); // obcięcie rozszerzenia
-	captionfilename += "-" + Global::asLang + ".txt"; // już może być w różnych językach
-	if (true == FileExists(captionfilename)) {
-		// wczytanie
-		std::ifstream inputfile(captionfilename);
-		caption.assign(std::istreambuf_iterator<char>(inputfile), std::istreambuf_iterator<char>());
-	}
+    std::string captionfilename { name };
+    captionfilename.erase( captionfilename.rfind( '.' ) ); // obcięcie rozszerzenia
+    captionfilename += "-" + Global.asLang + ".txt"; // już może być w różnych językach
+    if( true == FileExists( captionfilename ) ) {
+        // wczytanie
+        std::ifstream inputfile( captionfilename );
+        caption.assign( std::istreambuf_iterator<char>( inputfile ), std::istreambuf_iterator<char>() );
+    }
 }
 
 buffer_manager::~buffer_manager() {
@@ -110,13 +117,13 @@ buffer_manager::create( std::string const &Filename ) {
 
     audio::buffer_handle lookup { null_handle };
     std::string filelookup;
-    if( false == Global::asCurrentDynamicPath.empty() ) {
+    if( false == Global.asCurrentDynamicPath.empty() ) {
         // try dynamic-specific sounds first
-        lookup = find_buffer( Global::asCurrentDynamicPath + filename );
+        lookup = find_buffer( Global.asCurrentDynamicPath + filename );
         if( lookup != null_handle ) {
             return lookup;
         }
-        filelookup = find_file( Global::asCurrentDynamicPath + filename );
+        filelookup = find_file( Global.asCurrentDynamicPath + filename );
         if( false == filelookup.empty() ) {
             return emplace( filelookup );
         }
@@ -142,7 +149,7 @@ buffer_manager::create( std::string const &Filename ) {
         return emplace( filelookup );
     }
     // if we still didn't find anything, give up
-    ErrorLog( "Bad file: failed do locate audio file \"" + Filename + "\"" );
+    ErrorLog( "Bad file: failed do locate audio file \"" + Filename + "\"", logtype::file );
     return null_handle;
 }
 

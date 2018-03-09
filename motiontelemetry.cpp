@@ -5,11 +5,21 @@
 #include "Train.h"
 #include "Timer.h"
 #include "Driver.h"
+
+#ifdef _WIN32
+#include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#endif
 
 motiontelemetry::motiontelemetry()
 {
-	conf = Global::motiontelemetry_conf;
+	conf = Global.motiontelemetry_conf;
 
 #ifdef _WIN32
 	WSADATA wsd;
@@ -52,10 +62,10 @@ void motiontelemetry::update()
 		return;
 	last_update = now;
 
-	if (Global::iPause)
+	if (Global.iPause)
 		return;
 
-	TTrain *t = Global::pWorld->train();
+	TTrain *t = Global.pWorld->train();
 	if (!t)
 		return;
 

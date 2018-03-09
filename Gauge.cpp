@@ -99,7 +99,7 @@ bool TGauge::Load( cParser &Parser, TDynamicObject const *Owner, TModel3d *md1, 
 	scale *= mul;
     TSubModel *submodel = md1->GetFromName( submodelname );
     if( scale == 0.0 ) {
-        ErrorLog( "Bad model: scale of 0.0 defined for sub-model \"" + submodelname + "\" in 3d model \"" + md1->NameGet() + "\". Forcing scale of 1.0 to prevent division by 0" );
+        ErrorLog( "Bad model: scale of 0.0 defined for sub-model \"" + submodelname + "\" in 3d model \"" + md1->NameGet() + "\". Forcing scale of 1.0 to prevent division by 0", logtype::model );
         scale = 1.0;
     }
     if (submodel) // jeśli nie znaleziony
@@ -107,7 +107,7 @@ bool TGauge::Load( cParser &Parser, TDynamicObject const *Owner, TModel3d *md1, 
     else if (md2) // a jest podany drugi model (np. zewnętrzny)
         submodel = md2->GetFromName(submodelname); // to może tam będzie, co za różnica gdzie
     if( submodel == nullptr ) {
-        ErrorLog( "Bad model: failed to locate sub-model \"" + submodelname + "\" in 3d model \"" + md1->NameGet() + "\"" );
+        ErrorLog( "Bad model: failed to locate sub-model \"" + submodelname + "\" in 3d model \"" + md1->NameGet() + "\"", logtype::model );
     }
 
     std::map<std::string, TGaugeType> gaugetypes {
@@ -233,6 +233,11 @@ void TGauge::PutValue(double fNewDesired)
 double TGauge::GetValue() const {
     // we feed value in range 0-1 so we should be getting it reported in the same range
     return ( fValue - fOffset ) / fScale;
+}
+
+double TGauge::GetDesiredValue() const {
+    // we feed value in range 0-1 so we should be getting it reported in the same range
+    return ( fDesiredValue - fOffset ) / fScale;
 }
 
 void TGauge::Update() {

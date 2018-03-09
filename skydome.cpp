@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "skydome.h"
 #include "color.h"
-#include "usefull.h"
+#include "utilities.h"
 
 // sky gradient based on "A practical analytic model for daylight" 
 // by A. J. Preetham Peter Shirley Brian Smits (University of Utah)
@@ -242,7 +242,7 @@ void CSkyDome::RebuildColors() {
 	zenithluminance = PerezFunctionO1( perezluminance, m_thetasun, zenithluminance );
 
     // start with fresh average for the new pass
-    glm::vec3 averagecolor { 0.0f, 0.0f, 0.0f };
+    glm::vec3 averagecolor, averagehorizoncolor;
 
 	// trough all vertices
 	glm::vec3 vertex;
@@ -274,17 +274,17 @@ void CSkyDome::RebuildColors() {
 		float const y = PerezFunctionO2( perezy, icostheta, gamma, cosgamma2, zenithy );
 
 		// luminance(Y) for clear & overcast sky
-		float const yclear = PerezFunctionO2( perezluminance, icostheta, gamma, cosgamma2, zenithluminance );
-		float const yover = zenithluminance * ( 1.0f + 2.0f * vertex.y ) / 3.0f;
+		float const yclear = std::max( 0.01f, PerezFunctionO2( perezluminance, icostheta, gamma, cosgamma2, zenithluminance ) );
+		float const yover = std::max( 0.01f, zenithluminance * ( 1.0f + 2.0f * vertex.y ) / 3.0f );
 		
 		float const Y = interpolate( yclear, yover, m_overcast );
 		float const X = (x / y) * Y;  
 		float const Z = ((1.0f - x - y) / y) * Y;
 		
 		colorconverter = glm::vec3( X, Y, Z );
-		color = XYZtoRGB( colorconverter );
+		color = colors::XYZtoRGB( colorconverter );
 
-		colorconverter = RGBtoHSV(color);
+		colorconverter = colors::RGBtoHSV(color);
 		if ( m_linearexpcontrol ) {
             // linear scale
 			colorconverter.z *= m_expfactor;
@@ -304,13 +304,13 @@ void CSkyDome::RebuildColors() {
         auto const sunbasedphase = clamp( (1.0f / 15.0f) * ( degreesabovehorizon - 10.0f ), 0.0f, 1.0f );
         // correction is applied in linear manner from the bottom, becomes fully in effect for vertices with y = 0.50
         auto const heightbasedphase = clamp( vertex.y * 2.0f, 0.0f, 1.0f );
-        // this height-based factor is reduced the farther the sky is up in the sky
+        // this height-based factor is reduced the farther the sun is up in the sky
         float const shiftfactor = clamp( interpolate(heightbasedphase, sunbasedphase, sunbasedphase), 0.0f, 1.0f );
         // h = 210 makes for 'typical' sky tone
         shiftedcolor = glm::vec3( 210.0f, colorconverter.y, colorconverter.z );
-        shiftedcolor = HSVtoRGB( shiftedcolor );
+        shiftedcolor = colors::HSVtoRGB( shiftedcolor );
 
-		color = HSVtoRGB(colorconverter);
+		color = colors::HSVtoRGB(colorconverter);
 
         color = interpolate( color, shiftedcolor, shiftfactor );
 /*
@@ -332,14 +332,16 @@ void CSkyDome::RebuildColors() {
         }
 		// save
         m_colours[ i ] = color;
-        averagecolor += color * 8.0f; // save for edge cases each vertex goes in 8 triangles
+        averagecolor += color;
+        if( ( m_vertices.size() - i ) <= ( m_tesselation * 2 ) ) {
+            // calculate horizon colour from the bottom band of tris
+            averagehorizoncolor += color;
+        }
 	}
     // NOTE: average reduced to 25% makes nice tint value for clouds lit from behind
     // down the road we could interpolate between it and full strength average, to improve accuracy of cloud appearance
-    m_averagecolour = averagecolor / static_cast<float>( m_indices.size() );
-    m_averagecolour.r = std::max( m_averagecolour.r, 0.0f );
-    m_averagecolour.g = std::max( m_averagecolour.g, 0.0f );
-    m_averagecolour.b = std::max( m_averagecolour.b, 0.0f );
+    m_averagecolour = glm::max( glm::vec3(), averagecolor / static_cast<float>( m_vertices.size() ) );
+    m_averagehorizoncolour = glm::max( glm::vec3(), averagehorizoncolor / static_cast<float>( m_tesselation * 2 ) );
 
     if( m_coloursbuffer != -1 ) {
         // the colour buffer was already initialized, so on this run we update its content

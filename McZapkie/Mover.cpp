@@ -9,11 +9,11 @@ http://mozilla.org/MPL/2.0/.
 
 #include "stdafx.h"
 #include "MOVER.h"
+#include "Oerlikon_ESt.h"
+#include "utilities.h"
 #include "Globals.h"
 #include "Logs.h"
-#include "Oerlikon_ESt.h"
 #include "parser.h"
-//---------------------------------------------------------------------------
 
 // Ra: tu należy przenosić funcje z mover.pas, które nie są z niego wywoływane.
 // Jeśli jakieś zmienne nie są używane w mover.pas, też można je przenosić.
@@ -605,11 +605,12 @@ void TMoverParameters::BrakeLevelSet(double b)
     if (fBrakeCtrlPos == b)
         return; // nie przeliczać, jak nie ma zmiany
     fBrakeCtrlPos = b;
-    BrakeCtrlPosR = b;
     if (fBrakeCtrlPos < Handle->GetPos(bh_MIN))
         fBrakeCtrlPos = Handle->GetPos(bh_MIN); // odcięcie
     else if (fBrakeCtrlPos > Handle->GetPos(bh_MAX))
         fBrakeCtrlPos = Handle->GetPos(bh_MAX);
+    // TODO: verify whether BrakeCtrlPosR and fBrakeCtrlPos can be rolled into single variable
+    BrakeCtrlPosR = fBrakeCtrlPos;
     int x = static_cast<int>(std::floor(fBrakeCtrlPos)); // jeśli odwołujemy się do BrakeCtrlPos w pośrednich, to musi być
     // obcięte a nie zaokrągone
     while ((x > BrakeCtrlPos) && (BrakeCtrlPos < BrakeCtrlPosNo)) // jeśli zwiększyło się o 1
@@ -1666,9 +1667,8 @@ bool TMoverParameters::IncMainCtrl(int CtrlSpeed)
 						// all work is done in the loop header
 						;
 					}
-					// OK:=true ; {takie chamskie, potem poprawie} <-Ra: kto mia³ to
-					// poprawiæ i po co?
-					if( ActiveDir == -1 ) {
+					// OK:=true ; {takie chamskie, potem poprawie} <-Ra: kto mia³ to poprawiæ i po co?
+					if( ActiveDir < 0 ) {
 						while( ( RList[ MainCtrlPos ].Bn > 1 )
 							&& IncMainCtrl( 1 ) ) {
 							--MainCtrlPos;
@@ -1699,7 +1699,7 @@ bool TMoverParameters::IncMainCtrl(int CtrlSpeed)
                             }
 						}
 					}
-					if( ActiveDir == -1 ) {
+					if( ActiveDir < 0 ) {
 						if( ( TrainType != dt_PseudoDiesel )
 						 && ( RList[ MainCtrlPos ].Bn > 1 )	) {
                             // blokada wejścia na równoległą podczas jazdy do tyłu
@@ -2972,10 +2972,7 @@ bool TMoverParameters::BrakeDelaySwitch(int BDS)
     }
     else
         rBDS = false;
-    if( true == rBDS ) {
-        // if setting was changed emit the sound of pneumatic relay
-        SetFlag( SoundFlag, sound::pneumatic );
-    }
+
     return rBDS;
 }
 
@@ -3843,6 +3840,9 @@ double TMoverParameters::BrakeForceR(double ratio, double velocity)
 				ratio = ratio + (1.5 - ratio)*std::min(1.0, Vel*0.02);
 			if ((BrakeDelayFlag&bdelay_R) && (BrakeMethod%128 != bp_Cosid) && (BrakeMethod % 128 != bp_D1) && (BrakeMethod % 128 != bp_D2) && (Power<1) && (velocity<40))
 				ratio = ratio / 2;
+            if( ( TrainType == dt_DMU ) && ( velocity < 30.0 ) ) {
+                ratio -= 0.3;
+            }
 		}
 
 	}
@@ -4237,36 +4237,13 @@ double TMoverParameters::TractionForce(double dt)
 */
     // hunter-091012: przeniesione z if ActiveDir<>0 (zeby po zejsciu z kierunku dalej spadala predkosc wentylatorow)
     // wentylatory rozruchowe
-    // TODO: move this to update, it doesn't exactly have much to do with traction
-    if( true == Mains ) {
+    // TBD, TODO: move this to update, it doesn't exactly have much to do with traction
+    switch( EngineType ) {
 
-        switch( EngineType ) {
-            case ElectricInductionMotor: {
-                // TBD, TODO: currently ignores RVentType, fix this?
-                auto const tmpV { std::abs( eimv[ eimv_fp ] ) };
-
-                if( ( RlistSize > 0 )
-                 && ( ( std::abs( eimv[ eimv_If ] ) > 1.0 )
-                   || ( tmpV > 0.1 ) ) ) {
-
-                    int i = 0;
-                    while( ( i < RlistSize - 1 )
-                        && ( DElist[ i + 1 ].RPM < tmpV ) ) {
-                        ++i;
-                    }
-                    RventRot =
-                        ( tmpV - DElist[ i ].RPM )
-                        / std::max( 1.0, ( DElist[ i + 1 ].RPM - DElist[ i ].RPM ) )
-                        * ( DElist[ i + 1 ].GenPower - DElist[ i ].GenPower )
-                        + DElist[ i ].GenPower;
-                }
-                else {
-                    RventRot *= std::max( 0.0, 1.0 - RVentSpeed * dt );
-                }
-                break;
-            }
-            case ElectricSeriesMotor: {
+        case ElectricSeriesMotor: {
+            if( true == Mains ) {
                 switch( RVentType ) {
+
                     case 1: { // manual
                         if( ( ActiveDir != 0 )
                          && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
@@ -4277,40 +4254,55 @@ double TMoverParameters::TractionForce(double dt)
                         }
                         break;
                     }
+
                     case 2: { // automatic
+                        auto const motorcurrent{ std::min<double>( ImaxHi, std::abs( Im ) ) };
                         if( ( std::abs( Itot ) > RVentMinI )
                          && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
-                            RventRot += ( RVentnmax * abs( Itot ) / ( ImaxLo * RList[ MainCtrlActualPos ].Bn ) - RventRot ) * RVentSpeed * dt;
+
+                            RventRot +=
+                                ( RVentnmax
+                                    * std::min( 1.0, ( ( motorcurrent / NPoweredAxles ) / RVentMinI ) )
+                                    * motorcurrent / ImaxLo
+                                    - RventRot )
+                                * RVentSpeed * dt;
                         }
                         else if( ( DynamicBrakeType == dbrake_automatic )
                               && ( true == DynamicBrakeFlag ) ) {
-                            RventRot += ( RVentnmax * Im / ImaxLo - RventRot ) * RVentSpeed * dt;
+                            RventRot += ( RVentnmax * motorcurrent / ImaxLo - RventRot ) * RVentSpeed * dt;
                         }
                         else {
                             RventRot *= std::max( 0.0, 1.0 - RVentSpeed * dt );
                         }
                         break;
                     }
+
                     default: {
                         break;
                     }
                 } // rventtype
+            } // mains
+            else {
+                RventRot *= std::max( 0.0, 1.0 - RVentSpeed * dt );
             }
-            case DieselElectric: {
+            break;
+        }
+
+        case DieselElectric: {
+            if( true == Mains ) {
                 // TBD, TODO: currently ignores RVentType, fix this?
-                RventRot += clamp( DElist[ MainCtrlPos ].RPM - RventRot, -100.0, 50.0 ) * dt;
-                break;
+                RventRot += clamp( DElist[ MainCtrlPos ].RPM / 60.0 - RventRot, -100.0, 50.0 ) * dt;
             }
-            case DieselEngine:
-            default: {
-                break;
+            else {
+                RventRot *= std::max( 0.0, 1.0 - RVentSpeed * dt );
             }
-        } // enginetype
+            break;
+        }
+
+        default: {
+            break;
+        }
     }
-    else {
-        RventRot *= std::max( 0.0, 1.0 - RVentSpeed * dt );
-    }
-    RventRot = std::max( 0.0, RventRot );
 
     if (ActiveDir != 0)
         switch (EngineType)
@@ -4443,29 +4435,36 @@ double TMoverParameters::TractionForce(double dt)
             }
             else // jazda ciapongowa
             {
-
                 auto power = Power;
                 if( true == Heating ) { power -= HeatingPower; }
                 if( power < 0.0 ) { power = 0.0; }
-                tmp = std::min( DElist[ MainCtrlPos ].GenPower, power );// Power - HeatingPower * double( Heating ));
+                // NOTE: very crude way to approximate power generated at current rpm instead of instant top output
+                auto const currentgenpower { (
+                    DElist[ MainCtrlPos ].RPM > 0 ?
+                        DElist[ MainCtrlPos ].GenPower * ( 60.0 * enrot / DElist[ MainCtrlPos ].RPM ) :
+                        0.0 ) };
+                    
+                tmp = std::min( power, currentgenpower );
 
-                PosRatio = DElist[MainCtrlPos].GenPower / DElist[MainCtrlPosNo].GenPower;
+                PosRatio = currentgenpower / DElist[MainCtrlPosNo].GenPower;
                 // stosunek mocy teraz do mocy max
-                if ((MainCtrlPos > 0) && (ConverterFlag))
-                    if (tmpV <
-                        (Vhyp * power /
-                         DElist[MainCtrlPosNo].GenPower)) // czy na czesci prostej, czy na hiperboli
-                        Ft = (Ftmax -
-                              ((Ftmax - 1000.0 * DElist[MainCtrlPosNo].GenPower / (Vhyp + Vadd)) *
-                               (tmpV / Vhyp) / PowerCorRatio)) *
-                             PosRatio; // posratio - bo sila jakos tam sie rozklada
+                if( ( MainCtrlPos > 0 ) && ( ConverterFlag ) ) {
 
-                    // Ft:=(Ftmax - (Ftmax - (1000.0 * DEList[MainCtrlPosNo].genpower /
-                    //(Vhyp+Vadd) / PowerCorRatio)) * (tmpV/Vhyp)) * PosRatio //wersja z Megapacka
-                    else // na hiperboli                             //1.107 -
-                        // wspolczynnik sredniej nadwyzki Ft w symku nad charakterystyka
-                        Ft = 1000.0 * tmp / (tmpV + Vadd) /
-                             PowerCorRatio; // tu jest zawarty stosunek mocy
+                    if( tmpV < ( Vhyp * power / DElist[ MainCtrlPosNo ].GenPower ) ) {
+                        // czy na czesci prostej, czy na hiperboli
+                        Ft = ( Ftmax
+                               - ( ( Ftmax - 1000.0 * DElist[ MainCtrlPosNo ].GenPower / ( Vhyp + Vadd ) )
+                                   * ( tmpV / Vhyp )
+                                   / PowerCorRatio ) )
+                            * PosRatio; // posratio - bo sila jakos tam sie rozklada
+                    }
+                    else {
+                        // na hiperboli
+                        // 1.107 - wspolczynnik sredniej nadwyzki Ft w symku nad charakterystyka
+                        Ft = 1000.0 * tmp / ( tmpV + Vadd ) /
+                            PowerCorRatio; // tu jest zawarty stosunek mocy
+                    }
+                }
                 else
                     Ft = 0; // jak nastawnik na zero, to sila tez zero
 
@@ -4506,32 +4505,40 @@ double TMoverParameters::TractionForce(double dt)
                     Im = DElist[MainCtrlPos].Imax;
                 }
 
-                if (Im > 0) // jak pod obciazeniem
-                    if (Flat) // ograniczenie napiecia w pradnicy - plaszczak u gory
-                        Voltage = 1000.0 * tmp / abs(Im);
-                    else // charakterystyka pradnicy obcowzbudnej (elipsa) - twierdzenie Pitagorasa
-
-                    {
-                        Voltage = sqrt(abs(square(DElist[MainCtrlPos].Umax) -
-                                           square(DElist[MainCtrlPos].Umax * Im /
-                                               DElist[MainCtrlPos].Imax))) *
-                                      (MainCtrlPos - 1) +
-                                  (1.0 - Im / DElist[MainCtrlPos].Imax) * DElist[MainCtrlPos].Umax *
-                                      (MainCtrlPosNo - MainCtrlPos);
-                        Voltage = Voltage / (MainCtrlPosNo - 1);
-                        Voltage = Min0R(Voltage, (1000.0 * tmp / abs(Im)));
-                        if (Voltage < (Im * 0.05))
-                            Voltage = Im * 0.05;
+                if( Im > 0 ) {
+                    // jak pod obciazeniem
+                    if( true == Flat ) {
+                        // ograniczenie napiecia w pradnicy - plaszczak u gory
+                        Voltage = 1000.0 * tmp / std::abs( Im );
                     }
-                if ((Voltage > DElist[MainCtrlPos].Umax) ||
-                    (Im == 0)) // gdy wychodzi za duze napiecie
-                    Voltage = DElist[MainCtrlPos].Umax *
-                              int(ConverterFlag); // albo przy biegu jalowym (jest cos takiego?)
+                    else {
+                        // charakterystyka pradnicy obcowzbudnej (elipsa) - twierdzenie Pitagorasa
+                        Voltage =
+                            std::sqrt(
+                                std::abs(
+                                    square( DElist[ MainCtrlPos ].Umax )
+                                    - square( DElist[ MainCtrlPos ].Umax * Im / DElist[ MainCtrlPos ].Imax ) ) )
+                            * ( MainCtrlPos - 1 )
+                            + ( 1.0 - Im / DElist[ MainCtrlPos ].Imax ) * DElist[ MainCtrlPos ].Umax * ( MainCtrlPosNo - MainCtrlPos );
+                        Voltage /= ( MainCtrlPosNo - 1 );
+                        Voltage = clamp(
+                            Voltage,
+                            Im * 0.05, ( 1000.0 * tmp / std::abs( Im ) ) );
+                    }
+                }
+
+                if( ( Voltage > DElist[ MainCtrlPos ].Umax )
+                 || ( Im == 0 ) ) {
+                    // gdy wychodzi za duze napiecie albo przy biegu jalowym (jest cos takiego?)
+                    Voltage = DElist[ MainCtrlPos ].Umax * ( ConverterFlag ? 1 : 0 ); 
+                }
 
                 EnginePower = Voltage * Im / 1000.0;
-
+/*
+                // NOTE: this part is experimentally disabled, as it generated early traction force drop for undetermined purpose
                 if ((tmpV > 2) && (EnginePower < tmp))
                     Ft = Ft * EnginePower / tmp;
+*/
             }
 
             if ((Imax > 1) && (Im > Imax))
@@ -4705,8 +4712,7 @@ double TMoverParameters::TractionForce(double dt)
                     MainSwitch( false, ( TrainType == dt_EZT ? range::unit : range::local ) ); // TODO: check whether we need to send this EMU-wide
                 }
             }
-            if ((Mains))
-            {
+            if( true == Mains ) {
 
                 dtrans = Hamulec->GetEDBCP();
                 if (((DoorLeftOpened) || (DoorRightOpened)))
@@ -4874,35 +4880,56 @@ double TMoverParameters::TractionForce(double dt)
                 Itot = eimv[eimv_Ipoj] * (0.01 + Min0R(0.99, 0.99 - Vadd));
 
                 EnginePower = abs(eimv[eimv_Ic] * eimv[eimv_U] * NPoweredAxles) / 1000;
+                // power inverters
+                auto const tmpV { std::abs( eimv[ eimv_fp ] ) };
+
+                if( ( RlistSize > 0 )
+                 && ( ( std::abs( eimv[ eimv_If ] ) > 1.0 )
+                   || ( tmpV > 0.1 ) ) ) {
+
+                    int i = 0;
+                    while( ( i < RlistSize - 1 )
+                        && ( DElist[ i + 1 ].RPM < tmpV ) ) {
+                        ++i;
+                    }
+                    InverterFrequency =
+                        ( tmpV - DElist[ i ].RPM )
+                        / std::max( 1.0, ( DElist[ i + 1 ].RPM - DElist[ i ].RPM ) )
+                        * ( DElist[ i + 1 ].GenPower - DElist[ i ].GenPower )
+                        + DElist[ i ].GenPower;
+                }
+                else {
+                    InverterFrequency = 0.0;
+                }
 
                 Mm = eimv[eimv_M] * DirAbsolute;
                 Mw = Mm * Transmision.Ratio;
                 Fw = Mw * 2.0 / WheelDiameter;
                 Ft = Fw * NPoweredAxles;
                 eimv[eimv_Fr] = DirAbsolute * Ft / 1000;
-                //       RventRot;
-            }
+            } // mains
             else
             {
-                Im = 0;
-                Mm = 0;
-                Mw = 0;
-                Fw = 0;
-                Ft = 0;
-                Itot = 0;
-                dizel_fill = 0;
-                EnginePower = 0;
+                Im = 0.0;
+                Mm = 0.0;
+                Mw = 0.0;
+                Fw = 0.0;
+                Ft = 0.0;
+                Itot = 0.0;
+                dizel_fill = 0.0;
+                EnginePower = 0.0;
                 {
                     for (int i = 0; i < 21; ++i)
-                        eimv[i] = 0;
+                        eimv[i] = 0.0;
                 }
-                Hamulec->SetED(0);
-                RventRot = 0.0; //(Hamulec as TLSt).SetLBP(LocBrakePress);
+                Hamulec->SetED(0.0);
+                InverterFrequency = 0.0; //(Hamulec as TLSt).SetLBP(LocBrakePress);
             }
 			break;
         } // ElectricInductionMotor
+
         case None:
-        {
+        default: {
             break;
         }
         } // case EngineType
@@ -5173,9 +5200,12 @@ bool TMoverParameters::AutoRelayCheck(void)
 
     // Ra 2014-06: dla SN61 nie działa prawidłowo
     // rozlaczanie stycznikow liniowych
-    if ((!Mains) || (FuseFlag) || (MainCtrlPos == 0) ||
-        ((BrakePress > 2.1) && (TrainType != dt_EZT)) ||
-        (ActiveDir == 0)) // hunter-111211: wylacznik cisnieniowy
+    if( ( false == Mains )
+     || ( true == FuseFlag )
+     || ( true == StLinSwitchOff )
+     || ( MainCtrlPos == 0 )
+     || ( ( TrainType != dt_EZT ) && ( BrakePress > 2.1 ) )
+     || ( ActiveDir == 0 ) ) // hunter-111211: wylacznik cisnieniowy
     {
         StLinFlag = false; // yBARC - rozlaczenie stycznikow liniowych
         OK = false;
@@ -5247,34 +5277,46 @@ bool TMoverParameters::AutoRelayCheck(void)
                      && ( MainCtrlPos > 0 )
                      && ( MainCtrlPos != MainCtrlPosNo )
                      && ( FastSerialCircuit == 1 ) ) {
-
+                        // szybkie wchodzenie na bezoporowa (303E)
+                        // MainCtrlActualPos:=MainCtrlPos; //hunter-111012:
                         ++MainCtrlActualPos;
-                        //                 MainCtrlActualPos:=MainCtrlPos; //hunter-111012:
-                        //                 szybkie wchodzenie na bezoporowa (303E)
-                        OK = true;
-                        SetFlag(SoundFlag, sound::parallel | sound::loud);
+                        if( MainCtrlPos - MainCtrlActualPos == 1 ) {
+                            // HACK: ensure we play only single sound of basic relays for entire trasition; return false
+                            // for all but last step despite configuration change, to prevent playback of the basic relay sound
+                            // TBD, TODO: move the basic sound event here and enable it with call parameter
+                            OK = true;
+                        }
+                        if( RList[ MainCtrlActualPos ].R == 0 ) {
+                            SetFlag( SoundFlag, sound::parallel | sound::loud );
+                            OK = true;
+                        }
                     }
                     else if ((LastRelayTime > CtrlDelay) && (ARFASI))
                     {
                         // WriteLog("LRT = " + FloatToStr(LastRelayTime) + ", " +
                         // FloatToStr(CtrlDelay));
-                        if ((TrainType == dt_ET22) && (MainCtrlPos > 1) &&
-                            ((RList[MainCtrlActualPos].Bn < RList[MainCtrlActualPos + 1].Bn) ||
-                             (DelayCtrlFlag))) // et22 z walem grupowym
-                            if (!DelayCtrlFlag) // najpierw przejscie
+                        if( ( TrainType == dt_ET22 )
+                         && ( MainCtrlPos > 1 )
+                         && ( ( RList[ MainCtrlActualPos ].Bn < RList[ MainCtrlActualPos + 1 ].Bn )
+                           || ( DelayCtrlFlag ) ) ) {
+                           // et22 z walem grupowym
+                            if( !DelayCtrlFlag ) // najpierw przejscie
                             {
                                 ++MainCtrlActualPos;
                                 DelayCtrlFlag = true; // tryb przejscia
                                 OK = true;
                             }
-                            else if (LastRelayTime > 4 * CtrlDelay) // przejscie
+                            else if( LastRelayTime > 4 * CtrlDelay ) // przejscie
                             {
 
                                 DelayCtrlFlag = false;
                                 OK = true;
                             }
+/*
                             else
                                 ;
+*/
+                        }
                         else // nie ET22 z wałem grupowym
                         {
                             ++MainCtrlActualPos;
@@ -5282,30 +5324,33 @@ bool TMoverParameters::AutoRelayCheck(void)
                         }
                         //---------
                         // hunter-111211: poprawki
-                        if (MainCtrlActualPos > 0)
-                            if ((RList[MainCtrlActualPos].R == 0) &&
-                                (!(MainCtrlActualPos == MainCtrlPosNo))) // wejscie na bezoporowa
-                            {
-                                SetFlag(SoundFlag, sound::parallel | sound::loud);
+                        if( MainCtrlActualPos > 0 ) {
+                            if( ( RList[ MainCtrlActualPos ].R == 0 )
+                             && ( MainCtrlActualPos != MainCtrlPosNo ) ) {
+                                // wejscie na bezoporowa
+                                SetFlag( SoundFlag, sound::parallel | sound::loud );
                             }
-                            else if ((RList[MainCtrlActualPos].R > 0) &&
-                                     (RList[MainCtrlActualPos - 1].R ==
-                                      0)) // wejscie na drugi uklad
-                            {
-                                SetFlag(SoundFlag, sound::parallel);
+                            else if( ( RList[ MainCtrlActualPos ].R > 0 )
+                                  && ( RList[ MainCtrlActualPos - 1 ].R == 0 ) ) {
+                                // wejscie na drugi uklad
+                                SetFlag( SoundFlag, sound::parallel );
                             }
+                        }
                     }
                 }
                 else if (RList[MainCtrlActualPos].Relay > MainCtrlPos)
                 {
-                    if ((RList[MainCtrlPos].R == 0) && (MainCtrlPos > 0) &&
-                        (!(MainCtrlPos == MainCtrlPosNo)) && (FastSerialCircuit == 1))
-                    {
+                    if( ( RList[ MainCtrlPos ].R == 0 )
+                     && ( MainCtrlPos > 0 )
+                     && ( !( MainCtrlPos == MainCtrlPosNo ) )
+                     && ( FastSerialCircuit == 1 ) ) {
+                        // szybkie wchodzenie na bezoporowa (303E)
+                        // MainCtrlActualPos:=MainCtrlPos; //hunter-111012:
                         --MainCtrlActualPos;
-                        //                 MainCtrlActualPos:=MainCtrlPos; //hunter-111012:
-                        //                 szybkie wchodzenie na bezoporowa (303E)
                         OK = true;
-                        SetFlag(SoundFlag, sound::parallel);
+                        if( RList[ MainCtrlActualPos ].R == 0 ) {
+                            SetFlag( SoundFlag, sound::parallel );
+                        }
                     }
                     else if (LastRelayTime > CtrlDownDelay)
                     {
@@ -5959,65 +6004,80 @@ bool TMoverParameters::DoorBlockedFlag(void)
 // Q: 20160713
 // Otwiera / zamyka lewe drzwi
 // *************************************************************************************************
-bool TMoverParameters::DoorLeft(bool State)
-{
-    bool DL = false;
-    if ((DoorLeftOpened != State) && (DoorBlockedFlag() == false) && (Battery == true))
-    {
-        DL = true;
-        DoorLeftOpened = State;
-        if (State == true)
-        {
-            if (CabNo > 0)
-                SendCtrlToNext("DoorOpen", 1, CabNo); // 1=lewe, 2=prawe
-            else
-                SendCtrlToNext("DoorOpen", 2, CabNo); // zamiana
-            CompressedVolume -= 0.003;
-        }
-        else
-        {
-            if (CabNo > 0)
-                SendCtrlToNext("DoorClose", 1, CabNo);
-            else
-                SendCtrlToNext("DoorClose", 2, CabNo);
-        }
+// NOTE: door methods work regardless of vehicle door control type,
+// but commands issued through the command system work only for vehicles which accept remote door control
+bool TMoverParameters::DoorLeft(bool State, int const Notify ) {
+
+    if( DoorLeftOpened == State ) {
+        // TBD: should the command be passed to other vehicles regardless of whether it affected the primary target?
+        // (for the time being no, methods are often invoked blindly which would lead to commands spam)
+        return false;
     }
-    else
-        DL = false;
-    return DL;
+
+    bool result { false };
+
+    if( ( Battery == true )
+     && ( DoorBlockedFlag() == false ) ) {
+
+        DoorLeftOpened = State;
+        result = true;
+    }
+    if( Notify != range::local ) {
+
+        SendCtrlToNext(
+            ( State == true ?
+                "DoorOpen" :
+                "DoorClose" ),
+            ( CabNo > 0 ? // 1=lewe, 2=prawe (swap if reversed)
+                1 :
+                2 ),
+            CabNo,
+            ( Notify == range::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return result;
 }
 
 // *************************************************************************************************
 // Q: 20160713
 // Otwiera / zamyka prawe drzwi
 // *************************************************************************************************
-bool TMoverParameters::DoorRight(bool State)
-{
-    bool DR = false;
-    if ((DoorRightOpened != State) && (DoorBlockedFlag() == false) && (Battery == true))
-    {
-        DR = true;
-        DoorRightOpened = State;
-        if (State == true)
-        {
-            if (CabNo > 0)
-                SendCtrlToNext("DoorOpen", 2, CabNo); // 1=lewe, 2=prawe
-            else
-                SendCtrlToNext("DoorOpen", 1, CabNo); // zamiana
-            CompressedVolume -= 0.003;
-        }
-        else
-        {
-            if (CabNo > 0)
-                SendCtrlToNext("DoorClose", 2, CabNo);
-            else
-                SendCtrlToNext("DoorClose", 1, CabNo);
-        }
-    }
-    else
-        DR = false;
+// NOTE: door methods work regardless of vehicle door control type,
+// but commands issued through the command system work only for vehicles which accept remote door control
+bool TMoverParameters::DoorRight(bool State, int const Notify ) {
 
-    return DR;
+    if( DoorRightOpened == State ) {
+        // TBD: should the command be passed to other vehicles regardless of whether it affected the primary target?
+        // (for the time being no, methods are often invoked blindly which would lead to commands spam)
+        return false;
+    }
+
+    bool result { false };
+
+    if( ( Battery == true )
+     && ( DoorBlockedFlag() == false ) ) {
+
+        DoorRightOpened = State;
+        result = true;
+    }
+    if( Notify != range::local ) {
+
+        SendCtrlToNext(
+            ( State == true ?
+                "DoorOpen" :
+                "DoorClose" ),
+            ( CabNo > 0 ? // 1=lewe, 2=prawe (swap if reversed)
+                2 :
+                1 ),
+            CabNo,
+            ( Notify == range::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return result;
 }
 
 // toggles departure warning
@@ -6039,8 +6099,8 @@ TMoverParameters::signal_departure( bool const State, int const Notify ) {
                 0 ),
             CabNo,
             ( Notify == range::unit ?
-                ctrain_controll | ctrain_depot :
-                ctrain_controll ) );
+                coupling::control | coupling::permanent :
+                coupling::control ) );
     }
 
     return true;
@@ -6075,51 +6135,54 @@ bool TMoverParameters::ChangeOffsetH(double DeltaOffset)
 // *************************************************************************************************
 std::string TMoverParameters::EngineDescription(int what)
 {
-    std::string outstr;
-
-    outstr = "";
-    switch (what)
-    {
-    case 0:
-    {
-        if (DamageFlag == 255)
+    std::string outstr { "OK" };
+    switch (what) {
+    case 0: {
+        if( DamageFlag == 255 ) {
             outstr = "WRECKED";
-        else
-        {
-            if (TestFlag(DamageFlag, dtrain_thinwheel))
-                if (Power > 0.1)
+        }
+        else {
+            if( TestFlag( DamageFlag, dtrain_thinwheel ) ) {
+                if( Power > 0.1 )
                     outstr = "Thin wheel";
                 else
                     outstr = "Load shifted";
-            if (TestFlag(DamageFlag, dtrain_wheelwear))
+            }
+            if( ( WheelFlat > 5.0 )
+             || ( TestFlag( DamageFlag, dtrain_wheelwear ) ) ) {
                 outstr = "Wheel wear";
-            if (TestFlag(DamageFlag, dtrain_bearing))
+            }
+            if( TestFlag( DamageFlag, dtrain_bearing ) ) {
                 outstr = "Bearing damaged";
-            if (TestFlag(DamageFlag, dtrain_coupling))
+            }
+            if( TestFlag( DamageFlag, dtrain_coupling ) ) {
                 outstr = "Coupler broken";
-            if (TestFlag(DamageFlag, dtrain_loaddamage))
-                if (Power > 0.1)
+            }
+            if( TestFlag( DamageFlag, dtrain_loaddamage ) ) {
+                if( Power > 0.1 )
                     outstr = "Ventilator damaged";
                 else
                     outstr = "Load damaged";
-
-            if (TestFlag(DamageFlag, dtrain_loaddestroyed))
-                if (Power > 0.1)
+            }
+            if( TestFlag( DamageFlag, dtrain_loaddestroyed ) ) {
+                if( Power > 0.1 )
                     outstr = "Engine damaged";
                 else
                     outstr = "LOAD DESTROYED";
-            if (TestFlag(DamageFlag, dtrain_axle))
+            }
+            if( TestFlag( DamageFlag, dtrain_axle ) ) {
                 outstr = "Axle broken";
-            if (TestFlag(DamageFlag, dtrain_out))
+            }
+            if( TestFlag( DamageFlag, dtrain_out ) ) {
                 outstr = "DERAILED";
-            if (outstr == "")
-                outstr = "OK";
+            }
         }
         break;
     }
-    default:
+    default: {
         outstr = "Invalid qualifier";
         break;
+    }
     }
     return outstr;
 }
@@ -6949,6 +7012,7 @@ void TMoverParameters::LoadFIZ_Param( std::string const &line ) {
         std::map<std::string, int> types{
             { "pseudodiesel", dt_PseudoDiesel },
             { "ezt", dt_EZT },
+            { "dmu", dt_DMU },
             { "sn61", dt_SN61 },
             { "et22", dt_ET22 },
             { "et40", dt_ET40 },
@@ -7134,8 +7198,8 @@ void TMoverParameters::LoadFIZ_Brake( std::string const &line ) {
         auto lookup = compressorpowers.find( extract_value( "CompressorPower", line ) );
         CompressorPower =
             lookup != compressorpowers.end() ?
-            lookup->second :
-            1;
+                lookup->second :
+                1;
     }
 
     if( true == extract_value( AirLeakRate, "AirLeakRate", line, "" ) ) {
@@ -7146,16 +7210,31 @@ void TMoverParameters::LoadFIZ_Brake( std::string const &line ) {
 
 void TMoverParameters::LoadFIZ_Doors( std::string const &line ) {
 
-    DoorOpenCtrl = 0;
-    std::string openctrl; extract_value( openctrl, "OpenCtrl", line, "" );
-    if( openctrl == "DriverCtrl" ) { DoorOpenCtrl = 1; }
-
-    DoorCloseCtrl = 0;
-    std::string closectrl; extract_value( closectrl, "CloseCtrl", line, "" );
-    if( closectrl == "DriverCtrl" ) { DoorCloseCtrl = 1; }
-    else if( closectrl == "AutomaticCtrl" ) { DoorCloseCtrl = 2; }
-
-    if( DoorCloseCtrl == 2 ) { extract_value( DoorStayOpen, "DoorStayOpen", line, "" ); }
+    std::map<std::string, int> doorcontrols {
+        { "Passenger", control::passenger },
+        { "AutomaticCtrl", control::autonomous },
+        { "DriverCtrl", control::driver },
+        { "Conductor", control::conductor },
+        { "Mixed", control::mixed }
+    };
+    // opening method
+    {
+        auto lookup = doorcontrols.find( extract_value( "OpenCtrl", line ) );
+        DoorOpenCtrl =
+            lookup != doorcontrols.end() ?
+                lookup->second :
+                control::passenger;
+    }
+    // closing method
+    {
+        auto lookup = doorcontrols.find( extract_value( "CloseCtrl", line ) );
+        DoorCloseCtrl =
+            lookup != doorcontrols.end() ?
+                lookup->second :
+                control::passenger;
+    }
+    // automatic closing timer
+    if( DoorCloseCtrl == control::autonomous ) { extract_value( DoorStayOpen, "DoorStayOpen", line, "" ); }
 
     extract_value( DoorOpenSpeed, "OpenSpeed", line, "" );
     extract_value( DoorCloseSpeed, "CloseSpeed", line, "" );
@@ -7719,6 +7798,8 @@ void TMoverParameters::LoadFIZ_RList( std::string const &Input ) {
         RVentnmax /= 60.0;
         extract_value( RVentCutOff, "RVentCutOff", Input, "" );
     }
+    extract_value( RVentMinI, "RVentMinI", Input, "" );
+    extract_value( RVentSpeed, "RVentSpeed", Input, "" );
 }
 
 void TMoverParameters::LoadFIZ_DList( std::string const &Input ) {
@@ -8073,7 +8154,10 @@ bool TMoverParameters::CheckLocomotiveParameters(bool ReadyFlag, int Dir)
     {
         WriteLog( "Ready to depart" );
         CompressedVolume = VeselVolume * MinCompressor * ( 9.8 ) / 10.0;
-        ScndPipePress = CompressedVolume / VeselVolume;
+        ScndPipePress = (
+            VeselVolume > 0.0 ?
+                CompressedVolume / VeselVolume :
+                0.0 );
         PipePress = CntrlPipePress;
         BrakePress = 0.0;
         LocalBrakePos = 0;
@@ -8260,6 +8344,7 @@ bool TMoverParameters::SendCtrlToNext( std::string const CtrlCommand, double con
         // musi być wybrana niezerowa kabina
         if( ( Couplers[ d ].Connected != nullptr )
          && ( TestFlag( Couplers[ d ].CouplingFlag, Couplertype ) ) ) {
+
             if( Couplers[ d ].ConnectedNr != d ) {
                 // jeśli ten nastpęny jest zgodny z aktualnym
                 if( Couplers[ d ].Connected->SetInternalCommand( CtrlCommand, ctrlvalue, dir, Couplertype ) )
@@ -8418,38 +8503,48 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
 	}
 	else if (Command == "DoorOpen") /*NBMX*/
 	{ // Ra: uwzględnić trzeba jeszcze zgodność sprzęgów
-		if ((CValue2 > 0))
-		{ // normalne ustawienie pojazdu
-			if ((CValue1 == 1) || (CValue1 == 3))
-				DoorLeftOpened = true;
-			if ((CValue1 == 2) || (CValue1 == 3))
-				DoorRightOpened = true;
-		}
-		else
-		{ // odwrotne ustawienie pojazdu
-			if ((CValue1 == 2) || (CValue1 == 3))
-				DoorLeftOpened = true;
-			if ((CValue1 == 1) || (CValue1 == 3))
-				DoorRightOpened = true;
-		}
+        if( ( DoorCloseCtrl == control::conductor )
+         || ( DoorCloseCtrl == control::driver ) 
+         || ( DoorCloseCtrl == control::mixed ) ) {
+            // ignore remote command if the door is only operated locally
+            if( CValue2 > 0 ) {
+                // normalne ustawienie pojazdu
+                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) )
+                    DoorLeftOpened = true;
+                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) )
+                    DoorRightOpened = true;
+            }
+            else {
+                // odwrotne ustawienie pojazdu
+                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) )
+                    DoorLeftOpened = true;
+                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) )
+                    DoorRightOpened = true;
+            }
+        }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
 	else if (Command == "DoorClose") /*NBMX*/
 	{ // Ra: uwzględnić trzeba jeszcze zgodność sprzęgów
-		if ((CValue2 > 0))
-		{ // normalne ustawienie pojazdu
-			if ((CValue1 == 1) || (CValue1 == 3))
-				DoorLeftOpened = false;
-			if ((CValue1 == 2) || (CValue1 == 3))
-				DoorRightOpened = false;
-		}
-		else
-		{ // odwrotne ustawienie pojazdu
-			if ((CValue1 == 2) || (CValue1 == 3))
-				DoorLeftOpened = false;
-			if ((CValue1 == 1) || (CValue1 == 3))
-				DoorRightOpened = false;
-		}
+        if( ( DoorCloseCtrl == control::conductor )
+         || ( DoorCloseCtrl == control::driver ) 
+         || ( DoorCloseCtrl == control::mixed ) ) {
+            // ignore remote command if the door is only operated locally
+            if( CValue2 > 0 ) {
+                // normalne ustawienie pojazdu
+                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) )
+                    DoorLeftOpened = false;
+                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) )
+                    DoorRightOpened = false;
+            }
+            else {
+                // odwrotne ustawienie pojazdu
+                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) )
+                    DoorLeftOpened = false;
+                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) )
+                    DoorRightOpened = false;
+            }
+        }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
     else if( Command == "DepartureSignal" ) {
@@ -8462,7 +8557,8 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
 	else if (Command == "PantFront") /*Winger 160204*/
 	{ // Ra: uwzględnić trzeba jeszcze zgodność sprzęgów
 	  // Czemu EZT ma być traktowane inaczej? Ukrotnienie ma, a człon może być odwrócony
-		if ((TrainType == dt_EZT))
+		if ((TrainType == dt_EZT)
+         || (TrainType == dt_ET41))
 		{ //'ezt'
 			if ((CValue1 == 1))
 			{
@@ -8506,7 +8602,8 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
 	}
 	else if (Command == "PantRear") /*Winger 160204, ABu 310105 i 030305*/
 	{ // Ra: uwzględnić trzeba jeszcze zgodność sprzęgów
-		if ((TrainType == dt_EZT))
+		if ((TrainType == dt_EZT)
+          ||(TrainType == dt_ET41))
 		{ //'ezt'
 			if ((CValue1 == 1))
 			{
@@ -8578,8 +8675,6 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
         if( true == Hamulec->SetBDF( brakesetting ) ) {
             BrakeDelayFlag = brakesetting;
             OK = true;
-            // if setting was changed emit the sound of pneumatic relay
-            SetFlag( SoundFlag, sound::pneumatic );
         }
         else {
             OK = false;
