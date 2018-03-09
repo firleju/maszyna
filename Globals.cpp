@@ -23,10 +23,10 @@ http://mozilla.org/MPL/2.0/.
 global_settings Global;
 
 // parametry komunikacji
-Global::network_conf_t Global::network_conf;
-std::unique_ptr<multiplayer::ZMQConnection> Global::network = nullptr;
-void
+//Global::network_conf_t Global::network_conf;
+//std::unique_ptr<multiplayer::ZMQConnection> Global::network = nullptr;
 
+void
 global_settings::LoadIniFile(std::string asFileName) {
 
     FreeCameraInit.resize( 10 );
@@ -633,10 +633,10 @@ global_settings::ConfigParse(cParser &Parser) {
 		else if (token == "network")
 		{
 			Parser.getTokens(3, false);
-			Global::network_conf.enable = true;
-			Parser >> Global::network_conf.address;
-			Parser >> Global::network_conf.port;
-			Parser >> Global::network_conf.identity;
+			network_conf.enable = true;
+			Parser >> network_conf.address;
+			Parser >> network_conf.port;
+			Parser >> network_conf.identity;
 		}
 
 		else if (token == "ddsupperorigin") {

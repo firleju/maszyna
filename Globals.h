@@ -16,6 +16,7 @@ http://mozilla.org/MPL/2.0/.
 #include "uart.h"
 #include "utilities.h"
 #include "motiontelemetry.h"
+#include "messaging.h"
 
 struct global_settings {
 // members
@@ -174,9 +175,9 @@ struct global_settings {
 		std::string port = "5555";
 		std::string identity = "EU07";
 	};
-	static network_conf_t network_conf;
+	network_conf_t network_conf;
 
-	static std::unique_ptr<multiplayer::ZMQConnection> network;
+	std::unique_ptr<multiplayer::ZMQConnection> network{ nullptr };
 
 	bool loading_log = true;
 	bool dds_upper_origin = false;

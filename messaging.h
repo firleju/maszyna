@@ -125,7 +125,7 @@ private:
 		{
 			CpperoMQ::IncomingMessage mess;
 			mess.receive(net_socket, more);
-			WriteLog("TCP: ", false);
+			WriteLog("TCP: ");
 			WriteLog(std::string(mess.charData(), mess.size()).c_str());
 		}
 	});

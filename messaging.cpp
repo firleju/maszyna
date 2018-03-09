@@ -324,9 +324,8 @@ ZMQConnection::ZMQConnection()
 {
 //net_context = CpperoMQ::Context();
 //net_socket = net_context.createDealerSocket();
-Global::network_conf_t conf = Global::network_conf;
-net_socket.setIdentity(conf.identity.c_str());
-net_socket.connect(std::string("tcp://"+conf.address+":"+conf.port).c_str());
+net_socket.setIdentity(Global.network_conf.identity.c_str());
+net_socket.connect(std::string("tcp://"+Global.network_conf.address+":"+Global.network_conf.port).c_str());
 net_poller = CpperoMQ::Poller(0);
 
 }

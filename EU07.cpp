@@ -374,8 +374,8 @@ int main(int argc, char *argv[])
 		input::Gamepad.init();
         if (Global.uart_conf.enable)
             input::uart = std::make_unique<uart_input>();
-		if (Global::network_conf.enable)
-			Global::network = std::make_unique<multiplayer::ZMQConnection>();
+		if (Global.network_conf.enable)
+			Global.network = std::make_unique<multiplayer::ZMQConnection>();
 		if (Global.motiontelemetry_conf.enable)
 			input::motiontelemetry = std::make_unique<motiontelemetry>();
 
@@ -416,13 +416,13 @@ int main(int argc, char *argv[])
     Console::On(); // włączenie konsoli
 #endif
 
-	if (Global::network)
+	if (Global.network)
 	{
 		using namespace multiplayer;
 		auto msg = ZMQMessage();
 		msg.AddFrame("Hello world");
 		msg.AddFrame("Witaj świecie");
-		Global::network->getSocket()->send(msg);
+		Global.network->getSocket()->send(msg);
 	}
 
     try {
@@ -433,8 +433,8 @@ int main(int argc, char *argv[])
 				input::motiontelemetry->update();
             glfwPollEvents();
             input::Keyboard.poll();
-			if (Global::network)
-				Global::network->poll();
+			if (Global.network)
+				Global.network->poll();
 			simulation::Commands.update();
             if( true == Global.InputMouse )   { input::Mouse.poll(); }
             if( true == Global.InputGamepad ) { input::Gamepad.poll(); }
