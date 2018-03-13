@@ -42,7 +42,7 @@ Stele, firleju, szociu, hunter, ZiomalCl, OLI_EU and others
 #include "resource.h"
 #include "uilayer.h"
 #include "uart.h"
-#include "messaging.h"
+#include "network.h"
 #include "motiontelemetry.h"
 
 
@@ -420,10 +420,12 @@ int main(int argc, char *argv[])
 	{
 		using namespace multiplayer;
 		auto msg = ZMQMessage();
-		msg.AddFrame("Hello world");
-		msg.AddFrame("Witaj świecie");
+		msg.AddFrame(u8"Hello world");
+		msg.AddFrame(u8"Witaj świecie");
+		Global.network_queue.emplace_back(msg);
 		Global.network->getSocket()->send(msg);
 	}
+
 
     try {
         while( ( false == glfwWindowShouldClose( window ) )
@@ -435,6 +437,13 @@ int main(int argc, char *argv[])
             input::Keyboard.poll();
 			if (Global.network)
 				Global.network->poll();
+
+			for (auto m : Global.network_queue)
+			{
+				if (m.checkTime())
+					Global.network->getSocket()->send(m.message);
+			}
+
 			simulation::Commands.update();
             if( true == Global.InputMouse )   { input::Mouse.poll(); }
             if( true == Global.InputGamepad ) { input::Gamepad.poll(); }

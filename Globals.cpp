@@ -22,10 +22,6 @@ http://mozilla.org/MPL/2.0/.
 
 global_settings Global;
 
-// parametry komunikacji
-//Global::network_conf_t Global::network_conf;
-//std::unique_ptr<multiplayer::ZMQConnection> Global::network = nullptr;
-
 void
 global_settings::LoadIniFile(std::string asFileName) {
 

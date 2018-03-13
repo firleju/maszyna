@@ -16,7 +16,7 @@ http://mozilla.org/MPL/2.0/.
 #include "uart.h"
 #include "utilities.h"
 #include "motiontelemetry.h"
-#include "messaging.h"
+#include "network.h"
 
 struct global_settings {
 // members
@@ -168,14 +168,10 @@ struct global_settings {
     std::string asVersion{ "UNKNOWN" }; // z opisem
 	motiontelemetry::conf_t motiontelemetry_conf;
 	std::string screenshot_dir;
-	struct network_conf_t
-	{
-		bool enable = false;
-		std::string address = "127.0.0.1";
-		std::string port = "5555";
-		std::string identity = "EU07";
-	};
-	network_conf_t network_conf;
+
+	multiplayer::network_conf_t network_conf;
+
+	std::list<multiplayer::network_queue_t> network_queue{};
 
 	std::unique_ptr<multiplayer::ZMQConnection> network{ nullptr };
 
