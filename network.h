@@ -17,35 +17,6 @@ http://mozilla.org/MPL/2.0/.
 
 namespace multiplayer {
 
-	struct network_conf_t
-	{
-		bool enable = false;
-		std::string address = "127.0.0.1";
-		std::string port = "5555";
-		std::string identity = "EU07";
-	};
-
-	struct network_queue_t
-	{
-		multiplayer::ZMQMessage message;
-		std::chrono::time_point<std::chrono::high_resolution_clock> time = std::chrono::high_resolution_clock::now();
-		network_queue_t(multiplayer::ZMQMessage& m)
-		{
-			message = m;
-			time = std::chrono::high_resolution_clock::now();
-		}
-		bool checkTime() {
-			auto now = std::chrono::high_resolution_clock::now();
-			if (std::chrono::duration_cast<std::chrono::seconds>(now - time).count() > 5.0f)
-			{
-				time = now;
-				return true;
-			}
-			else
-				return false;
-		}
-	};
-
 
 	// Ramka danych wiadomoœci dla interfejsu ZeroMQ
 	class ZMQFrame
@@ -109,26 +80,54 @@ namespace multiplayer {
 		std::vector<ZMQFrame> m_frames; // kolejne ramki z parametrami komendy
 	};
 
+	struct network_conf_t
+	{
+		bool enable = false;
+		std::string address = "127.0.0.1";
+		std::string port = "5555";
+		std::string identity = "EU07";
+	};
+
+	struct network_queue_t
+	{
+		multiplayer::ZMQMessage message;
+		resource_timestamp time = std::chrono::high_resolution_clock::now();
+		network_queue_t(multiplayer::ZMQMessage& m)
+		{
+			message = m;
+			time = std::chrono::high_resolution_clock::now();
+		}
+		bool checkTime();
+	};
+
+
+	// Po³¹czenie ZeroMQ
 	class ZMQConnection
 	{
 	public:
 		ZMQConnection();
-		void poll();
-		auto getSocket() { return &net_socket; };
+		void poll(); // otrzymuje wiadomoœci z socketa i wrzuca do wewnêtrznej listy
+		void send(); // wysy³a wiadomoœci z ogólnodostepnej listy
 	private:
-		CpperoMQ::IsReceiveReady<CpperoMQ::DealerSocket> net_pollReceiver = CpperoMQ::isReceiveReady(net_socket, [this]()
+		CpperoMQ::IsReceiveReady<CpperoMQ::DealerSocket> net_pollReceiver = CpperoMQ::isReceiveReady(m_socket, [this]()
 		{
 			bool more = true;
+			ZMQMessage mess;
 			while (more)
 			{
-				CpperoMQ::IncomingMessage mess;
-				mess.receive(net_socket, more);
-				WriteLog("TCP: ");
-				WriteLog(std::string(mess.charData(), mess.size()).c_str());
+				mess.receive(m_socket, more);
+				//WriteLog("TCP: " << mess);
+				//WriteLog(std::string(mess.charData(), mess.size()).c_str());
+
 			}
+			// check what is commming in and delete outgoing message if this is recieve OK signal
+			m_incoming_queue.push_back(mess);
+
 		});
-		CpperoMQ::Context net_context = CpperoMQ::Context();
-		CpperoMQ::DealerSocket net_socket = net_context.createDealerSocket();
-		CpperoMQ::Poller net_poller;
+		CpperoMQ::Context m_context = CpperoMQ::Context();
+		CpperoMQ::DealerSocket m_socket = m_context.createDealerSocket();
+		CpperoMQ::Poller m_poller;
+		std::list<multiplayer::network_queue_t> m_input_queue{}; // lista wiadomoœci przychodz¹cych
+		std::list<multiplayer::network_queue_t> m_incoming_queue{}; // lista wiadomoœci wychodzacych
 	};
 }

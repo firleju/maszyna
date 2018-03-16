@@ -14,6 +14,7 @@ http://mozilla.org/MPL/2.0/.
 #include <fstream>
 #include <vector>
 #include <map>
+#include <cfenv>
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 // cParser -- generic class for parsing text data, either from file or provided string
@@ -113,7 +114,10 @@ class cParser //: public std::stringstream
 template<typename Type_>
 cParser&
 cParser::operator>>( Type_ &Right ) {
-
+//#pragma STDC FENV_ACCESS ON
+#if defined(_MSC_VER) && defined (_DEBUG)
+	std::fesetround(FE_TONEAREST);
+#endif
     if( true == this->tokens.empty() ) { return *this; }
 
     std::stringstream converter( this->tokens.front() );

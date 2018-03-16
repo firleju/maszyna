@@ -420,10 +420,9 @@ int main(int argc, char *argv[])
 	{
 		using namespace multiplayer;
 		auto msg = ZMQMessage();
-		msg.AddFrame(u8"Hello world");
+		msg.AddFrame(1);
 		msg.AddFrame(u8"Witaj świecie");
 		Global.network_queue.emplace_back(msg);
-		Global.network->getSocket()->send(msg);
 	}
 
 
@@ -436,12 +435,9 @@ int main(int argc, char *argv[])
             glfwPollEvents();
             input::Keyboard.poll();
 			if (Global.network)
-				Global.network->poll();
-
-			for (auto m : Global.network_queue)
 			{
-				if (m.checkTime())
-					Global.network->getSocket()->send(m.message);
+				Global.network->poll();
+				Global.network->send();
 			}
 
 			simulation::Commands.update();

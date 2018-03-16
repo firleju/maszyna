@@ -54,14 +54,14 @@ namespace multiplayer {
 	ZMQFrame::ZMQFrame(int32_t n)
 	{
 		m_messageSize = sizeof(n);
-		m_data.reserve(m_messageSize);
+		m_data.resize(m_messageSize);
 		sn_utils::ls_int32(m_data, n);
 	}
 
 	ZMQFrame::ZMQFrame(float n)
 	{
 		m_messageSize = sizeof(n);
-		m_data.reserve(m_messageSize);
+		m_data.resize(m_messageSize);
 		sn_utils::ls_float32(m_data, n);
 	}
 
@@ -89,15 +89,40 @@ namespace multiplayer {
 	{
 		//net_context = CpperoMQ::Context();
 		//net_socket = net_context.createDealerSocket();
-		net_socket.setIdentity(Global.network_conf.identity.c_str());
-		net_socket.connect(std::string("tcp://" + Global.network_conf.address + ":" + Global.network_conf.port).c_str());
-		net_poller = CpperoMQ::Poller(0);
+		m_socket.setIdentity(Global.network_conf.identity.c_str());
+		m_socket.connect(std::string("tcp://" + Global.network_conf.address + ":" + Global.network_conf.port).c_str());
+		m_poller = CpperoMQ::Poller(0);
 
 	}
 
 	void ZMQConnection::poll()
 	{
-		net_poller.poll(net_pollReceiver);
+		m_poller.poll(net_pollReceiver);
+	}
+
+	void ZMQConnection::send()
+	{
+	
+		for (auto &m : Global.network_queue)
+		{
+			if (m.checkTime())
+				m_socket.send(m.message);
+		}
+
+	}
+
+	bool network_queue_t::checkTime()
+	{
+		{
+			auto now = std::chrono::high_resolution_clock::now();
+			if (std::chrono::duration_cast<std::chrono::seconds>(now - time).count() >= 5.0f)
+			{
+				time = now;
+				return true;
+			}
+			else
+				return false;
+		}
 	}
 
 }
