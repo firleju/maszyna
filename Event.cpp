@@ -15,7 +15,7 @@ http://mozilla.org/MPL/2.0/.
 
 #include "stdafx.h"
 
-#include "event.h"
+#include "Event.h"
 #include "simulation.h"
 #include "World.h"
 #include "Globals.h"
@@ -561,6 +561,7 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
             else {
                 // zmiana flagi dla słowa "else"
                 ti = !ti;
+				iFlags |= conditional_anyelse;
             }
             parser->getTokens();
             *parser >> token;

@@ -204,6 +204,9 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::mubrakingindicatortoggle, &TTrain::OnCommand_mubrakingindicatortoggle },
     { user_command::reverserincrease, &TTrain::OnCommand_reverserincrease },
     { user_command::reverserdecrease, &TTrain::OnCommand_reverserdecrease },
+    { user_command::reverserforward, &TTrain::OnCommand_reverserforward },
+    { user_command::reverserneutral, &TTrain::OnCommand_reverserneutral },
+    { user_command::reverserbackward, &TTrain::OnCommand_reverserbackward },
     { user_command::alerteracknowledge, &TTrain::OnCommand_alerteracknowledge },
     { user_command::batterytoggle, &TTrain::OnCommand_batterytoggle },
     { user_command::batteryenable, &TTrain::OnCommand_batteryenable },
@@ -549,6 +552,7 @@ TTrain::get_state() const {
     return {
         btLampkaSHP.GetValue(),
         btLampkaCzuwaka.GetValue(),
+        btLampkaRadioStop.GetValue(),
         btLampkaOpory.GetValue(),
         btLampkaWylSzybki.GetValue(),
         btLampkaNadmSil.GetValue(),
@@ -1390,6 +1394,61 @@ void TTrain::OnCommand_reverserdecrease( TTrain *Train, command_data const &Comm
         if( Train->mvOccupied->DirectionBackward() ) {
             // aktualizacja skrajnych pojazdów w składzie
             if( ( Train->mvOccupied->ActiveDir )
+             && ( Train->DynamicObject->Mechanik ) ) {
+
+                Train->DynamicObject->Mechanik->CheckVehicles( Change_direction );
+            }
+        }
+    }
+}
+
+void TTrain::OnCommand_reverserforward( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+
+        if( Train->mvOccupied->ActiveDir < 1 ) {
+
+            while( ( Train->mvOccupied->ActiveDir < 1 )
+                && ( true == Train->mvOccupied->DirectionForward() ) ) {
+                // all work is done in the header
+            }
+            // aktualizacja skrajnych pojazdów w składzie
+            if( ( Train->mvOccupied->ActiveDir == 1 )
+             && ( Train->DynamicObject->Mechanik ) ) {
+
+                Train->DynamicObject->Mechanik->CheckVehicles( Change_direction );
+            }
+        }
+    }
+}
+
+void TTrain::OnCommand_reverserneutral( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+
+        while( ( Train->mvOccupied->ActiveDir < 0 )
+            && ( true == Train->mvOccupied->DirectionForward() ) ) {
+            // all work is done in the header
+        }
+        while( ( Train->mvOccupied->ActiveDir > 0 )
+            && ( true == Train->mvOccupied->DirectionBackward() ) ) {
+            // all work is done in the header
+        }
+    }
+}
+
+void TTrain::OnCommand_reverserbackward( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+
+        if( Train->mvOccupied->ActiveDir > -1 ) {
+
+            while( ( Train->mvOccupied->ActiveDir > -1 )
+                && ( true == Train->mvOccupied->DirectionBackward() ) ) {
+                // all work is done in the header
+            }
+            // aktualizacja skrajnych pojazdów w składzie
+            if( ( Train->mvOccupied->ActiveDir == -1 )
              && ( Train->DynamicObject->Mechanik ) ) {
 
                 Train->DynamicObject->Mechanik->CheckVehicles( Change_direction );
@@ -3675,7 +3734,7 @@ void TTrain::UpdateMechPosition(double dt)
             if( std::abs( mvOccupied->enrot ) > 0.0 ) {
                 // engine vibration
                 shakevector.x +=
-                    ( std::cos( mvOccupied->eAngle * 4.0 ) * dt * EngineShake.scale )
+                    ( std::sin( mvOccupied->eAngle * 4.0 ) * dt * EngineShake.scale )
                     // fade in with rpm above threshold
                     * clamp(
                         ( mvOccupied->enrot - EngineShake.fadein_offset ) * EngineShake.fadein_factor,
@@ -3688,6 +3747,20 @@ void TTrain::UpdateMechPosition(double dt)
                             0.0, 1.0 ) );
             }
         }
+
+        if( ( HuntingShake.fadein_begin > 0.f )
+         && ( true == mvOccupied->TruckHunting ) ) {
+            // hunting oscillation
+            HuntingAngle = clamp_circular( HuntingAngle + 4.0 * HuntingShake.frequency * dt * mvOccupied->Vel, 360.0 );
+            shakevector.x +=
+                ( std::sin( glm::radians( HuntingAngle ) ) * dt * HuntingShake.scale )
+                * interpolate(
+                    0.0, 1.0,
+                    clamp(
+                        ( mvOccupied->Vel - HuntingShake.fadein_begin ) / ( HuntingShake.fadein_end - HuntingShake.fadein_begin ),
+                        0.0, 1.0 ) );
+        }
+
         if( iVel > 0.5 ) {
             // acceleration-driven base shake
             shakevector += Math3D::vector3(
@@ -5362,6 +5435,17 @@ bool TTrain::LoadMMediaFile(std::string const &asFileName)
                     >> EngineShake.fadein_factor
                     >> EngineShake.fadeout_offset
                     >> EngineShake.fadeout_factor;
+                // offsets values are provided as rpm for convenience
+                EngineShake.fadein_offset /= 60.f;
+                EngineShake.fadeout_offset /= 60.f;
+            }
+            else if( token == "huntingspring:" ) {
+                parser.getTokens( 4, false );
+                parser
+                    >> HuntingShake.scale
+                    >> HuntingShake.frequency
+                    >> HuntingShake.fadein_begin
+                    >> HuntingShake.fadein_end;
             }
 
         } while (token != "");
@@ -5770,8 +5854,8 @@ void TTrain::clear_cab_controls()
     btLampkaOgrzewanieSkladu.Clear(11);
     btHaslerBrakes.Clear(12); // ciśnienie w cylindrach do odbijania na haslerze
     btHaslerCurrent.Clear(13); // prąd na silnikach do odbijania na haslerze
-    // Jeśli ustawiamy nową wartość dla PoKeys wolna jest 15
     // Numer 14 jest używany dla buczka SHP w update_sounds()
+    // Jeśli ustawiamy nową wartość dla PoKeys wolna jest 15
 
     // other cab controls
     // TODO: arrange in more readable manner, and eventually refactor
