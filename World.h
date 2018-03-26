@@ -20,6 +20,7 @@ http://mozilla.org/MPL/2.0/.
 #include "stars.h"
 #include "skydome.h"
 #include "messaging.h"
+#include "network.h"
 #include "station.h"
 
 // wrapper for simulation time
@@ -105,6 +106,7 @@ TWorld();
     bool Update();
     void OnKeyDown( int cKey );
     void OnCommandGet( multiplayer::DaneRozkaz *pRozkaz );
+	void OnCommandGet(std::list<multiplayer::network_queue_t> &incoming_queue);
     // passes specified sound to all vehicles within range as a radio message broadcasted on specified channel
     void radio_message( sound_source *Message, int const Channel );
     void CabChange( TDynamicObject *old, TDynamicObject *now );

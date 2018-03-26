@@ -89,7 +89,8 @@ namespace multiplayer {
 	{
 		//net_context = CpperoMQ::Context();
 		//net_socket = net_context.createDealerSocket();
-		m_socket.setIdentity(Global.network_conf.identity.c_str());
+		if (Global.network_conf.identity != "auto")
+			m_socket.setIdentity(Global.network_conf.identity.c_str());
 		m_socket.connect(std::string("tcp://" + Global.network_conf.address + ":" + Global.network_conf.port).c_str());
 		m_poller = CpperoMQ::Poller(0);
 
@@ -111,6 +112,11 @@ namespace multiplayer {
 
 	}
 
+	auto ZMQConnection::getIncomingQueue() -> std::list<multiplayer::network_queue_t>&
+	{
+		return m_incoming_queue;
+	}
+
 	bool network_queue_t::checkTime()
 	{
 		{
@@ -123,6 +129,35 @@ namespace multiplayer {
 			else
 				return false;
 		}
+	}
+
+	void SendVersion()
+	{
+		auto msg = ZMQMessage();
+		msg.AddFrame(network_codes::exe_version);
+		msg.AddFrame(Global.asVersion);
+		Global.network_queue.push_back(msg);
+	}
+
+	void SendScenery()
+	{
+		auto msg = ZMQMessage();
+		msg.AddFrame(network_codes::scenery_name);
+		msg.AddFrame(Global.SceneryFile);
+		Global.network_queue.push_back(msg);
+	}
+
+	void SendEventCallOK(std::string e_name, std::string vehicle = "none")
+	{
+		auto msg = ZMQMessage();
+		msg.AddFrame(network_codes::event_call);
+		msg.AddFrame(e_name);
+		msg.AddFrame(vehicle);
+		Global.network_queue.push_back(msg);
+	}
+
+	void SendAiCommandOK(std::string vehicle, std::string command)
+	{
 	}
 
 }

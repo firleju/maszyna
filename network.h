@@ -16,7 +16,21 @@ http://mozilla.org/MPL/2.0/.
 #include "Logs.h"
 
 namespace multiplayer {
-
+	enum network_codes {
+		exe_version = 1,
+		scenery_name,
+		event_call,
+		ai_command,
+		track_occupancy_one,
+		param_set,
+		vehicle_ask,
+		vehicle_params,
+		track_occupancy_all,
+		isolated_occupancy_all,
+		isolated_occupy,
+		isolated_free,
+		vehicle_damage
+	};
 
 	// Ramka danych wiadomoœci dla interfejsu ZeroMQ
 	class ZMQFrame
@@ -76,6 +90,10 @@ namespace multiplayer {
 			return m_frames.at(pos);
 		}
 
+		auto size() {
+			return m_frames.size();
+		}
+
 	private:
 		std::vector<ZMQFrame> m_frames; // kolejne ramki z parametrami komendy
 	};
@@ -108,6 +126,7 @@ namespace multiplayer {
 		ZMQConnection();
 		void poll(); // otrzymuje wiadomoœci z socketa i wrzuca do wewnêtrznej listy
 		void send(); // wysy³a wiadomoœci z ogólnodostepnej listy
+		auto getIncomingQueue()->std::list<multiplayer::network_queue_t>&;
 	private:
 		CpperoMQ::IsReceiveReady<CpperoMQ::DealerSocket> net_pollReceiver = CpperoMQ::isReceiveReady(m_socket, [this]()
 		{
@@ -127,7 +146,16 @@ namespace multiplayer {
 		CpperoMQ::Context m_context = CpperoMQ::Context();
 		CpperoMQ::DealerSocket m_socket = m_context.createDealerSocket();
 		CpperoMQ::Poller m_poller;
-		std::list<multiplayer::network_queue_t> m_input_queue{}; // lista wiadomoœci przychodz¹cych
-		std::list<multiplayer::network_queue_t> m_incoming_queue{}; // lista wiadomoœci wychodzacych
+		std::list<multiplayer::network_queue_t> m_incoming_queue{}; // lista wiadomoœci przychodz¹cych
 	};
+	
+	
+	void SendVersion();
+	void SendScenery();
+	void SendEventCallOK(std::string e_name, std::string vehicle);
+	void SendAiCommandOK(std::string vehicle, std::string command);
+	void SendTrackOccupancy();
+	void SendIsolatedOccupancy();
+	void SendVehicleDamages();
+	void SendVehicleParams();
 }

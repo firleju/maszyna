@@ -438,6 +438,7 @@ int main(int argc, char *argv[])
 			{
 				Global.network->poll();
 				Global.network->send();
+				World.OnCommandGet(Global.network->getIncomingQueue());
 			}
 
 			simulation::Commands.update();
