@@ -85,6 +85,31 @@ namespace multiplayer {
 		return m_data.data();
 	}
 
+	int& ZMQFrame::operator=(int32_t i)
+	{
+		m_data.clear();
+		m_messageSize = sizeof(i);
+		m_data.resize(m_messageSize);
+		sn_utils::ls_int32(m_data, i);
+		return i;
+	}
+
+	float & ZMQFrame::operator=(float f)
+	{
+		m_data.clear();
+		m_messageSize = sizeof(f);
+		m_data.resize(m_messageSize);
+		sn_utils::ls_float32(m_data, f);
+		return f;
+	}
+
+	std::string & ZMQFrame::operator=(std::string s)
+	{
+		m_data = std::vector<uint8_t>(s.begin(), s.end());
+		m_messageSize = m_data.size();
+		return s;
+	}
+
 	ZMQConnection::ZMQConnection()
 	{
 		//net_context = CpperoMQ::Context();
@@ -131,11 +156,12 @@ namespace multiplayer {
 		}
 	}
 
-	void SendVersion()
+	void SendVersionInfo()
 	{
 		auto msg = ZMQMessage();
-		msg.AddFrame(network_codes::exe_version);
-		msg.AddFrame(Global.asVersion);
+		msg.AddFrame(network_codes::net_proto_version);
+		msg.AddFrame(1);
+		msg.AddFrame(Global.network->protocol_version);
 		Global.network_queue.push_back(msg);
 	}
 
@@ -143,21 +169,121 @@ namespace multiplayer {
 	{
 		auto msg = ZMQMessage();
 		msg.AddFrame(network_codes::scenery_name);
+		msg.AddFrame(1);
 		msg.AddFrame(Global.SceneryFile);
 		Global.network_queue.push_back(msg);
 	}
 
-	void SendEventCallOK(std::string e_name, std::string vehicle = "none")
+	void SendEventCallConfirmation(int status, std::string name)
 	{
 		auto msg = ZMQMessage();
 		msg.AddFrame(network_codes::event_call);
-		msg.AddFrame(e_name);
-		msg.AddFrame(vehicle);
+		msg.AddFrame(1);
+		msg.AddFrame(status);
+		msg.AddFrame(name);
 		Global.network_queue.push_back(msg);
 	}
 
-	void SendAiCommandOK(std::string vehicle, std::string command)
+	void SendAiCommandConfirmation(int status, std::string vehicle, std::string command)
 	{
+		auto msg = ZMQMessage();
+		msg.AddFrame(network_codes::ai_command);
+		msg.AddFrame(1);
+		msg.AddFrame(vehicle);
+		msg.AddFrame(command);
+		Global.network_queue.push_back(msg);
+	}
+
+	void SendTrackOccupancy(std::string name)
+	{
+		auto msg = ZMQMessage();
+		msg.AddFrame(network_codes::track_occupancy);
+		msg.AddFrame(1);
+		if ("*" == name)
+		{
+			msg.AddFrame(0); //wielkoœæ
+			int i = 0;
+			for (auto *path : simulation::Paths.sequence()) {
+				if (false == path->name().empty()) // musi byæ nazwa
+				{
+					i++;
+					msg.AddFrame(path->name());
+					msg.AddFrame((int)path->IsEmpty());
+					msg.AddFrame(path->iDamageFlag);
+				}
+			}
+			msg[2] = i; //podajemy liczbê torów
+		}
+		else
+		{
+			msg.AddFrame(1);
+			msg.AddFrame(name);
+			auto *track = simulation::Paths.find(name);
+			if (track != nullptr) {
+				msg.AddFrame((int)track->IsEmpty());
+				msg.AddFrame(track->iDamageFlag);
+			}
+			else
+			{
+				msg.AddFrame(0);
+				msg.AddFrame(0);
+			}
+
+		}
+		Global.network_queue.push_back(msg);
+	}
+
+	void SendIsolatedOccupancy(std::string name)
+	{
+		TIsolated *Current;
+		auto msg = ZMQMessage();
+		msg.AddFrame(network_codes::isolated_occupancy);
+		msg.AddFrame(1);
+		if ("*" == name)
+		{
+			int i = 0;
+			msg.AddFrame(0); // narazie zero odcinków
+			for (Current = TIsolated::Root(); Current; Current = Current->Next(), i++) {
+				msg.AddFrame(Current->asName);
+				msg.AddFrame((int)Current->Busy());
+			}
+			msg[2] = i;
+		}
+		else
+		{
+			msg.AddFrame(1);
+			msg.AddFrame(name);
+			for (Current = TIsolated::Root(); Current; Current = Current->Next()) {
+				if (Current->asName == name) {
+					msg.AddFrame((int)Current->Busy());
+					// nie sprawdzaj dalszych
+					Global.network_queue.push_back(msg);
+
+					return;
+				}
+			}
+			// jesli nie znalaz³ to wysy³amy wolny
+			msg.AddFrame(0);
+		}
+		Global.network_queue.push_back(msg);
+	}
+
+	void SendSimulationStatus(int which_param)
+	{
+		auto msg = ZMQMessage();
+		msg.AddFrame(network_codes::param_set);
+		msg.AddFrame(which_param);
+		switch (which_param)
+		{
+		case 1: //pauza
+			msg.AddFrame(Global.iPause);
+			break;
+		case 2: //godzina
+			msg.AddFrame(float(Global.fTimeAngleDeg / 360.0));
+		default:
+			break;
+		}
+		Global.network_queue.push_back(msg);
 	}
 
 }

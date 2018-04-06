@@ -1960,25 +1960,78 @@ void TWorld::OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queu
 {
 	for (auto &m : incoming_queue)
 	{
-		//check if message has min 2 frames: order code, order param
+		//check if message has min 2 frames: order code, order type code
 		if (m.message.size() < 2)
 			return;
 		switch (m.message[0].ToInt())
 		{
-		case 0: // odesłanie identyfikatora wersji
-			CommLog(Now() + " " + m.message[0].ToString() + " version" + " rcvd");
-			multiplayer::WyslijString(Global.asVersion, 0); // przedsatwienie się
+		case 0: {
+			// informacja o wersji protokołu
+			switch (m.message[1].ToInt())
+			{
+			case 0:
+				CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " ask for version" + " rcvd");
+				multiplayer::SendVersionInfo();
+				break;
+			case 1:
+				CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " Information about version" + " rcvd");
+				if (m.message.size() != 3)
+				{
+					CommLog(Now() + " Wrong number of frames");
+					return;
+				}
+				if (m.message[2].ToInt() != Global.network->protocol_version)
+				{
+					CommLog(Now() + " Wrong protocol version: disable network");
+					Global.network.~unique_ptr();
+					Global.network_conf.enable = false;
+				}
+				break;
+			default:
+				CommLog(Now() + " Wrong code type");
+			}
 			break;
-		case 1: // odesłanie identyfikatora wersji
-			CommLog(Now() + " " + m.message[0].ToString() + " scenery" + " rcvd");
-			multiplayer::WyslijString(Global.SceneryFile, 1); // nazwa scenerii
-			break;
-		case 2: {
-			// event
-			CommLog(Now() + " " + m.message[0].ToString() + " " + m.message[1].ToString() + " rcvd");
+		}
+		case 1: {
+			// informacja o scenerii (nazwa pliku)
+			switch (m.message[1].ToInt())
+			{
+			case 0:
+				CommLog(Now() + " " + m.message[0].ToString() + " Ask for scenery name" + " rcvd");
+				multiplayer::SendScenery();
+				break;
+			case 1:
+				CommLog(Now() + " " + m.message[0].ToString() + " Information about scenery name" + " rcvd");
+				if (m.message.size() != 3)
+				{
+					CommLog(Now() + " Wrong number of frames");
+					return;
+				}
+				if (m.message[2].ToString() != Global.SceneryFile)
+				{
+					CommLog(Now() + " Wrong scenery name on both sides: disable network. Server side use: " + m.message[2].ToString());
+					Global.network.~unique_ptr();
+					Global.network_conf.enable = false;
+				}
+				break;
+			default:
+				CommLog(Now() + " Wrong code type");
 
-			if (Global.iMultiplayer) {
-				auto *event = simulation::Events.FindEvent(m.message[1].ToString());
+			}
+		}
+				break;
+		case 2: {
+			// wywłoanie eventu
+			switch (m.message[1].ToInt())
+			{
+			case 0:
+				CommLog(Now() + " " + m.message[0].ToString() + " Remote call of event" + " rcvd");
+				if (m.message.size() != 3)
+				{
+					CommLog(Now() + " Wrong number of frames");
+					return;
+				}
+				auto *event = simulation::Events.FindEvent(m.message[2].ToString());
 				if (event != nullptr) {
 					if ((event->Type == tp_Multiple)
 						|| (event->Type == tp_Lights)
@@ -1987,45 +2040,132 @@ void TWorld::OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queu
 						simulation::Events.AddToQuery(event, nullptr); // drugi parametr to dynamic wywołujący - tu brak
 					}
 				}
+				else
+					multiplayer::SendEventCallConfirmation(0, m.message[2].ToString()); //błąd
+
+				break;
+			case 1:
+				CommLog(Now() + " Client do not handle event launch confirmation messages");
+				break;
+			default:
+				CommLog(Now() + " Wrong code type");
 			}
 			break;
 		}
 		case 3: // rozkaz dla AI
-			if (5 == m.message.size())
+			switch (m.message[1].ToInt())
 			{
-				CommLog(Now() + " " + m.message[0].ToString() + " " + m.message[4].ToString() + " rcvd");
+			case 0:
+				CommLog(Now() + " " + m.message[0].ToString() + " Remote command for vehicle" + " rcvd");
+				if (m.message.size() != 6)
+				{
+					CommLog(Now() + " Wrong number of frames");
+					return;
+				}
+				CommLog(Now() + " Vehicle: " + m.message[2].ToString() + " Command: " + m.message[3].ToString() + " rcvd");
 				// nazwa pojazdu jest druga
-				auto *vehicle = simulation::Vehicles.find(m.message[4].ToString());
+				auto *vehicle = simulation::Vehicles.find(m.message[2].ToString());
 				if ((vehicle != nullptr)
 					&& (vehicle->Mechanik != nullptr)) {
 					vehicle->Mechanik->PutCommand(
 						m.message[3].ToString(),
-						m.message[1].ToFloat(), m.message[2].ToFloat(),
+						m.message[4].ToFloat(), m.message[5].ToFloat(),
 						nullptr,
-						stopExt); // floaty są z przodu
+						stopExt);
 					WriteLog("AI command: " + m.message[3].ToString());
+					multiplayer::SendAiCommandConfirmation(1, m.message[2].ToString(), m.message[3].ToString()); //OK
 				}
+				else
+					multiplayer::SendAiCommandConfirmation(0, m.message[2].ToString(), m.message[3].ToString()); //błąd
+
+				break;
+			case 1:
+				CommLog(Now() + " Client do not handle command launch confirmation messages");
+				break;
+			default:
+				CommLog(Now() + " Wrong code type");
 			}
 			break;
-		case 4: // badanie zajętości toru
-		{
-			CommLog(Now() + " " + m.message[0].ToString() + " " + m.message[1].ToString() + " rcvd");
-
-			auto *track = simulation::Paths.find(m.message[1].ToString());
-			if ((track != nullptr)
-				&& (track->IsEmpty())) {
-				multiplayer::WyslijWolny(track->name());
-			}
-		}
-		break;
-		case 5: // ustawienie parametrów
-		{
-			if (3 == m.message.size())
-				return;
-			CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " params: ");
-			if (m.message[1].ToInt() & 1) // ustawienie czasu
+		case 4: // stan toru
+			switch (m.message[1].ToInt())
 			{
-				CommLog(to_string(m.message[1].ToInt()) + to_string(m.message[2].ToFloat()) + " rcvd");
+			case 0:
+				CommLog(Now() + " " + m.message[0].ToString() + " Ask for track free / busy" + " rcvd");
+				if (m.message.size() != 3)
+				{
+					CommLog(Now() + " Wrong number of frames");
+					return;
+				}
+				CommLog(Now() + " Track: " + m.message[2].ToString() + " rcvd");
+				multiplayer::SendTrackOccupancy(m.message[2].ToString());
+				break;
+			case 1:
+				CommLog(Now() + " Client do not handle messages with track busy / free info");
+				break;
+			default:
+				CommLog(Now() + " Wrong code type");
+			}
+			break;
+		case 5: // zajętość odcinków izolowanych
+		{
+			switch (m.message[1].ToInt())
+			{
+			case 0:
+				CommLog(Now() + " " + m.message[0].ToString() + " Ask for isolated free / busy" + " rcvd");
+				if (m.message.size() != 3)
+				{
+					CommLog(Now() + " Wrong number of frames");
+					return;
+				}
+				CommLog(Now() + " Isolated: " + m.message[2].ToString() + " rcvd");
+				multiplayer::SendIsolatedOccupancy(m.message[2].ToString());
+				break;
+			case 1:
+				CommLog(Now() + " Client do not handle messages with isolated busy / free info");
+				break;
+			default:
+				CommLog(Now() + " Wrong code type");
+			}
+			break;
+		}
+		case 6: // stan symulacji
+			switch (m.message[1].ToInt())
+			{
+			case 0:
+				CommLog(Now() + " Ask for simulation status rcvd");
+				if (m.message.size() != 3)
+				{
+					CommLog(Now() + " Wrong number of frames");
+					return;
+				}
+				switch (m.message[2].ToInt())
+				{
+				case 0:
+					multiplayer::SendSimulationStatus(1);
+					break;
+				case 1:
+					multiplayer::SendSimulationStatus(2);
+					break;
+				default:
+					break;
+				}
+				break;
+			case 1:
+				CommLog(Now() + " Set pause rcvd");
+				if (m.message.size() != 3)
+				{
+					CommLog(Now() + " Wrong number of frames");
+					return;
+				}
+				Global.iPause = m.message[2].ToInt();
+				break;
+			case 2:
+				CommLog(Now() + " Set simulation time rcvd");
+				if (m.message.size() != 3)
+				{
+					CommLog(Now() + " Wrong number of frames");
+					return;
+				}
 				double t = m.message[2].ToFloat();
 				simulation::Time.data().wDay = std::floor(t); // niby nie powinno być dnia, ale...
 				if (Global.fMoveLight >= 0)
@@ -2033,81 +2173,14 @@ void TWorld::OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queu
 				simulation::Time.data().wHour = std::floor(24 * t) - 24.0 * simulation::Time.data().wDay;
 				simulation::Time.data().wMinute = std::floor(60 * 24 * t) - 60.0 * (24.0 * simulation::Time.data().wDay + simulation::Time.data().wHour);
 				simulation::Time.data().wSecond = std::floor(60 * 60 * 24 * t) - 60.0 * (60.0 * (24.0 * simulation::Time.data().wDay + simulation::Time.data().wHour) + simulation::Time.data().wMinute);
-			}
-			if (m.message[1].ToInt() & 2)
-			{ // ustawienie flag zapauzowania
-				CommLog(to_string(m.message[1].ToInt()) + to_string(m.message[2].ToInt()) + " rcvd");
-				Global.iPause = m.message[2].ToInt(); // zakładamy, że wysyłający wie, co robi
-			}
-		}
-		break;
-		case 6: // pobranie parametrów ruchu pojazdu
-			// Ra 2014-12: to ma działać również dla pojazdów bez obsady
-			CommLog(Now() + " "	+ to_string(m.message[0].ToInt()) + " " + m.message[1].ToString() +" rcvd");
-			if (m.message[1].size()) {
-				// jeśli długość nazwy jest niezerowa szukamy pierwszego pojazdu o takiej nazwie i odsyłamy parametry ramką #7
-				auto *vehicle = (
-					m.message[1].ToString() == "*" ?
-					simulation::Vehicles.find(Global.asHumanCtrlVehicle) :
-					simulation::Vehicles.find(m.message[1].ToString()));
-				if (vehicle != nullptr) {
-					multiplayer::WyslijNamiary(vehicle); // wysłanie informacji o pojeździe
-				}
-			}
-			else {
-				// dla pustego wysyłamy ramki 6 z nazwami pojazdów AI (jeśli potrzebne wszystkie, to rozpoznać np. "*")
-				simulation::Vehicles.DynamicList();
-			}
-			break;
-		case 8: // ponowne wysłanie informacji o zajętych odcinkach toru
-			CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " all busy track" + " rcvd");
-			simulation::Paths.TrackBusyList();
-			break;
-		case 9: // ponowne wysłanie informacji o zajętych odcinkach izolowanych
-			CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " all busy isolated" + " rcvd");
-			simulation::Paths.IsolatedBusyList();
-			break;
-		case 10: // badanie zajętości jednego odcinka izolowanego
-			CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " " + m.message[1].ToString() + " rcvd");
-			simulation::Paths.IsolatedBusy(m.message[1].ToString());
-			break;
-		case 11: // ustawienie parametrów ruchu pojazdu
-				 //    Ground.IsolatedBusy(AnsiString(pRozkaz->cString+1,(unsigned)(pRozkaz->cString[0])));
-			break;
-		case 12: // skrocona ramka parametrow pojazdow AI (wszystkich!!)
-			CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " obsadzone" + " rcvd");
-			multiplayer::WyslijObsadzone();
-			//    Ground.IsolatedBusy(AnsiString(pRozkaz->cString+1,(unsigned)(pRozkaz->cString[0])));
-			break;
-		case 13: // ramka uszkodzenia i innych stanow pojazdu, np. wylaczenie CA, wlaczenie recznego itd.
-			if (3 == m.message.size() && 1 == m.message[2].size())
-			CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " " + m.message[1].ToString() + " rcvd");
-			if (m.message[1].size()) // jeśli długość nazwy jest niezerowa
-			{ // szukamy pierwszego pojazdu o takiej nazwie i odsyłamy parametry ramką #13
-				auto *lookup = (
-					m.message[1].ToString() == "*" ?
-					simulation::Vehicles.find(Global.asHumanCtrlVehicle) : // nazwa pojazdu użytkownika
-					simulation::Vehicles.find(m.message[1].ToString())); // nazwa pojazdu
-				if (lookup == nullptr) { break; } // nothing found, nothing to do
-				auto *d{ lookup };
-				while (d != nullptr) {
-					d->Damage(char(m.message[2].ToByteArray()));
-					d = d->Next(); // pozostałe też
-				}
-				d = lookup->Prev();
-				while (d != nullptr) {
-					d->Damage(char(m.message[2].ToByteArray()));
-					d = d->Prev(); // w drugą stronę też
-				}
-				multiplayer::WyslijUszkodzenia(lookup->asName, lookup->MoverParameters->EngDmgFlag); // zwrot informacji o pojeździe
+				break;
 			}
 			break;
 		default:
-			break;
+			CommLog(Now() + " Recieved not handled message type code: " + to_string(m.message[0].ToInt));
 		}
 	}
 }
-
 //---------------------------------------------------------------------------
 
 void TWorld::CreateE3D(std::string const &Path, bool Dynamic)

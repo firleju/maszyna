@@ -17,18 +17,15 @@ http://mozilla.org/MPL/2.0/.
 
 namespace multiplayer {
 	enum network_codes {
-		exe_version = 1,
+		net_proto_version = 1,
 		scenery_name,
 		event_call,
 		ai_command,
-		track_occupancy_one,
+		track_occupancy,
+		isolated_occupancy,
 		param_set,
 		vehicle_ask,
 		vehicle_params,
-		track_occupancy_all,
-		isolated_occupancy_all,
-		isolated_occupy,
-		isolated_free,
 		vehicle_damage
 	};
 
@@ -46,7 +43,9 @@ namespace multiplayer {
 		float ToFloat();
 		const uint8_t* ToByteArray() const;
 		size_t size() const { return m_data.size(); };
-
+		int& operator=(int32_t i);
+		float& operator=(float f);
+		std::string& operator=(std::string s);
 	private:
 		int m_messageSize = 0;
 		std::vector<uint8_t> m_data;
@@ -86,7 +85,7 @@ namespace multiplayer {
 			return m_frames.cend();
 		}
 		// dostêp jak do zwyk³ej macierzy
-		ZMQFrame operator[](int pos) {
+		ZMQFrame& operator[](size_t pos) {
 			return m_frames.at(pos);
 		}
 
@@ -127,6 +126,7 @@ namespace multiplayer {
 		void poll(); // otrzymuje wiadomoœci z socketa i wrzuca do wewnêtrznej listy
 		void send(); // wysy³a wiadomoœci z ogólnodostepnej listy
 		auto getIncomingQueue()->std::list<multiplayer::network_queue_t>&;
+		int protocol_version = 1;
 	private:
 		CpperoMQ::IsReceiveReady<CpperoMQ::DealerSocket> net_pollReceiver = CpperoMQ::isReceiveReady(m_socket, [this]()
 		{
@@ -150,12 +150,11 @@ namespace multiplayer {
 	};
 	
 	
-	void SendVersion();
+	void SendVersionInfo();
 	void SendScenery();
-	void SendEventCallOK(std::string e_name, std::string vehicle);
-	void SendAiCommandOK(std::string vehicle, std::string command);
-	void SendTrackOccupancy();
-	void SendIsolatedOccupancy();
-	void SendVehicleDamages();
-	void SendVehicleParams();
+	void SendEventCallConfirmation(int status, std::string name);
+	void SendAiCommandConfirmation(int status, std::string vehicle, std::string command);
+	void SendTrackOccupancy(std::string name);
+	void SendIsolatedOccupancy(std::string name);
+	void SendSimulationStatus(int which_param);
 }
