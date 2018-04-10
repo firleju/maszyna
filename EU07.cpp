@@ -418,11 +418,12 @@ int main(int argc, char *argv[])
 
 	if (Global.network)
 	{
-		using namespace multiplayer;
-		auto msg = ZMQMessage();
-		msg.AddFrame(1);
-		msg.AddFrame(u8"Witaj świecie");
-		Global.network_queue.emplace_back(msg);
+		//multiplayer::SendVersionInfo();
+		//using namespace multiplayer;
+		//auto msg = ZMQMessage();
+		//msg.AddFrame(1);
+		//msg.AddFrame(u8"Witaj świecie");
+		//Global.network_queue.emplace_back(msg);
 	}
 
 

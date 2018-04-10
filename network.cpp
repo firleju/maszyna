@@ -128,12 +128,18 @@ namespace multiplayer {
 
 	void ZMQConnection::send()
 	{
-	
-		for (auto &m : Global.network_queue)
+		auto it = Global.network_queue.begin();
+		while (it != Global.network_queue.end())
 		{
-			if (m.checkTime())
-				m_socket.send(m.message);
+			m_socket.send(it->message);
+			it = Global.network_queue.erase(it);
+
 		}
+		//for (auto &m : Global.network_queue)
+		//{
+		//		m_socket.send(m.message);
+		//		Global.network_queue.pop_front();
+		//}
 
 	}
 
@@ -233,6 +239,18 @@ namespace multiplayer {
 		Global.network_queue.push_back(msg);
 	}
 
+	void SendTrackOccupancy(std::string name, bool occupied, int damage_flag)
+	{
+		auto msg = ZMQMessage();
+		msg.AddFrame(network_codes::track_occupancy);
+		msg.AddFrame(1);
+		msg.AddFrame(1);
+		msg.AddFrame(name);
+		msg.AddFrame((int)occupied);
+		msg.AddFrame(damage_flag);
+		Global.network_queue.push_back(msg);
+	}
+
 	void SendIsolatedOccupancy(std::string name)
 	{
 		TIsolated *Current;
@@ -265,6 +283,17 @@ namespace multiplayer {
 			// jesli nie znalaz³ to wysy³amy wolny
 			msg.AddFrame(0);
 		}
+		Global.network_queue.push_back(msg);
+	}
+
+	void SendIsolatedOccupancy(std::string name, bool occupied)
+	{
+		auto msg = ZMQMessage();
+		msg.AddFrame(network_codes::isolated_occupancy);
+		msg.AddFrame(1);
+		msg.AddFrame(1);
+		msg.AddFrame(name);
+		msg.AddFrame((int)occupied);
 		Global.network_queue.push_back(msg);
 	}
 

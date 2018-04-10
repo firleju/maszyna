@@ -110,6 +110,8 @@ void TIsolated::Modify(int i, TDynamicObject *o)
                 simulation::Events.AddToQuery(evFree, o); // dodanie zwolnienia do kolejki
             if (Global.iMultiplayer) // jeśli multiplayer
                 multiplayer::WyslijString(asName, 10); // wysłanie pakietu o zwolnieniu
+			if (Global.network)
+				multiplayer::SendIsolatedOccupancy(asName, false);
             if (pMemCell) // w powiązanej komórce
                 pMemCell->UpdateValues( "", 0, int( pMemCell->Value2() ) & ~0xFF,
                 update_memval2 ); //"zerujemy" ostatnią wartość
@@ -124,6 +126,8 @@ void TIsolated::Modify(int i, TDynamicObject *o)
                 simulation::Events.AddToQuery(evBusy, o); // dodanie zajętości do kolejki
             if (Global.iMultiplayer) // jeśli multiplayer
                 multiplayer::WyslijString(asName, 11); // wysłanie pakietu o zajęciu
+			if (Global.network)
+				multiplayer::SendIsolatedOccupancy(asName, true);
             if (pMemCell) // w powiązanej komórce
                 pMemCell->UpdateValues( "", 0, int( pMemCell->Value2() ) | 1, update_memval2 ); // zmieniamy ostatnią wartość na nieparzystą
         }
@@ -953,6 +957,9 @@ bool TTrack::AddDynamicObject(TDynamicObject *Dynamic)
             }
         }
     }
+	if (Global.network && Dynamics.empty() && m_name != "none") {
+		multiplayer::SendTrackOccupancy(m_name, true, iDamageFlag); // send info before really occupied track, but only on state change
+	}
     Dynamics.emplace_back( Dynamic );
     Dynamic->MyTrack = this; // ABu: na ktorym torze jesteśmy
     if( Dynamic->iOverheadMask ) {
@@ -1045,6 +1052,9 @@ bool TTrack::RemoveDynamicObject(TDynamicObject *Dynamic)
             }
         }
     }
+	if (Global.network && Dynamics.empty() && m_name != "none") {
+		multiplayer::SendTrackOccupancy(m_name, false, iDamageFlag);
+	}
     
     return result;
 }

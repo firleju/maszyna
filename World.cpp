@@ -926,6 +926,16 @@ bool TWorld::Update() {
         simulation::State.update( stepdeltatime, updatecount );
     }
     Timer::subsystem.sim_dynamics.stop();
+	if (iPause != Global.iPause) { // przesłanie informacji o pauzie do programu nadzorującego
+
+		if (Global.iMultiplayer) {// dajemy znać do serwera o wykonaniu
+			multiplayer::WyslijParam(5, 3); // ramka 5 z czasem i stanem zapauzowania
+		}
+		if (Global.network && iPause != Global.iPause) {
+			multiplayer::SendSimulationStatus(multiplayer::network_codes::param_set_pause);
+		}
+		iPause = Global.iPause;
+	}
 
     // secondary fixed step simulation time routines
     while( m_secondaryupdateaccumulator >= m_secondaryupdaterate ) {
@@ -933,11 +943,6 @@ bool TWorld::Update() {
         ui::Transcripts.Update(); // obiekt obsługujący stenogramy dźwięków na ekranie
 
         // awaria PoKeys mogła włączyć pauzę - przekazać informację
-        if( Global.iMultiplayer ) // dajemy znać do serwera o wykonaniu
-            if( iPause != Global.iPause ) { // przesłanie informacji o pauzie do programu nadzorującego
-                multiplayer::WyslijParam( 5, 3 ); // ramka 5 z czasem i stanem zapauzowania
-                iPause = Global.iPause;
-            }
 
         // fixed step part of the camera update
         if( ( Train != nullptr )
@@ -2025,6 +2030,7 @@ void TWorld::OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queu
 			switch (m.message[1].ToInt())
 			{
 			case 0:
+			{
 				CommLog(Now() + " " + m.message[0].ToString() + " Remote call of event" + " rcvd");
 				if (m.message.size() != 3)
 				{
@@ -2044,9 +2050,12 @@ void TWorld::OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queu
 					multiplayer::SendEventCallConfirmation(0, m.message[2].ToString()); //błąd
 
 				break;
+			}
 			case 1:
+			{
 				CommLog(Now() + " Client do not handle event launch confirmation messages");
 				break;
+			}
 			default:
 				CommLog(Now() + " Wrong code type");
 			}
@@ -2056,6 +2065,7 @@ void TWorld::OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queu
 			switch (m.message[1].ToInt())
 			{
 			case 0:
+			{
 				CommLog(Now() + " " + m.message[0].ToString() + " Remote command for vehicle" + " rcvd");
 				if (m.message.size() != 6)
 				{
@@ -2079,9 +2089,12 @@ void TWorld::OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queu
 					multiplayer::SendAiCommandConfirmation(0, m.message[2].ToString(), m.message[3].ToString()); //błąd
 
 				break;
+			}
 			case 1:
+			{
 				CommLog(Now() + " Client do not handle command launch confirmation messages");
 				break;
+			}
 			default:
 				CommLog(Now() + " Wrong code type");
 			}
@@ -2140,10 +2153,10 @@ void TWorld::OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queu
 				}
 				switch (m.message[2].ToInt())
 				{
-				case 0:
+				case 1:
 					multiplayer::SendSimulationStatus(1);
 					break;
-				case 1:
+				case 2:
 					multiplayer::SendSimulationStatus(2);
 					break;
 				default:
@@ -2177,7 +2190,7 @@ void TWorld::OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queu
 			}
 			break;
 		default:
-			CommLog(Now() + " Recieved not handled message type code: " + to_string(m.message[0].ToInt));
+			CommLog(Now() + " Recieved not handled message type code: " + to_string(m.message[0].ToInt()));
 		}
 	}
 }

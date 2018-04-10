@@ -17,16 +17,18 @@ http://mozilla.org/MPL/2.0/.
 
 namespace multiplayer {
 	enum network_codes {
-		net_proto_version = 1,
-		scenery_name,
-		event_call,
-		ai_command,
-		track_occupancy,
-		isolated_occupancy,
-		param_set,
-		vehicle_ask,
-		vehicle_params,
-		vehicle_damage
+		net_proto_version = 0,
+		scenery_name = 1,
+		event_call = 2,
+		ai_command = 3,
+		track_occupancy = 4,
+		isolated_occupancy = 5,
+		param_set = 6,
+		param_set_pause = 1,
+		param_set_time = 2,
+		vehicle_ask = 7,
+		vehicle_params = 8,
+		vehicle_damage = 9
 	};
 
 	// Ramka danych wiadomoœci dla interfejsu ZeroMQ
@@ -47,7 +49,7 @@ namespace multiplayer {
 		float& operator=(float f);
 		std::string& operator=(std::string s);
 	private:
-		int m_messageSize = 0;
+		size_t m_messageSize = 0;
 		std::vector<uint8_t> m_data;
 	};
 
@@ -155,6 +157,8 @@ namespace multiplayer {
 	void SendEventCallConfirmation(int status, std::string name);
 	void SendAiCommandConfirmation(int status, std::string vehicle, std::string command);
 	void SendTrackOccupancy(std::string name);
+	void SendTrackOccupancy(std::string name, bool occupied, int damage_flag);
 	void SendIsolatedOccupancy(std::string name);
+	void SendIsolatedOccupancy(std::string name, bool occupied);
 	void SendSimulationStatus(int which_param);
 }

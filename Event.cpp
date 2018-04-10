@@ -956,6 +956,9 @@ event_manager::CheckQuery() {
                         // potwierdzenie wykonania dla serwera (odczyt semafora już tak nie działa)
                         multiplayer::WyslijEvent( m_workevent->asName, m_workevent->Activator->name() );
                     }
+					if (Global.network) {
+						multiplayer::SendEventCallConfirmation(1, m_workevent->asName);
+					}
                     m_workevent->Params[ 9 ].asMemCell->PutCommand(
                         m_workevent->Activator->Mechanik,
                         m_workevent->Params[ 8 ].asLocation );
@@ -1093,6 +1096,9 @@ event_manager::CheckQuery() {
                     // dajemy znać do serwera o przełożeniu
                     multiplayer::WyslijEvent( m_workevent->asName, "" ); // wysłanie nazwy eventu przełączajacego
                 }
+				if (Global.network) {
+					multiplayer::SendEventCallConfirmation(1, m_workevent->asName);
+				}
                 // Ra: bardziej by się przydała nazwa toru, ale nie ma do niej stąd dostępu
                 break;
             }
