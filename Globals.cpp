@@ -302,6 +302,16 @@ global_settings::ConfigParse(cParser &Parser) {
             // max 8 lights per opengl specs, minus one used for sun. at least one light for controlled vehicle
             DynamicLightCount = clamp( DynamicLightCount, 1, 7 ); 
         }
+        else if( token == "scenario.time.offset" ) {
+            // shift (in hours) applied to train timetables
+            Parser.getTokens( 1, false );
+            Parser >> ScenarioTimeOffset;
+        }
+        else if( token == "scenario.time.current" ) {
+            // sync simulation time with local clock
+            Parser.getTokens( 1, false );
+            Parser >> ScenarioTimeCurrent;
+        }
         else if( token == "scalespeculars" ) {
             // whether strength of specular highlights should be adjusted (generally needed for legacy 3d models)
             Parser.getTokens();
@@ -519,9 +529,13 @@ global_settings::ConfigParse(cParser &Parser) {
         }
         else if (token == "brakestep")
         {
-            // krok zmiany hamulca dla klawiszy [Num3] i [Num9]
             Parser.getTokens(1, false);
             Parser >> fBrakeStep;
+        }
+        else if (token == "brakespeed")
+        {
+            Parser.getTokens(1, false);
+            Parser >> brake_speed;
         }
         else if (token == "joinduplicatedevents")
         {

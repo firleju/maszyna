@@ -304,9 +304,7 @@ extract_value( bool &Variable, std::string const &Key, std::string const &Input,
 }
 
 bool FileExists( std::string const &Filename ) {
-	std::string fn = Filename;
-	std::replace(fn.begin(), fn.end(), '\\', '/');
-	std::ifstream file( fn );
+	std::ifstream file( Filename );
     return( true == file.is_open() );
 }
 
@@ -314,7 +312,6 @@ bool FileExists( std::string const &Filename ) {
 std::time_t
 last_modified( std::string const &Filename ) {
     std::string fn = Filename;
-    std::replace(fn.begin(), fn.end(), '\\', '/');
     struct stat filestat;
     if( ::stat( fn.c_str(), &filestat ) == 0 )
 		return filestat.st_mtime;
@@ -336,4 +333,13 @@ erase_extension( std::string &Filename ) {
         return true;
     }
     return false;
+}
+
+// potentially replaces backward slashes in provided file path with unix-compatible forward slashes
+void
+replace_slashes( std::string &Filename ) {
+
+    std::replace(
+        std::begin( Filename ), std::end( Filename ),
+        '\\', '/' );
 }

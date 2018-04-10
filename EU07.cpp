@@ -147,10 +147,13 @@ void mouse_button_callback( GLFWwindow* window, int button, int action, int mods
 
 void key_callback( GLFWwindow *window, int key, int scancode, int action, int mods ) {
 
-    input::Keyboard.key( key, action );
-
     Global.shiftState = ( mods & GLFW_MOD_SHIFT ) ? true : false;
     Global.ctrlState = ( mods & GLFW_MOD_CONTROL ) ? true : false;
+
+    // give the ui first shot at the input processing...
+    if( true == UILayer.on_key( key, action ) ) { return; }
+    // ...if the input is left untouched, pass it on
+    input::Keyboard.key( key, action );
 
     if( ( true == Global.InputMouse )
      && ( ( key == GLFW_KEY_LEFT_ALT )
@@ -262,8 +265,6 @@ int main(int argc, char *argv[])
     }
 #endif
 
-	Global.asVersion = "M7 16.03.2018 (based on tmj c100fcb7)";
-
 	for (int i = 1; i < argc; ++i)
 	{
 		std::string token(argv[i]);
@@ -275,7 +276,10 @@ int main(int argc, char *argv[])
 				Global.iConvertModels = -7; // z optymalizacją, bananami i prawidłowym Opacity
 		}
 		else if (i + 1 < argc && token == "-s")
+		{
 			Global.SceneryFile = std::string(argv[++i]);
+			std::replace(Global.SceneryFile.begin(), Global.SceneryFile.end(), '\\', '/');
+		}
 		else if (i + 1 < argc && token == "-v")
 		{
 			std::string v(argv[++i]);
@@ -333,7 +337,6 @@ int main(int argc, char *argv[])
     }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(Global.VSync ? 1 : 0); //vsync
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED); //capture cursor
     glfwSetCursorPos(window, 0.0, 0.0);
     glfwSetFramebufferSizeCallback(window, window_resize_callback);
     glfwSetCursorPosCallback(window, cursor_pos_callback);
@@ -362,6 +365,8 @@ int main(int argc, char *argv[])
 #endif
 
 	try {
+		Global.ControlPicking = true;
+
 		if ((false == GfxRenderer.Init(window))
 			|| (false == UILayer.init(window)))
 			return -1;
@@ -408,13 +413,16 @@ int main(int argc, char *argv[])
 */
     if( Global.iConvertModels < 0 ) {
         Global.iConvertModels = -Global.iConvertModels;
-        World.CreateE3D( "models/" ); // rekurencyjne przeglądanie katalogów
-        World.CreateE3D( "dynamic/", true );
+        World.CreateE3D( szModelPath ); // rekurencyjne przeglądanie katalogów
+        World.CreateE3D( szDynamicPath, true );
     } // po zrobieniu E3D odpalamy normalnie scenerię, by ją zobaczyć
 
 #ifdef _WIN32
     Console::On(); // włączenie konsoli
 #endif
+
+	Global.ControlPicking = false;
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED); //capture cursor
 
 	if (Global.network)
 	{

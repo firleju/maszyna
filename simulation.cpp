@@ -549,6 +549,17 @@ state_manager::deserialize_time( cParser &Input, scene::scratch_data &Scratchpad
         >> time.wHour
         >> time.wMinute;
 
+    if( true == Global.ScenarioTimeCurrent ) {
+        // calculate time shift required to match scenario time with local clock
+        auto timenow = std::time( 0 );
+        auto *localtime = std::localtime( &timenow );
+        Global.ScenarioTimeOffset =
+            clamp_circular(
+                ( localtime->tm_hour * 60 + localtime->tm_min ) - ( time.wHour * 60 + time.wMinute ),
+                24 * 60 )
+            / 60.f;
+    }
+
     // remaining sunrise and sunset parameters are no longer used, as they're now calculated dynamically
     // anything else left in the section has no defined meaning
     skip_until( Input, "endtime" );
@@ -734,9 +745,14 @@ state_manager::deserialize_dynamic( cParser &Input, scene::scratch_data &Scratch
     }
     auto const inputline { Input.Line() }; // cache in case of errors
     // basic attributes
-    auto const datafolder { Input.getToken<std::string>() };
-    auto const skinfile { Input.getToken<std::string>() };
-    auto const mmdfile { Input.getToken<std::string>() };
+    auto datafolder { Input.getToken<std::string>() };
+    auto skinfile { Input.getToken<std::string>() };
+    auto mmdfile { Input.getToken<std::string>() };
+
+	std::replace(datafolder.begin(), datafolder.end(), '\\', '/');
+	std::replace(skinfile.begin(), skinfile.end(), '\\', '/');
+	std::replace(mmdfile.begin(), mmdfile.end(), '\\', '/');
+
     auto const pathname = (
         Scratchpad.trainset.is_open ?
             Scratchpad.trainset.track :

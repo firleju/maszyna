@@ -2,7 +2,7 @@ version: '{build}'
 image: Visual Studio 2017
 clone_depth: 1
 build_script:
-- cmd: >-
+- ps: >-
     mkdir builds
     
     cd builds

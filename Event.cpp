@@ -473,9 +473,8 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
         }
         else if (token.substr(token.length() - 4, 4) == ".vmd") // na razie tu, może będzie inaczej
         { // animacja z pliku VMD
-//			TFileStream *fs = new TFileStream( "models/" + AnsiString( token.c_str() ), fmOpenRead );
 			{
-				std::ifstream file( "models/" + token, std::ios::binary | std::ios::ate ); file.unsetf( std::ios::skipws );
+				std::ifstream file( szModelPath + token, std::ios::binary | std::ios::ate ); file.unsetf( std::ios::skipws );
 				auto size = file.tellg();   // ios::ate already positioned us at the end of the file
 				file.seekg( 0, std::ios::beg ); // rewind the caret afterwards
 				Params[ 7 ].asInt = size;
@@ -817,7 +816,7 @@ event_manager::FindEvent( std::string const &Name ) {
 bool
 event_manager::AddToQuery( TEvent *Event, TDynamicObject *Owner, double delay ) {
 
-    if( ( false == Event->m_ignored ) && ( true == Event->bEnabled ) ) {
+    if( true == Event->bEnabled ) {
         // jeśli może być dodany do kolejki (nie używany w skanowaniu)
         if( !Event->iQueued ) // jeśli nie dodany jeszcze do kolejki
         { // kolejka eventów jest posortowana względem (fStartTime)
@@ -827,10 +826,13 @@ event_manager::AddToQuery( TEvent *Event, TDynamicObject *Owner, double delay ) 
                 // eventy AddValues trzeba wykonywać natychmiastowo, inaczej kolejka może zgubić jakieś dodawanie
                 // Ra: kopiowanie wykonania tu jest bez sensu, lepiej by było wydzielić funkcję
                 // wykonującą eventy i ją wywołać
-                if( EventConditon( Event ) ) { // teraz mogą być warunki do tych eventów
+                if( ( false == Event->m_ignored )
+                 && ( true == EventConditon( Event ) ) ) { // teraz mogą być warunki do tych eventów
+
                     Event->Params[ 5 ].asMemCell->UpdateValues(
                         Event->Params[ 0 ].asText, Event->Params[ 1 ].asdouble,
                         Event->Params[ 2 ].asdouble, Event->iFlags );
+
                     if( Event->Params[ 6 ].asTrack ) { // McZapkie-100302 - updatevalues oprocz zmiany wartosci robi putcommand dla
                         // wszystkich 'dynamic' na danym torze
                         for( auto dynamic : Event->Params[ 6 ].asTrack->Dynamics ) {
@@ -861,7 +863,8 @@ event_manager::AddToQuery( TEvent *Event, TDynamicObject *Owner, double delay ) 
                     && ( ( false == Event->bEnabled )
                       || ( Event->iQueued > 0 ) ) );
             }
-            if( Event != nullptr ) {
+            if( ( Event != nullptr )
+             && ( false == Event->m_ignored ) ) {
                 // standardowe dodanie do kolejki
                 ++Event->iQueued; // zabezpieczenie przed podwójnym dodaniem do kolejki
                 WriteLog( "EVENT ADDED TO QUEUE" + ( Owner ? ( " by " + Owner->asName ) : "" ) + ": " + Event->asName );

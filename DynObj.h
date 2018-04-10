@@ -276,7 +276,9 @@ private:
         sound_source dsbCouplerAttach { sound_placement::external }; // moved from cab
         sound_source dsbCouplerDetach { sound_placement::external }; // moved from cab
         sound_source dsbCouplerStretch { sound_placement::external }; // moved from cab
+        sound_source dsbCouplerStretch_loud { sound_placement::external };
         sound_source dsbBufferClamp { sound_placement::external }; // moved from cab
+        sound_source dsbBufferClamp_loud { sound_placement::external };
     };
 
     struct pantograph_sounds {
@@ -517,7 +519,7 @@ private:
         return mMatrix.readArray(); };
     inline double * Matrix() {
         return mMatrix.getArray(); };
-    inline double GetVelocity() {
+    inline double GetVelocity() const {
         return MoverParameters->Vel; };
     inline double GetLength() const {
         return MoverParameters->Dim.L; };
@@ -560,7 +562,7 @@ private:
     float GetEPP(); // wyliczanie sredniego cisnienia w PG
     int DirectionSet(int d); // ustawienie kierunku w składzie
     // odczyt kierunku w składzie
-    int DirectionGet() {
+    int DirectionGet() const {
         return iDirection + iDirection - 1; };
     int DettachStatus(int dir);
     int Dettach(int dir);

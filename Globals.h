@@ -16,6 +16,7 @@ http://mozilla.org/MPL/2.0/.
 #include "uart.h"
 #include "utilities.h"
 #include "motiontelemetry.h"
+#include "version.h"
 #include "network.h"
 
 struct global_settings {
@@ -81,6 +82,8 @@ struct global_settings {
     bool FakeLight{ false }; // toggle between fixed and dynamic daylight
     double fTimeSpeed{ 1.0 }; // przyspieszenie czasu, zmienna do testów
     double fLatitudeDeg{ 52.0 }; // szerokość geograficzna
+    float ScenarioTimeOffset { 0.f }; // time shift (in hours) applied to train timetables
+    bool ScenarioTimeCurrent { false }; // automatic time shift to match scenario time with local clock
     bool bInactivePause{ true }; // automatyczna pauza, gdy okno nieaktywne
     int iSlowMotionMask{ -1 }; // maska wyłączanych właściwości
     bool bHideConsole{ false }; // hunter-271211: ukrywanie konsoli
@@ -137,7 +140,8 @@ struct global_settings {
     int iFeedbackPort{ 0 }; // dodatkowy adres dla informacji zwrotnych
     bool InputGamepad{ true }; // whether gamepad support is enabled
     bool InputMouse{ true }; // whether control pick mode can be activated
-    double fBrakeStep{ 1.0 }; // krok zmiany hamulca dla klawiszy [Num3] i [Num9]
+    double fBrakeStep { 1.0 }; // krok zmiany hamulca innych niż FV4a dla klawiszy [Num3] i [Num9]
+    double brake_speed { 3.0 }; // prędkość przesuwu hamulca dla FV4a
     // parametry kalibracyjne wejść z pulpitu
     double fCalibrateIn[ 6 ][ 6 ] = {
         { 0, 1, 0, 0, 0, 0 },
@@ -165,7 +169,7 @@ struct global_settings {
     int iMultiplayer{ 0 }; // blokada działania niektórych eventów na rzecz kominikacji
     // other
     std::string AppName{ "EU07" };
-    std::string asVersion{ "UNKNOWN" }; // z opisem
+    std::string asVersion{ VERSION_INFO }; // z opisem
 	motiontelemetry::conf_t motiontelemetry_conf;
 	std::string screenshot_dir;
 

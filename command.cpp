@@ -63,6 +63,9 @@ commanddescription_sequence Commands_descriptions = {
     { "reverserforward", command_target::vehicle },
     { "reverserneutral", command_target::vehicle },
     { "reverserbackward", command_target::vehicle },
+    { "fuelpumptoggle", command_target::vehicle },
+    { "fuelpumpenable", command_target::vehicle },
+    { "fuelpumpdisable", command_target::vehicle },
     { "linebreakertoggle", command_target::vehicle },
     { "linebreakeropen", command_target::vehicle },
     { "linebreakerclose", command_target::vehicle },
@@ -209,7 +212,6 @@ command_queue::push( command_data const &Command, std::size_t const Recipient ) 
 			m_active_continuous.emplace(Command.command);
 		else if (Command.action == GLFW_RELEASE)
 			m_active_continuous.erase(Command.command);
-		return;
 	}
 
     auto lookup = m_commands.emplace( Recipient, commanddata_sequence() );
