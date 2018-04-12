@@ -55,14 +55,14 @@ namespace multiplayer {
 	{
 		m_messageSize = sizeof(n);
 		m_data.resize(m_messageSize);
-		sn_utils::ls_int32(m_data, n);
+		sn_utils::bs_int32(m_data, n);
 	}
 
 	ZMQFrame::ZMQFrame(float n)
 	{
 		m_messageSize = sizeof(n);
 		m_data.resize(m_messageSize);
-		sn_utils::ls_float32(m_data, n);
+		sn_utils::bs_float32(m_data, n);
 	}
 
 	std::string ZMQFrame::ToString()
@@ -72,12 +72,12 @@ namespace multiplayer {
 
 	int32_t ZMQFrame::ToInt()
 	{
-		return sn_utils::ld_int32(m_data);
+		return sn_utils::bd_int32(m_data);
 	}
 
 	float ZMQFrame::ToFloat()
 	{
-		return sn_utils::ld_float32(m_data);
+		return sn_utils::bd_float32(m_data);
 	}
 
 	const uint8_t* ZMQFrame::ToByteArray() const
@@ -90,7 +90,7 @@ namespace multiplayer {
 		m_data.clear();
 		m_messageSize = sizeof(i);
 		m_data.resize(m_messageSize);
-		sn_utils::ls_int32(m_data, i);
+		sn_utils::bs_int32(m_data, i);
 		return i;
 	}
 
@@ -99,7 +99,7 @@ namespace multiplayer {
 		m_data.clear();
 		m_messageSize = sizeof(f);
 		m_data.resize(m_messageSize);
-		sn_utils::ls_float32(m_data, f);
+		sn_utils::bs_float32(m_data, f);
 		return f;
 	}
 

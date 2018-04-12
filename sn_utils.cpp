@@ -230,3 +230,42 @@ void sn_utils::s_vec4(std::ostream &s, glm::vec4 const &v)
     ls_float32(s, v.z);
     ls_float32(s, v.w);
 }
+
+// serialize big endian int32
+void sn_utils::bs_int32(std::vector<uint8_t>& buf, int32_t v)
+{
+	assert(sizeof(v) == buf.size());
+	buf[0] = v >> 24;
+	buf[1] = v >> 16;
+	buf[2] = v >> 8;
+	buf[3] = v;
+}
+
+// serialize big endian float32
+void sn_utils::bs_float32(std::vector<uint8_t>& buf, float t)
+{
+	assert(sizeof(t) == buf.size());
+	uint32_t v = reinterpret_cast<uint32_t&>(t);
+	buf[0] = v >> 24;
+	buf[1] = v >> 16;
+	buf[2] = v >> 8;
+	buf[3] = v;
+}
+
+// deserialize big endian int32
+int32_t sn_utils::bd_int32(std::vector<uint8_t>& data)
+{
+	assert(sizeof(int32_t) == data.size());
+	uint32_t v = (data[3]) | (data[2] << 8) | (data[1] << 16) | (data[0] << 24);
+	return reinterpret_cast<int32_t&>(v);
+	return int32_t();
+}
+
+// deserialize big endian float32
+float sn_utils::bd_float32(std::vector<uint8_t>& data)
+{
+	assert(sizeof(float) == data.size());
+	uint32_t v = (data[3]) | (data[2] << 8) | (data[1] << 16) | (data[0] << 24);
+	return reinterpret_cast<float&>(v);
+	return float();
+}

@@ -32,4 +32,12 @@ public:
     static void s_bool(std::ostream&, bool);
     static void s_dvec3(std::ostream&, glm::dvec3 const &);
     static void s_vec4(std::ostream&, glm::vec4 const &);
+
+	// for networking
+	static void bs_int32(std::vector<uint8_t>&, int32_t);
+	static void bs_float32(std::vector<uint8_t>&, float);
+
+	static int32_t bd_int32(std::vector<uint8_t>&);
+	static float bd_float32(std::vector<uint8_t>&);
+
 };
