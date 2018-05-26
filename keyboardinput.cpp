@@ -255,11 +255,47 @@ keyboard_input::default_bindings() {
         { -1 },
         // reverserbackward
         { -1 },
+        // waterpumpbreakertoggle
+        { GLFW_KEY_W | keymodifier::control },
+        // waterpumpbreakerclose
+        { -1 },
+        // waterpumpbreakeropen
+        { -1 },
+        // waterpumptoggle
+        { GLFW_KEY_W },
+        // waterpumpenable
+        { -1 },
+        // waterpumpdisable
+        { -1 },
+        // waterheaterbreakertoggle
+        { GLFW_KEY_W | keymodifier::control | keymodifier::shift },
+        // waterheaterbreakerclose
+        { -1 },
+        // waterheaterbreakeropen
+        { -1 },
+        // waterheatertoggle
+        { GLFW_KEY_W | keymodifier::shift },
+        // waterheaterenable
+        { -1 },
+        // waterheaterdisable
+        { -1 },
+        // watercircuitslinktoggle
+        { GLFW_KEY_H | keymodifier::shift },
+        // watercircuitslinkenable
+        { -1 },
+        // watercircuitslinkdisable
+        { -1 },
         // fuelpumptoggle
         { GLFW_KEY_F },
         // fuelpumpenable,
         { -1 },
         // fuelpumpdisable,
+        { -1 },
+        // oilpumptoggle
+        { GLFW_KEY_F | keymodifier::shift },
+        // oilpumpenable,
+        { -1 },
+        // oilpumpdisable,
         { -1 },
         // linebreakertoggle
         { GLFW_KEY_M },
@@ -297,6 +333,10 @@ keyboard_input::default_bindings() {
         { GLFW_KEY_G },
         // epbrakecontroltoggle
         { GLFW_KEY_Z | keymodifier::control },
+		// trainbrakeoperationmodeincrease
+        { GLFW_KEY_KP_2 | keymodifier::control },
+		// trainbrakeoperationmodedecrease
+        { GLFW_KEY_KP_8 | keymodifier::control },
         // brakeactingspeedincrease
         { GLFW_KEY_B | keymodifier::shift },
         // brakeactingspeeddecrease
@@ -318,7 +358,9 @@ keyboard_input::default_bindings() {
         // hornlowactivate
         { GLFW_KEY_A },
         // hornhighactivate
-        { GLFW_KEY_A | keymodifier::shift },
+        { GLFW_KEY_S },
+        // whistleactivate
+        { GLFW_KEY_Z },
         // radiotoggle
         { GLFW_KEY_R | keymodifier::control },
         // radiochannelincrease

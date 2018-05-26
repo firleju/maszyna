@@ -164,7 +164,9 @@ enum range {
 // start method for devices; exclusive
 enum start {
     manual,
-    automatic
+    automatic,
+    manualwithautofallback,
+    battery
 };
 // recognized vehicle light locations and types; can be combined
 enum light {
@@ -626,6 +628,92 @@ struct fuel_pump {
     start start_type { start::manual };
 };
 
+// basic approximation of a fuel pump
+// TODO: fuel consumption, optional automatic engine start after activation
+struct oil_pump {
+
+    bool is_enabled { false }; // device is allowed/requested to operate
+    bool is_active { false }; // device is working
+    start start_type { start::manual };
+    float resource_amount { 1.f };
+    float pressure_minimum { 0.f }; // lowest acceptable working pressure
+    float pressure_maximum { 0.65f }; // oil pressure at maximum engine revolutions
+    float pressure_target { 0.f };
+    float pressure_present { 0.f };
+};
+
+struct water_pump {
+
+    bool breaker { true }; // device is allowed to operate
+    bool is_enabled { false }; // device is requested to operate
+    bool is_active { false }; // device is working
+    start start_type { start::manual };
+};
+
+struct water_heater {
+
+    bool breaker { true }; // device is allowed to operate
+    bool is_enabled { false }; // device is requested to operate
+    bool is_active { false }; // device is working
+    bool is_damaged { false }; // device is damaged
+
+    struct heater_config_t {
+        float temp_min { -1 }; // lowest accepted temperature
+        float temp_max { -1 }; // highest accepted temperature
+    } config;
+};
+
+struct heat_data {
+    // input, state of relevant devices
+    bool cooling { false }; // TODO: user controlled device, implement
+//    bool okienko { true }; // window in the engine compartment
+    // system configuration
+    bool auxiliary_water_circuit { false }; // cooling system has an extra water circuit
+    // heat exchange factors
+    double kw { 0.35 };
+    double kv { 0.6 };
+    double kfe { 1.0 };
+    double kfs { 80.0 };
+    double kfo { 25.0 };
+    double kfo2 { 25.0 };
+    // system parts
+    struct fluid_circuit_t {
+
+        struct circuit_config_t {
+            float temp_min { -1 }; // lowest accepted temperature
+            float temp_max { -1 }; // highest accepted temperature
+            float temp_cooling { -1 }; // active cooling activation point
+            float temp_flow { -1 }; // fluid flow activation point
+            bool shutters { false }; // the radiator has shutters to assist the cooling
+        } config;
+        bool is_cold { false }; // fluid is too cold
+        bool is_warm { false }; // fluid is too hot
+        bool is_hot { false }; // fluid temperature crossed cooling threshold
+        bool is_flowing { false }; // fluid is being pushed through the circuit
+    }   water,
+        water_aux,
+        oil;
+    // output, state of affected devices
+    bool PA { false }; // malfunction flag
+    float rpmw { 0.0 }; // current main circuit fan revolutions
+    float rpmwz { 0.0 }; // desired main circuit fan revolutions
+    bool zaluzje1 { false };
+    float rpmw2 { 0.0 }; // current auxiliary circuit fan revolutions
+    float rpmwz2 { 0.0 }; // desired auxiliary circuit fan revolutions
+    bool zaluzje2 { false };
+    // output, temperatures
+    float Te { 15.0 }; // ambient temperature TODO: get it from environment data
+    // NOTE: by default the engine is initialized in warm, startup-ready state
+    float Ts { 50.0 }; // engine temperature
+    float To { 45.0 }; // oil temperature
+    float Tsr { 50.0 }; // main circuit radiator temperature (?)
+    float Twy { 50.0 }; // main circuit water temperature
+    float Tsr2 { 40.0 }; // secondary circuit radiator temperature (?)
+    float Twy2 { 40.0 }; // secondary circuit water temperature
+    float temperatura1 { 50.0 };
+    float temperatura2 { 40.0 };
+};
+
 class TMoverParameters
 { // Ra: wrapper na kod pascalowy, przejmujący jego funkcje  Q: 20160824 - juz nie wrapper a klasa bazowa :)
 public:
@@ -719,6 +807,7 @@ public:
 	double BrakeSlckAdj = 0.0; /*opor nastawiacza skoku tloka, kN*/
 	double BrakeRigEff = 0.0; /*sprawnosc przekladni dzwigniowej*/
 	double RapidMult = 1.0; /*przelozenie rapidu*/
+	double RapidVel = 55.0; /*szybkosc przelaczania rapidu*/
 	int BrakeValveSize = 0;
 	std::string BrakeValveParams;
 	double Spg = 0.0;
@@ -773,7 +862,7 @@ public:
 	double RVentCutOff = 0.0;      /*rezystancja wylaczania wentylatorow dla RVentType=2*/
     double RVentSpeed { 0.5 }; //rozpedzanie sie wentylatora obr/s^2}
     double RVentMinI { 50.0 }; //przy jakim pradzie sie wylaczaja}
-	int CompressorPower = 1; /*0: bezp. z obwodow silnika, 1: z przetwornicy, reczne, 2: w przetwornicy, stale, 5: z silnikowego*/
+	int CompressorPower = 1; // 0: main circuit, 1: z przetwornicy, reczne, 2: w przetwornicy, stale, 3: diesel engine, 4: converter of unit in front, 5: converter of unit behind
 	int SmallCompressorPower = 0; /*Winger ZROBIC*/
 	bool Trafo = false;      /*pojazd wyposażony w transformator*/
 
@@ -835,9 +924,16 @@ public:
 	double Ftmax = 0.0;
 	/*- dla lokomotyw z silnikami indukcyjnymi -*/
 	double eimc[26];
-	bool EIMCLogForce; // 
+	bool EIMCLogForce = false; // 
     static std::vector<std::string> const eimc_labels;
     double InverterFrequency { 0.0 }; // current frequency of power inverters
+	/* -dla pojazdów z blendingiem EP/ED (MED) */
+	double MED_Vmax = 0; // predkosc maksymalna dla obliczen chwilowej sily hamowania EP w MED
+	double MED_Vmin = 0; // predkosc minimalna dla obliczen chwilowej sily hamowania EP w MED
+	double MED_Vref = 0; // predkosc referencyjna dla obliczen dostepnej sily hamowania EP w MED
+	double MED_amax = 9.81; // maksymalne opoznienie hamowania sluzbowego MED
+	bool MED_EPVC = 0; // czy korekcja sily hamowania EP, gdy nie ma dostepnego ED
+	bool MED_Ncor = 0; // czy korekcja sily hamowania z uwzglednieniem nacisku
 	/*-dla wagonow*/
     float MaxLoad = 0.f;           /*masa w T lub ilosc w sztukach - ladownosc*/
 	std::string LoadAccepted; std::string LoadQuantity; /*co moze byc zaladowane, jednostki miary*/
@@ -849,10 +945,13 @@ public:
 	double DoorOpenSpeed = 1.0; double DoorCloseSpeed = 1.0;      /*predkosc otwierania i zamykania w j.u. */
 	double DoorMaxShiftL = 0.5; double DoorMaxShiftR = 0.5; double DoorMaxPlugShift = 0.1;/*szerokosc otwarcia lub kat*/
 	int DoorOpenMethod = 2;             /*sposob otwarcia - 1: przesuwne, 2: obrotowe, 3: trójelementowe*/
-	double PlatformSpeed = 0.25;   /*szybkosc stopnia*/
-	double PlatformMaxShift = 0.5; /*wysuniecie stopnia*/
-	int PlatformOpenMethod = 1; /*sposob animacji stopnia*/
+    float DoorCloseDelay { 0.f }; // delay (in seconds) before the door begin closing, once conditions to close are met
+	double PlatformSpeed = 0.5;   /*szybkosc stopnia*/
+    double PlatformMaxShift { 45.0 }; /*wysuniecie stopnia*/
+    int PlatformOpenMethod { 2 }; /*sposob animacji stopnia*/
+    double MirrorMaxShift { 90.0 };
 	bool ScndS = false; /*Czy jest bocznikowanie na szeregowej*/
+	double SpeedCtrlDelay = 2; /*opoznienie dzialania tempomatu z wybieralna predkoscia*/
     /*--sekcja zmiennych*/
     /*--opis konkretnego egzemplarza taboru*/
 	TLocation Loc; //pozycja pojazdów do wyznaczenia odległości pomiędzy sprzęgami
@@ -905,6 +1004,7 @@ public:
 	bool CompressorAllow = false;            /*! zezwolenie na uruchomienie sprezarki  NBMX*/
     bool CompressorAllowLocal{ true }; // local device state override (most units don't have this fitted so it's set to true not to intefere)
     bool CompressorGovernorLock{ false }; // indicates whether compressor pressure switch was activated due to reaching cut-out pressure
+    start CompressorStart{ start::manual }; // whether the compressor is started manually, or another way
     // TODO converter parameters, for when we start cleaning up mover parameters
     start ConverterStart{ start::manual }; // whether converter is started manually, or by other means
     float ConverterStartDelay{ 0.0f }; // delay (in seconds) before the converter is started, once its activation conditions are met
@@ -913,6 +1013,11 @@ public:
     bool ConverterAllowLocal{ true }; // local device state override (most units don't have this fitted so it's set to true not to intefere)
     bool ConverterFlag = false;              /*!  czy wlaczona przetwornica NBMX*/
     fuel_pump FuelPump;
+    oil_pump OilPump;
+    water_pump WaterPump;
+    water_heater WaterHeater;
+    bool WaterCircuitsLink { false }; // optional connection between water circuits
+    heat_data dizel_heat;
 
     int BrakeCtrlPos = -2;               /*nastawa hamulca zespolonego*/
 	double BrakeCtrlPosR = 0.0;                 /*nastawa hamulca zespolonego - plynna dla FV4a*/
@@ -963,7 +1068,7 @@ public:
 	int DirAbsolute = 0; //zadany kierunek jazdy względem sprzęgów (1=w strone 0,-1=w stronę 1)
 	int ActiveCab = 0; //numer kabiny, w ktorej jest obsada (zwykle jedna na skład)
 	double LastSwitchingTime = 0.0; /*czas ostatniego przelaczania czegos*/
-							  //WarningSignal: byte;     {0: nie trabi, 1,2: trabi}
+    int WarningSignal = 0; // 0: nie trabi, 1,2,4: trabi
 	bool DepartureSignal = false; /*sygnal odjazdu*/
 	bool InsideConsist = false;
 	/*-zmienne dla lokomotywy elektrycznej*/
@@ -1010,7 +1115,8 @@ public:
 	double dizel_engagestate = 0.0; /*sprzeglo skrzyni biegow: 0 - luz, 1 - wlaczone, 0.5 - wlaczone 50% (z poslizgiem)*/
 	double dizel_engage = 0.0; /*sprzeglo skrzyni biegow: aktualny docisk*/
 	double dizel_automaticgearstatus = 0.0; /*0 - bez zmiany, -1 zmiana na nizszy +1 zmiana na wyzszy*/
-	bool dizel_enginestart = false;      /*czy trwa rozruch silnika*/
+    bool dizel_startup { false }; // engine startup procedure request indicator
+	bool dizel_ignition = false; // engine ignition request indicator
 	double dizel_engagedeltaomega = 0.0;    /*roznica predkosci katowych tarcz sprzegla*/
 	double dizel_n_old = 0.0; /*poredkosc na potrzeby obliczen sprzegiel*/
 	double dizel_Torque = 0.0; /*poredkosc na potrzeby obliczen sprzegiel*/
@@ -1034,6 +1140,8 @@ public:
     /*- zmienne dla lokomotyw z silnikami indukcyjnymi -*/
 	double eimv[21];
     static std::vector<std::string> const eimv_labels;
+	double SpeedCtrlTimer = 0; /*zegar dzialania tempomatu z wybieralna predkoscia*/
+	double NewSpeed = 0; /*nowa predkosc do zadania*/
 
 	/*-zmienne dla drezyny*/
 	double PulseForce = 0.0;        /*przylozona sila*/
@@ -1079,7 +1187,6 @@ public:
 	double TotalMassxg = 0.0; /*TotalMass*g*/
 
 	Math3D::vector3 vCoulpler[2]; // powtórzenie współrzędnych sprzęgów z DynObj :/
-	int WarningSignal = 0; // tymczasowo 8bit, ze względu na funkcje w MTools
 	double fBrakeCtrlPos = -2.0; // płynna nastawa hamulca zespolonego
 	bool bPantKurek3 = true; // kurek trójdrogowy (pantografu): true=połączenie z ZG, false=połączenie z małą sprężarką // domyślnie zbiornik pantografu połączony jest ze zbiornikiem głównym
 	int iProblem = 0; // flagi problemów z taborem, aby AI nie musiało porównywać; 0=może jechać
@@ -1107,6 +1214,7 @@ public:
 	void UpdateBatteryVoltage(double dt);
 	double ComputeMovement(double dt, double dt1, const TTrackShape &Shape, TTrackParam &Track, TTractionParam &ElectricTraction, const TLocation &NewLoc, TRotation &NewRot); //oblicza przesuniecie pojazdu
 	double FastComputeMovement(double dt, const TTrackShape &Shape, TTrackParam &Track, const TLocation &NewLoc, TRotation &NewRot); //oblicza przesuniecie pojazdu - wersja zoptymalizowana
+    void compute_movement_( double const Deltatime );
 	double ShowEngineRotation(int VehN);
 
 	// Q *******************************************************************************************
@@ -1172,7 +1280,7 @@ public:
 	bool IncBrakePress(double &brake, double PressLimit, double dp);
 	bool DecBrakePress(double &brake, double PressLimit, double dp);
 	bool BrakeDelaySwitch(int BDS);/*! przelaczanie nastawy opoznienia*/
-	bool IncBrakeMult(void);/*przelaczanie prozny/ladowny*/
+    bool IncBrakeMult(void);/*przelaczanie prozny/ladowny*/
 	bool DecBrakeMult(void);
 	/*pomocnicze funkcje dla ukladow pneumatycznych*/
 	void UpdateBrakePressure(double dt);
@@ -1199,15 +1307,24 @@ public:
 
 	/*--funkcje dla lokomotyw*/
 	bool DirectionBackward(void);/*! kierunek ruchu*/
+    bool WaterPumpBreakerSwitch( bool State, int const Notify = range::consist ); // water pump breaker state toggle
+    bool WaterPumpSwitch( bool State, int const Notify = range::consist ); // water pump state toggle
+    bool WaterHeaterBreakerSwitch( bool State, int const Notify = range::consist ); // water heater breaker state toggle
+    bool WaterHeaterSwitch( bool State, int const Notify = range::consist ); // water heater state toggle
+    bool WaterCircuitsLinkSwitch( bool State, int const Notify = range::consist ); // water circuits link state toggle
     bool FuelPumpSwitch( bool State, int const Notify = range::consist ); // fuel pump state toggle
+    bool OilPumpSwitch( bool State, int const Notify = range::consist ); // oil pump state toggle
     bool MainSwitch( bool const State, int const Notify = range::consist );/*! wylacznik glowny*/
     bool ConverterSwitch( bool State, int const Notify = range::consist );/*! wl/wyl przetwornicy*/
     bool CompressorSwitch( bool State, int const Notify = range::consist );/*! wl/wyl sprezarki*/
 
 									  /*-funkcje typowe dla lokomotywy elektrycznej*/
 	void ConverterCheck( double const Timestep ); // przetwornica
+    void WaterPumpCheck( double const Timestep );
+    void WaterHeaterCheck( double const Timestep );
     void FuelPumpCheck( double const Timestep );
-	bool FuseOn(void); //bezpiecznik nadamiary
+    void OilPumpCheck( double const Timestep );
+    bool FuseOn(void); //bezpiecznik nadamiary
 	bool FuseFlagCheck(void); // sprawdzanie flagi nadmiarowego
 	void FuseOff(void); // wylaczenie nadmiarowego
     double ShowCurrent( int AmpN ); //pokazuje bezwgl. wartosc pradu na wybranym amperomierzu
@@ -1238,7 +1355,10 @@ public:
 	bool dizel_AutoGearCheck(void);
 	double dizel_fillcheck(int mcp);
 	double dizel_Momentum(double dizel_fill, double n, double dt);
-	bool dizel_Update(double dt);
+    void dizel_HeatSet( float const Value );
+    void dizel_Heat( double const dt );
+    bool dizel_StartupCheck();
+    bool dizel_Update(double dt);
 
 	/* funckje dla wagonow*/
 	bool LoadingDone(double LSpeed, std::string LoadInit);
@@ -1265,6 +1385,7 @@ private:
     void LoadFIZ_BuffCoupl( std::string const &line, int const Index );
     void LoadFIZ_TurboPos( std::string const &line );
     void LoadFIZ_Cntrl( std::string const &line );
+	void LoadFIZ_Blending(std::string const &line);
     void LoadFIZ_Light( std::string const &line );
     void LoadFIZ_Security( std::string const &line );
     void LoadFIZ_Clima( std::string const &line );

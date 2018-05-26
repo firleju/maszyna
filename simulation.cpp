@@ -552,12 +552,8 @@ state_manager::deserialize_time( cParser &Input, scene::scratch_data &Scratchpad
     if( true == Global.ScenarioTimeCurrent ) {
         // calculate time shift required to match scenario time with local clock
         auto timenow = std::time( 0 );
-        auto *localtime = std::localtime( &timenow );
-        Global.ScenarioTimeOffset =
-            clamp_circular(
-                ( localtime->tm_hour * 60 + localtime->tm_min ) - ( time.wHour * 60 + time.wMinute ),
-                24 * 60 )
-            / 60.f;
+        auto const *localtime = std::localtime( &timenow );
+        Global.ScenarioTimeOffset = ( ( localtime->tm_hour * 60 + localtime->tm_min ) - ( time.wHour * 60 + time.wMinute ) ) / 60.f;
     }
 
     // remaining sunrise and sunset parameters are no longer used, as they're now calculated dynamically
@@ -727,11 +723,13 @@ state_manager::deserialize_model( cParser &Input, scene::scratch_data &Scratchpa
     auto *instance = new TAnimModel( Nodedata );
     instance->RaAnglesSet( Scratchpad.location.rotation + rotation ); // dostosowanie do pochylania linii
 
-    if( false == instance->Load( &Input, false ) ) {
+    if( instance->Load( &Input, false ) ) {
+        instance->location( transform( location, Scratchpad ) );
+    }
+    else {
         // model nie wczytał się - ignorowanie node
         SafeDelete( instance );
     }
-    instance->location( transform( location, Scratchpad ) );
 
     return instance;
 }

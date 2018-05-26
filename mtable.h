@@ -35,15 +35,14 @@ struct TMTableLine
     int Dh;
     int Dm; // godz. i min. odjazdu
     double tm; // czas jazdy do tej stacji w min. (z kolumny)
-    int WaitTime; // czas postoju (liczony plus 6 sekund)
     TMTableLine()
     {
         km = 0;
         vmax = -1;
         StationName = "nowhere", StationWare = "";
         TrackNo = 1;
-        Ah, Am, Dh, Dm = -1;
-        WaitTime, tm = 0;
+        Ah = Am = Dh = Dm = -1;
+        tm = 0;
     }
 };
 
@@ -76,7 +75,7 @@ class TTrainParameters
     bool IsTimeToGo(double hh, double mm);
     bool UpdateMTable(double hh, double mm, std::string const &NewName);
     bool UpdateMTable( simulation_time const &Time, std::string const &NewName );
-    void RewindTimeTable( std::string actualStationName );
+    bool RewindTimeTable( std::string actualStationName );
     TTrainParameters( std::string const &NewTrainName );
     void NewName(std::string const &NewTrainName);
     void UpdateVelocity(int StationCount, double vActual);

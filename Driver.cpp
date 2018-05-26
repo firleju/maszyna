@@ -796,6 +796,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
     double v; // prędkość
     double d; // droga
 	double d_to_next_sem = 10000.0; //ustaiwamy na pewno dalej niż widzi AI
+    bool isatpassengerstop { false }; // true if the consist is within acceptable range of w4 post
     TCommandType go = cm_Unknown;
     eSignNext = NULL;
     // te flagi są ustawiane tutaj, w razie potrzeby
@@ -814,8 +815,10 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                     {
                         // porównuje do następnej stacji, więc trzeba przewinąć do poprzedniej
                         // nastepnie ustawić następną na aktualną tak żeby prawidłowo ją obsłużył w następnym kroku
-                        TrainParams->RewindTimeTable(sSpeedTable[i].evEvent->CommandGet());
-                        asNextStop = TrainParams->NextStop();
+                        if( true == TrainParams->RewindTimeTable( sSpeedTable[ i ].evEvent->CommandGet() ) ) {
+                            asNextStop = TrainParams->NextStop();
+                            iStationStart = TrainParams->StationIndex;
+                        }
                     }
                     else if( sSpeedTable[ i ].fDist < -fLength ) {
                         // jeśli został przejechany
@@ -849,25 +852,30 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                             continue; // nie analizować prędkości
                         }
                     } // koniec obsługi przelotu na W4
-                    else
-                    { // zatrzymanie na W4
-                        if (!eSignNext) //jeśli nie widzi następnego sygnału
-                            eSignNext = sSpeedTable[i].evEvent; //ustawia dotychczasową
-                        if (mvOccupied->Vel > 0.3) // jeśli jedzie (nie trzeba czekać, aż się
-                            // drgania wytłumią - drzwi zamykane od 1.0)
-                            sSpeedTable[i].fVelNext = 0; // to będzie zatrzymanie
-                        // else if
-                        // ((iDrivigFlags&moveStopCloser)?sSpeedTable[i].fDist<=fMaxProximityDist*(AIControllFlag?1.0:10.0):true)
-                        else if ((iDrivigFlags & moveStopCloser) ?
-                                     sSpeedTable[i].fDist + fLength <=
-                                         Max0R(sSpeedTable[i].evEvent->ValueGet(2),
-                                               fMaxProximityDist + fLength) :
-                                     sSpeedTable[i].fDist < d_to_next_sem)
-                        // Ra 2F1I: odległość plus długość pociągu musi być mniejsza od długości
-                        // peronu, chyba że pociąg jest dłuższy, to wtedy minimalna
-                        // jeśli długość peronu ((sSpeedTable[i].evEvent->ValueGet(2)) nie podana,
-                        // przyjąć odległość fMinProximityDist
-                        { // jeśli się zatrzymał przy W4, albo stał w momencie zobaczenia W4
+                    else {
+                        // zatrzymanie na W4
+                        isatpassengerstop = (
+                            // Ra 2F1I: odległość plus długość pociągu musi być mniejsza od długości
+                            // peronu, chyba że pociąg jest dłuższy, to wtedy minimalna.
+                            // jeśli długość peronu ((sSpeedTable[i].evEvent->ValueGet(2)) nie podana,
+                            // przyjąć odległość fMinProximityDist
+                            ( iDrivigFlags & moveStopCloser ) ?
+                                ( sSpeedTable[ i ].fDist + fLength ) <=
+                                std::max(
+                                    sSpeedTable[ i ].evEvent->ValueGet( 2 ),
+                                    2.0 * fMaxProximityDist + fLength ) : // fmaxproximitydist typically equals ~50 m
+                                sSpeedTable[ i ].fDist < d_to_next_sem );
+
+                        if( !eSignNext ) {
+                            //jeśli nie widzi następnego sygnału ustawia dotychczasową
+                            eSignNext = sSpeedTable[ i ].evEvent;
+                        }
+                        if( mvOccupied->Vel > 0.3 ) {
+                            // jeśli jedzie (nie trzeba czekać, aż się drgania wytłumią - drzwi zamykane od 1.0) to będzie zatrzymanie
+                            sSpeedTable[ i ].fVelNext = 0;
+                        }
+                        else if( true == isatpassengerstop ) {
+                            // jeśli się zatrzymał przy W4, albo stał w momencie zobaczenia W4
                             if( !AIControllFlag ) {
                                 // w razie przełączenia na AI ma nie podciągać do W4, gdy użytkownik zatrzymał za daleko
                                 iDrivigFlags &= ~moveStopCloser;
@@ -876,8 +884,9 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                             if( ( iDrivigFlags & moveDoorOpened ) == 0 ) {
                                 // drzwi otwierać jednorazowo
                                 iDrivigFlags |= moveDoorOpened; // nie wykonywać drugi raz
-                                Doors( true, static_cast<int>( std::floor( sSpeedTable[ i ].evEvent->ValueGet( 2 ) ) ) % 10 );
+                                Doors( true, static_cast<int>( std::floor( std::abs( sSpeedTable[ i ].evEvent->ValueGet( 2 ) ) ) ) % 10 );
                             }
+
                             if (TrainParams->UpdateMTable( simulation::Time, asNextStop) ) {
                                 // to się wykona tylko raz po zatrzymaniu na W4
                                 if( TrainParams->StationIndex < TrainParams->StationCount ) {
@@ -887,7 +896,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                                 }
 
                                 // perform loading/unloading
-                                auto const platformside = static_cast<int>( std::floor( sSpeedTable[ i ].evEvent->ValueGet( 2 ) ) ) % 10;
+                                auto const platformside = static_cast<int>( std::floor( std::abs( sSpeedTable[ i ].evEvent->ValueGet( 2 ) ) ) ) % 10;
                                 auto const exchangetime = simulation::Station.update_load( pVehicles[ 0 ], *TrainParams, platformside );
                                 WaitingSet( std::max( -fStopTime, exchangetime ) ); // na końcu rozkładu się ustawia 60s i tu by było skrócenie
 
@@ -931,29 +940,21 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                                     continue;
                                 }
                             }
-                            if (OrderCurrentGet() == Shunt)
-                            {
+
+                            if (OrderCurrentGet() == Shunt) {
                                 OrderNext(Obey_train); // uruchomić jazdę pociągową
                                 CheckVehicles(); // zmienić światła
                             }
-                            if (TrainParams->StationIndex < TrainParams->StationCount)
-                            { // jeśli są dalsze stacje, czekamy do godziny odjazdu
-                                if (TrainParams->IsTimeToGo(simulation::Time.data().wHour, simulation::Time.data().wMinute))
-                                { // z dalszą akcją czekamy do godziny odjazdu
-									/* potencjalny problem z ruszaniem z w4
-                                    if (TrainParams->CheckTrainLatency() < 0)
-										WaitingSet(20); //Jak spóźniony to czeka 20s
-									*/
-                                    // iDrivigFlags|=moveLate1; //oflagować, gdy odjazd ze
-                                    // spóźnieniem, będzie jechał forsowniej
-                                    fLastStopExpDist =
-                                        mvOccupied->DistCounter + 0.050 +
-                                        0.001 * fLength; // przy jakim dystansie (stanie licznika)
-                                    // ma przesunąć na następny postój
-                                    //         Controlled->    //zapisać odległość do przejechania
+
+                            if (TrainParams->StationIndex < TrainParams->StationCount) {
+                                // jeśli są dalsze stacje, czekamy do godziny odjazdu
+                                if (TrainParams->IsTimeToGo(simulation::Time.data().wHour, simulation::Time.data().wMinute)) {
+                                    // z dalszą akcją czekamy do godziny odjazdu
+                                    isatpassengerstop = false;
+                                    // przy jakim dystansie (stanie licznika) ma przesunąć na następny postój
+                                    fLastStopExpDist = mvOccupied->DistCounter + 0.050 + 0.001 * fLength;
                                     TrainParams->StationIndexInc(); // przejście do następnej
                                     asNextStop = TrainParams->NextStop(); // pobranie kolejnego miejsca zatrzymania
-// TableClear(); //aby od nowa sprawdziło W4 z inną nazwą już - to nie jest dobry pomysł
 #if LOGSTOPS
                                     WriteLog(
                                         pVehicle->asName + " as " + TrainParams->TrainName
@@ -985,8 +986,8 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                                     continue; // nie analizować prędkości
                                 } // koniec startu z zatrzymania
                             } // koniec obsługi początkowych stacji
-                            else
-                            { // jeśli dojechaliśmy do końca rozkładu
+                            else {
+                                // jeśli dojechaliśmy do końca rozkładu
 #if LOGSTOPS
                                 WriteLog(
                                     pVehicle->asName + " as " + TrainParams->TrainName
@@ -995,13 +996,13 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 #endif
                                 asNextStop = TrainParams->NextStop(); // informacja o końcu trasy
                                 TrainParams->NewName("none"); // czyszczenie nieaktualnego rozkładu
-                                // TableClear(); //aby od nowa sprawdziło W4 z inną nazwą już - to
-                                // nie jest dobry pomysł
-                                iDrivigFlags &=
-                                    ~(moveStopCloser |
-                                      moveStopPoint); // ma nie podjeżdżać pod W4 i ma je pomijać
-                                sSpeedTable[i].iFlags =
-                                    0; // W4 nie liczy się już (nie wyśle SetVelocity)
+                                // ma nie podjeżdżać pod W4 i ma je pomijać
+                                iDrivigFlags &= ~( moveStopCloser );
+                                if( false == TestFlag( iDrivigFlags, movePushPull ) ) {
+                                    // if the consist can change direction through a simple cab change it doesn't need fiddling with recognition of passenger stops
+                                    iDrivigFlags &= ~( moveStopPoint );
+                                }
+                                sSpeedTable[i].iFlags = 0; // W4 nie liczy się już (nie wyśle SetVelocity)
                                 sSpeedTable[i].fVelNext = -1; // można jechać za W4
                                 fLastStopExpDist = -1.0f; // nie ma rozkładu, nie ma usuwania stacji
                                 WaitingSet(60); // tak ze 2 minuty, aż wszyscy wysiądą
@@ -1021,7 +1022,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                     continue; // nie analizować prędkości
                 }
             } // koniec obsługi W4
-            v = sSpeedTable[i].fVelNext; // odczyt prędkości do zmiennej pomocniczej
+            v = sSpeedTable[ i ].fVelNext; // odczyt prędkości do zmiennej pomocniczej
             if( sSpeedTable[ i ].iFlags & spSwitch ) {
                 // zwrotnice są usuwane z tabelki dopiero po zjechaniu z nich
                 iDrivigFlags |= moveSwitchFound; // rozjazd z przodu/pod ogranicza np. sens skanowania wstecz
@@ -1185,12 +1186,13 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                 { // zawalidrogi nie ma (albo pojazd jest samochodem), sprawdzić sygnał
                     if (sSpeedTable[i].iFlags & spShuntSemaphor) // jeśli Tm - w zasadzie to sprawdzić komendę!
                     { // jeśli podana prędkość manewrowa
-                        if ((OrderCurrentGet() & Obey_train) ? v == 0.0 : false)
-                        { // jeśli tryb pociągowy a tarcze ma ShuntVelocity 0 0
+                        if( ( v == 0.0 ) && ( true == TestFlag( OrderCurrentGet(), Obey_train ) ) ) {
+                            // jeśli tryb pociągowy a tarcze ma ShuntVelocity 0 0
                             v = -1; // ignorować, chyba że prędkość stanie się niezerowa
-                            if (sSpeedTable[i].iFlags & spElapsed) // a jak przejechana
-                                sSpeedTable[i].iFlags = 0; // to można usunąć, bo podstawowy automat
-                            // usuwa tylko niezerowe
+                            if( true == TestFlag( sSpeedTable[ i ].iFlags, spElapsed ) ) {
+                                // a jak przejechana to można usunąć, bo podstawowy automat usuwa tylko niezerowe
+                                sSpeedTable[ i ].iFlags = 0;
+                            }
                         }
                         else if (go == cm_Unknown) // jeśli jeszcze nie ma komendy
                             if (v != 0.0) // komenda jest tylko gdy ma jechać, bo stoi na podstawie
@@ -1264,19 +1266,19 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                     }
                 } // jeśli nie ma zawalidrogi
             } // jeśli event
-            if (v >= 0.0)
-            { // pozycje z prędkością -1 można spokojnie pomijać
+
+            if (v >= 0.0) {
+                // pozycje z prędkością -1 można spokojnie pomijać
                 d = sSpeedTable[i].fDist;
                 if( ( d > 0.0 )
                  && ( false == TestFlag( sSpeedTable[ i ].iFlags, spElapsed ) ) ) {
                     // sygnał lub ograniczenie z przodu (+32=przejechane)
                     // 2014-02: jeśli stoi, a ma do przejechania kawałek, to niech jedzie
-                    if( ( mvOccupied->Vel == 0.0 )
-                     && ( d > fMaxProximityDist )
-                     && ( true == TestFlag( sSpeedTable[ i ].iFlags, ( spEnabled | spEvent | spPassengerStopPoint ) ) ) ) {
+                    if( ( mvOccupied->Vel < 0.01 )
+                     && ( true == TestFlag( sSpeedTable[ i ].iFlags, ( spEnabled | spEvent | spPassengerStopPoint ) ) )
+                     && ( false == isatpassengerstop ) ) {
                         // ma podjechać bliżej - czy na pewno w tym miejscu taki warunek?
-                        a = (
-                            iDrivigFlags & moveStopCloser ?
+                        a = ( iDrivigFlags & moveStopCloser ?
                                 fAcc :
                                 0.0 );
                     }
@@ -1346,14 +1348,16 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
 			VelSignalLast = -1.0; // jeśli mieliśmy ograniczenie z semafora i nie ma przed nami
 
     //analiza spisanych z tabelki ograniczeń i nadpisanie aktualnego
-    if (VelSignalLast >= 0.0)
-        fVelDes = Min0R(fVelDes, VelSignalLast);
-    if (VelLimitLast >= 0.0)
-        fVelDes = Min0R(fVelDes, VelLimitLast);
-    if (VelRoad >= 0.0)
-        fVelDes = Min0R(fVelDes, VelRoad);
-    if( VelRestricted >= 0.0 )
-        fVelDes = Min0R( fVelDes, VelRestricted );
+    if( ( true == isatpassengerstop ) && ( mvOccupied->Vel < 0.01 ) ) {
+        // if stopped at a valid passenger stop, hold there
+        fVelDes = 0.0;
+    }
+    else {
+        fVelDes = min_speed( fVelDes, VelSignalLast );
+        fVelDes = min_speed( fVelDes, VelLimitLast );
+        fVelDes = min_speed( fVelDes, VelRoad );
+        fVelDes = min_speed( fVelDes, VelRestricted );
+    }
     // nastepnego semafora albo zwrotnicy to uznajemy, że mijamy W5
     FirstSemaphorDist = d_to_next_sem; // przepisanie znalezionej wartosci do zmiennej
     return go;
@@ -1837,6 +1841,12 @@ void TController::AutoRewident()
 		fAccThreshold = -fBrake_a0[BrakeAccTableSize] - 1 * fBrake_a1[BrakeAccTableSize];
 		fBrakeReaction = 1.00 + fLength*0.005;
 	}
+	for (int i = 1; i <= 8; i *= 2) //ustawianie trybu pracy zadajnika hamulca, wystarczy raz po inicjalizacji AI
+	{
+		if ((mvOccupied->BrakeOpModes & i) > 0) {
+			mvOccupied->BrakeOpModeFlag = i;
+		}
+	}
 }
 
 double TController::ESMVelocity(bool Main)
@@ -2222,14 +2232,22 @@ bool TController::PrepareEngine()
             voltfront = true;
         }
     }
+    auto workingtemperature { true };
     if (AIControllFlag) {
         // część wykonawcza dla sterowania przez komputer
-        mvOccupied->BatterySwitch(true);
-        mvOccupied->FuelPumpSwitch( true );
+        mvOccupied->BatterySwitch( true );
+        if( ( mvControlling->EngineType == DieselElectric )
+         || ( mvControlling->EngineType == DieselEngine ) ) {
+            mvControlling->OilPumpSwitch( true );
+            workingtemperature = UpdateHeating();
+            if( true == workingtemperature ) {
+                mvControlling->FuelPumpSwitch( true );
+            }
+        }
         if (mvControlling->EnginePowerSource.SourceType == CurrentCollector)
         { // jeśli silnikowy jest pantografującym
-            mvControlling->PantFront( true );
-            mvControlling->PantRear( true );
+            mvOccupied->PantFront( true );
+            mvOccupied->PantRear( true );
             if (mvControlling->PantPress < 4.2) {
                 // załączenie małej sprężarki
                 if( mvControlling->TrainType != dt_EZT ) {
@@ -2257,11 +2275,11 @@ bool TController::PrepareEngine()
                 if( !iDirection ) {
                     // jeśli nie ma ustalonego kierunku
                     if( ( mvControlling->PantFrontVolt != 0.0 ) || ( mvControlling->PantRearVolt != 0.0 ) || voltfront || voltrear ) {
-                        if( mvOccupied->Couplers[ 1 ].CouplingFlag == ctrain_virtual ) {
+                        if( mvOccupied->Couplers[ 1 ].CouplingFlag == coupling::faux ) {
                             // jeśli z tyłu nie ma nic
                             iDirection = -1; // jazda w kierunku sprzęgu 1
                         }
-                        if( mvOccupied->Couplers[ 0 ].CouplingFlag == ctrain_virtual ) {
+                        if( mvOccupied->Couplers[ 0 ].CouplingFlag == coupling::faux ) {
                             // jeśli z przodu nie ma nic
                             iDirection = 1; // jazda w kierunku sprzęgu 0
                         }
@@ -2293,21 +2311,13 @@ bool TController::PrepareEngine()
             else if (false == mvControlling->Mains) {
                 while (DecSpeed(true))
                     ; // zerowanie napędu
-
-                if( ( mvOccupied->EngineType == DieselEngine )
-                 || ( mvOccupied->EngineType == DieselElectric ) ) {
-                    // start helper devices before spinning up the engine
-                    // TODO: replace with dedicated diesel engine subsystems
-                    mvOccupied->ConverterSwitch( true );
-                    mvOccupied->CompressorSwitch( true );
-                }
                 if( mvOccupied->TrainType == dt_SN61 ) {
                     // specjalnie dla SN61 żeby nie zgasł
                     if( mvControlling->RList[ mvControlling->MainCtrlPos ].Mn == 0 ) {
                         mvControlling->IncMainCtrl( 1 );
                     }
                 }
-                OK = mvControlling->MainSwitch(true);
+                mvControlling->MainSwitch(true);
 /*
                 if (mvControlling->EngineType == DieselEngine) {
                     // Ra 2014-06: dla SN61 trzeba wrzucić pierwszą pozycję - nie wiem, czy tutaj...
@@ -2331,7 +2341,7 @@ bool TController::PrepareEngine()
                 OK = ( OrderDirectionChange( iDirection, mvOccupied ) == -1 );
                 mvOccupied->ConverterSwitch( true );
                 // w EN57 sprężarka w ra jest zasilana z silnikowego
-                mvControlling->CompressorSwitch( true );
+                mvOccupied->CompressorSwitch( true );
             }
         }
         else
@@ -2339,16 +2349,20 @@ bool TController::PrepareEngine()
     }
     else
         OK = false;
-    OK = OK && (mvOccupied->ActiveDir != 0) && (mvControlling->CompressorAllow);
-    if (OK)
-    {
-        if (eStopReason == stopSleep) // jeśli dotychczas spał
-            eStopReason = stopNone; // teraz nie ma powodu do stania
+
+    if( ( true == OK )
+     && ( mvOccupied->ActiveDir != 0 )
+     && ( true == workingtemperature )
+     && ( ( mvControlling->ScndPipePress > 4.5 ) || ( mvControlling->VeselVolume == 0.0 ) ) ) {
+
+        if( eStopReason == stopSleep ) {
+            // jeśli dotychczas spał teraz nie ma powodu do stania
+            eStopReason = stopNone;
+        }
         iEngineActive = 1;
         return true;
     }
-    else
-    {
+    else {
         iEngineActive = 0;
         return false;
     }
@@ -2378,6 +2392,7 @@ bool TController::ReleaseEngine()
                     mvControlling->PantFront(false);
                     mvControlling->PantRear(false);
                 }
+                // line breaker
                 OK = mvControlling->MainSwitch(false);
             }
             else
@@ -2410,7 +2425,20 @@ bool TController::ReleaseEngine()
         eAction = actSleep; //śpi (wygaszony)
         if (AIControllFlag)
         {
-            Lights(0, 0); // gasimy światła
+            if( ( mvControlling->EngineType == DieselElectric )
+             || ( mvControlling->EngineType == DieselEngine ) ) {
+                // heating/cooling subsystem
+                mvControlling->WaterHeaterSwitch( false );
+                // optionally turn off the water pump as well
+                if( mvControlling->WaterPump.start_type != start::battery ) {
+                    mvControlling->WaterPumpSwitch( false );
+                }
+                // fuel and oil subsystems
+                mvControlling->FuelPumpSwitch( false );
+                mvControlling->OilPumpSwitch( false );
+            }
+            // gasimy światła
+            Lights(0, 0);
             mvOccupied->BatterySwitch(false);
         }
         OrderNext(Wait_for_orders); //żeby nie próbował coś robić dalej
@@ -2543,7 +2571,13 @@ bool TController::IncBrake()
         }
         case ElectroPneumatic: {
             if( mvOccupied->EngineType == ElectricInductionMotor ) {
-                OK = mvOccupied->IncLocalBrakeLevel( 1 );
+				if (mvOccupied->BrakeHandle == MHZ_EN57) {
+					if (mvOccupied->BrakeCtrlPos < mvOccupied->Handle->GetPos(bh_FB))
+						OK = mvOccupied->BrakeLevelAdd(1.0);
+				}
+				else {
+					OK = mvOccupied->IncLocalBrakeLevel(1);
+				}
             }
             else if( mvOccupied->fBrakeCtrlPos != mvOccupied->Handle->GetPos( bh_EPB ) ) {
                 mvOccupied->BrakeLevelSet( mvOccupied->Handle->GetPos( bh_EPB ) );
@@ -2591,10 +2625,15 @@ bool TController::DecBrake()
             Need_BrakeRelease = true;
         break;
     case ElectroPneumatic:
-        if (mvOccupied->EngineType == ElectricInductionMotor)
-        {
-            OK = mvOccupied->DecLocalBrakeLevel(1);
-        }
+		if (mvOccupied->EngineType == ElectricInductionMotor) {
+			if (mvOccupied->BrakeHandle == MHZ_EN57) {
+				if (mvOccupied->BrakeCtrlPos > mvOccupied->Handle->GetPos(bh_RP))
+					OK = mvOccupied->BrakeLevelAdd(-1.0);
+			}
+			else {
+				OK = mvOccupied->DecLocalBrakeLevel(1);
+			}
+		}
         else if (mvOccupied->fBrakeCtrlPos != mvOccupied->Handle->GetPos(bh_EPR))
         {
             mvOccupied->BrakeLevelSet(mvOccupied->Handle->GetPos(bh_EPR));
@@ -2728,13 +2767,14 @@ bool TController::IncSpeed()
             {
                 OK = mvControlling->IncMainCtrl(std::max(1,mvOccupied->MainCtrlPosNo/10));
 				//tutaj jeszcze powinien być tempomat
-				mvControlling->IncScndCtrl(1);
-				double SpeedCntrl = VelDesired;
+
+				double SpeedCntrlVel = VelDesired;
 				if (fProximityDist < 50)
 				{
-					SpeedCntrl = std::min(SpeedCntrl, VelNext);
+					SpeedCntrlVel = std::min(SpeedCntrlVel, VelNext);
 				}
-				mvControlling->RunCommand("SpeedCntrl", VelDesired, mvControlling->CabNo);
+				SpeedCntrl(SpeedCntrlVel);
+
             }
         break;
     case WheelsDriven:
@@ -2795,15 +2835,6 @@ bool TController::DecSpeed(bool force)
         break;
 	case ElectricInductionMotor:
 		OK = mvControlling->DecMainCtrl(1);
-		if ((mvControlling->ScndCtrlPosNo > 0)&&(mvControlling->Mains)) //jeżeli tempomat
-		{
-			mvControlling->IncScndCtrl(1);
-			mvControlling->RunCommand("SpeedCntrl", VelDesired, mvControlling->CabNo);
-		}
-		else
-		{
-			mvControlling->DecScndCtrl(2);
-		}
 		break;
     case WheelsDriven:
         if (!mvControlling->CabNo)
@@ -3009,6 +3040,21 @@ void TController::SpeedSet()
             }
         break;
     }
+};
+
+void TController::SpeedCntrl(double DesiredSpeed)
+{
+	if (mvControlling->ScndCtrlPosNo == 1)
+	{
+		mvControlling->IncScndCtrl(1);
+		mvControlling->RunCommand("SpeedCntrl", DesiredSpeed, mvControlling->CabNo);
+	}
+	else if (mvControlling->ScndCtrlPosNo > 1)
+	{
+		int DesiredPos = 1 + mvControlling->ScndCtrlPosNo * ((DesiredSpeed - 1.0) / mvControlling->Vmax);
+		while (mvControlling->ScndCtrlPos > DesiredPos) mvControlling->DecScndCtrl(1);
+		while (mvControlling->ScndCtrlPos < DesiredPos) mvControlling->IncScndCtrl(1);
+	}
 };
 
 // otwieranie/zamykanie drzwi w składzie albo (tylko AI) EZT
@@ -3236,8 +3282,7 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
         // CheckVehicles(); //sprawdzenie składu, AI zapali światła
         TableClear(); // wyczyszczenie tabelki prędkości, bo na nowo trzeba określić kierunek i
         // sprawdzić przystanki
-        OrdersInit(
-            fabs(NewValue1)); // ustalenie tabelki komend wg rozkładu oraz prędkości początkowej
+        OrdersInit(fabs(NewValue1)); // ustalenie tabelki komend wg rozkładu oraz prędkości początkowej
         // if (NewValue1!=0.0) if (!AIControllFlag) DirectionForward(NewValue1>0.0); //ustawienie
         // nawrotnika użytkownikowi (propaguje się do członów)
         // if (NewValue1>0)
@@ -3469,7 +3514,7 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
             if (NewValue1 > 0)
             {
                 fWarningDuration = NewValue1; // czas trąbienia
-                mvOccupied->WarningSignal = (NewValue2 > 1) ? 2 : 1; // wysokość tonu
+                mvOccupied->WarningSignal = NewValue2; // horn combination flag
             }
     }
     else if (NewCommand == "Radio_channel")
@@ -4397,6 +4442,8 @@ TController::UpdateSituation(double dt) {
                     }
                 }
                 break;
+            default:
+                break;
             }
 
             if( VelNext == 0.0 ) {
@@ -5162,6 +5209,59 @@ TController::UpdateSituation(double dt) {
     } // switch (OrderList[OrderPos])
 }
 
+// configures vehicle heating given current situation; returns: true if vehicle can be operated normally, false otherwise
+bool
+TController::UpdateHeating() {
+
+    switch( mvControlling->EngineType ) {
+
+        case DieselElectric:
+        case DieselEngine: {
+
+            auto const &heat { mvControlling->dizel_heat };
+
+            // determine whether there's need to enable the water heater
+            // if the heater has configured maximum temperature, it'll disable itself automatically, so we can leave it always running
+            // otherwise enable the heater only to maintain minimum required temperature
+            auto const lowtemperature { (
+                ( ( heat.water.config.temp_min > 0 ) && ( heat.temperatura1 < heat.water.config.temp_min + ( mvControlling->WaterHeater.is_active ? 5 : 0 ) ) )
+             || ( ( heat.water_aux.config.temp_min > 0 ) && ( heat.temperatura2 < heat.water_aux.config.temp_min + ( mvControlling->WaterHeater.is_active ? 5 : 0 ) ) )
+             || ( ( heat.oil.config.temp_min > 0 ) && ( heat.To < heat.oil.config.temp_min + ( mvControlling->WaterHeater.is_active ? 5 : 0 ) ) ) ) };
+            auto const heateron { (
+                ( mvControlling->WaterHeater.config.temp_max > 0 )
+             || ( true == lowtemperature ) ) };
+            if( true == heateron ) {
+                // make sure the water pump is running before enabling the heater
+                if( false == mvControlling->WaterPump.is_active ) {
+                    mvControlling->WaterPumpBreakerSwitch( true );
+                    mvControlling->WaterPumpSwitch( true );
+                }
+                if( true == mvControlling->WaterPump.is_active ) {
+                    mvControlling->WaterHeaterBreakerSwitch( true );
+                    mvControlling->WaterHeaterSwitch( true );
+                    mvControlling->WaterCircuitsLinkSwitch( true );
+                }
+            }
+            else {
+                // no need to heat anything up, switch the heater off
+                mvControlling->WaterCircuitsLinkSwitch( false );
+                mvControlling->WaterHeaterSwitch( false );
+                mvControlling->WaterHeaterBreakerSwitch( false );
+                // optionally turn off the water pump as well
+                if( mvControlling->WaterPump.start_type != start::battery ) {
+                    mvControlling->WaterPumpSwitch( false );
+                    mvControlling->WaterPumpBreakerSwitch( false );
+                }
+            }
+
+            return ( false == lowtemperature );
+        }
+        default: {
+            return true;
+        }
+    }
+}
+
 void TController::JumpToNextOrder()
 { // wykonanie kolejnej komendy z tablicy rozkazów
     if (OrderList[OrderPos] != Wait_for_orders)
@@ -5287,8 +5387,6 @@ inline TOrders TController::OrderNextGet()
 void TController::OrdersInit(double fVel)
 { // wypełnianie tabelki rozkazów na podstawie rozkładu
     // ustawienie kolejności komend, niezależnie kto prowadzi
-    // Mechanik->OrderPush(Wait_for_orders); //czekanie na lepsze czasy
-    // OrderPos=OrderTop=0; //wypełniamy od pozycji 0
     OrdersClear(); // usunięcie poprzedniej tabeli
     OrderPush(Prepare_engine); // najpierw odpalenie silnika
     if (TrainParams->TrainName == "none")
@@ -5302,16 +5400,14 @@ void TController::OrdersInit(double fVel)
             OrderPush(Shunt); // dla prędkości 0.01 włączamy jazdę manewrową
         else if (TrainParams ?
                      (TrainParams->DirectionChange() ? //  jeśli obrót na pierwszym przystanku
-                          ((iDrivigFlags &
-                            movePushPull) ? // SZT również! SN61 zależnie od wagonów...
+                          ((iDrivigFlags & movePushPull) ? // SZT również! SN61 zależnie od wagonów...
                                (TrainParams->TimeTable[1].StationName == TrainParams->Relation1) :
                                false) :
                           false) :
                      true)
             OrderPush(Shunt); // a teraz start będzie w manewrowym, a tryb pociągowy włączy W4
         else
-            // jeśli start z pierwszej stacji i jednocześnie jest na niej zmiana kierunku, to EZT ma
-            // mieć Shunt
+            // jeśli start z pierwszej stacji i jednocześnie jest na niej zmiana kierunku, to EZT ma mieć Shunt
             OrderPush(Obey_train); // dla starych scenerii start w trybie pociagowym
         if (DebugModeFlag) // normalnie nie ma po co tego wypisywać
             WriteLog("/* Timetable: " + TrainParams->ShowRelation());
@@ -5319,10 +5415,14 @@ void TController::OrdersInit(double fVel)
         for (int i = 0; i <= TrainParams->StationCount; ++i)
         {
             t = TrainParams->TimeTable + i;
-            if (DebugModeFlag) // normalnie nie ma po co tego wypisywa?
-                WriteLog(t->StationName + " " + std::to_string(t->Ah) + ":" +
-                         std::to_string(t->Am) + ", " + std::to_string(t->Dh) + ":" +
-                         std::to_string(t->Dm) + " " + t->StationWare);
+            if (DebugModeFlag) {
+                // normalnie nie ma po co tego wypisywa?
+                WriteLog(
+                    t->StationName
+                    + " " + std::to_string(t->Ah) + ":" + std::to_string(t->Am)
+                    + ", " + std::to_string(t->Dh) + ":" + std::to_string(t->Dm)
+                    + " " + t->StationWare);
+            }
             if (t->StationWare.find('@') != std::string::npos)
             { // zmiana kierunku i dalsza jazda wg rozk?adu
                 if (iDrivigFlags & movePushPull) // SZT również! SN61 zależnie od wagonów...
@@ -5333,33 +5433,34 @@ void TController::OrdersInit(double fVel)
                 { // dla zwykłego składu wagonowego odczepiamy lokomotywę
                     OrderPush(Disconnect); // odczepienie lokomotywy
                     OrderPush(Shunt); // a dalej manewry
-                    if (i <= TrainParams->StationCount) // 130827: to się jednak nie sprawdza
-                    { //"@" na ostatniej robi tylko odpięcie
-                        // OrderPush(Change_direction); //zmiana kierunku
-                        // OrderPush(Shunt); //jazda na drugą stronę składu
-                        // OrderPush(Change_direction); //zmiana kierunku
-                        // OrderPush(Connect); //jazda pod wagony
-                    }
                 }
                 if (i < TrainParams->StationCount) // jak nie ostatnia stacja
                     OrderPush(Obey_train); // to dalej wg rozkładu
             }
         }
-        if (DebugModeFlag) // normalnie nie ma po co tego wypisywać
-            WriteLog("*/");
+        if( DebugModeFlag ) {
+            // normalnie nie ma po co tego wypisywać
+            WriteLog( "*/" );
+        }
         OrderPush(Shunt); // po wykonaniu rozkładu przełączy się na manewry
     }
     // McZapkie-100302 - to ma byc wyzwalane ze scenerii
-    if (fVel == 0.0)
-        SetVelocity(0, 0, stopSleep); // jeśli nie ma prędkości początkowej, to śpi
-    else
-    { // jeśli podana niezerowa prędkość
-        if ((fVel >= 1.0) ||
-            (fVel < 0.02)) // jeśli ma jechać - dla 0.01 ma podjechać manewrowo po podaniu sygnału
-            iDrivigFlags = (iDrivigFlags & ~moveStopHere) |
-                           moveStopCloser; // to do następnego W4 ma podjechać blisko
-        else
-            iDrivigFlags |= moveStopHere; // czekać na sygnał
+    if( fVel == 0.0 ) {
+        // jeśli nie ma prędkości początkowej, to śpi
+        SetVelocity( 0, 0, stopSleep );
+    }
+    else {
+        // jeśli podana niezerowa prędkość
+        if( ( fVel >= 1.0 )
+         || ( fVel < 0.02 ) ) {
+            // jeśli ma jechać - dla 0.01 ma podjechać manewrowo po podaniu sygnału
+            // to do następnego W4 ma podjechać blisko
+            iDrivigFlags = ( iDrivigFlags & ~( moveStopHere ) ) | moveStopCloser;
+        }
+        else {
+            // czekać na sygnał
+            iDrivigFlags |= moveStopHere;
+        }
         JumpToFirstOrder();
         if (fVel >= 1.0) // jeśli ma jechać
             SetVelocity(fVel, -1); // ma ustawić żądaną prędkość
@@ -5780,22 +5881,27 @@ void TController::DirectionForward(bool forward)
     }
 };
 
+Mtable::TTrainParameters const *
+TController::TrainTimetable() const {
+    return TrainParams;
+}
+
 std::string TController::Relation()
 { // zwraca relację pociągu
     return TrainParams->ShowRelation();
 };
 
-std::string TController::TrainName()
+std::string TController::TrainName() const
 { // zwraca numer pociągu
     return TrainParams->TrainName;
 };
 
-int TController::StationCount()
+int TController::StationCount() const
 { // zwraca ilość stacji (miejsc zatrzymania)
     return TrainParams->StationCount;
 };
 
-int TController::StationIndex()
+int TController::StationIndex() const
 { // zwraca indeks aktualnej stacji (miejsca zatrzymania)
     return TrainParams->StationIndex;
 };

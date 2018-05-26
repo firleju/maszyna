@@ -202,13 +202,15 @@ ui_layer::on_key( int const Key, int const Action ) {
             return true;
         }
 
-		case GLFW_KEY_F11: {
-			if (Action == GLFW_PRESS)
-				ui_log->enabled = !ui_log->enabled;
-			break;
-		}
+        case GLFW_KEY_F11: {
+            // scenario inspector
+            Global.iTextMode = Key;
+            return true;
+        }
 
         case GLFW_KEY_F12: {
+			if (Action == GLFW_PRESS)
+				ui_log->enabled = !ui_log->enabled;
             // coś tam jeszcze
             Global.iTextMode = Key;
             return true;
@@ -341,7 +343,7 @@ ui_layer::update() {
                     vehicle->ctOwner );
             if( owner == nullptr ){ break; }
 
-            auto const table = owner->Timetable();
+            auto const *table = owner->TrainTimetable();
             if( table == nullptr ) { break; }
 
             auto const &time = simulation::Time.data();
@@ -354,7 +356,7 @@ ui_layer::update() {
                 uitextline1 += " (paused)";
             }
 
-            uitextline2 = Bezogonkow( owner->Relation(), true ) + " (" + Bezogonkow( owner->Timetable()->TrainName, true ) + ")";
+            uitextline2 = Bezogonkow( owner->Relation(), true ) + " (" + Bezogonkow( owner->TrainName(), true ) + ")";
             auto const nextstation = Bezogonkow( owner->NextStop(), true );
             if( !nextstation.empty() ) {
                 // jeśli jest podana relacja, to dodajemy punkt następnego zatrzymania
@@ -369,37 +371,62 @@ ui_layer::update() {
                 } 
                 else {
                     // header
-                    UITable->text_lines.emplace_back( "+----------------------------+-------+-------+-----+", Global.UITextColor );
+                    UITable->text_lines.emplace_back( "+-----+------------------------------------+-------+-----+", Global.UITextColor );
 
-                    TMTableLine *tableline;
-                    for( int i = owner->iStationStart; i <= std::min( owner->iStationStart + 15, table->StationCount ); ++i ) {
+                    TMTableLine const *tableline;
+                    for( int i = owner->iStationStart; i <= std::min( owner->iStationStart + 10, table->StationCount ); ++i ) {
                         // wyświetlenie pozycji z rozkładu
                         tableline = table->TimeTable + i; // linijka rozkładu
 
-                        std::string station =
-                            ( tableline->StationName + "                          " ).substr( 0, 26 );
-                        std::string arrival =
-                            ( tableline->Ah >= 0 ?
-                            to_string( int( 100 + tableline->Ah ) ).substr( 1, 2 ) + ":" + to_string( int( 100 + tableline->Am ) ).substr( 1, 2 ) :
-                            "     " );
-                        std::string departure =
-                            ( tableline->Dh >= 0 ?
-                            to_string( int( 100 + tableline->Dh ) ).substr( 1, 2 ) + ":" + to_string( int( 100 + tableline->Dm ) ).substr( 1, 2 ) :
-                            "     " );
                         std::string vmax =
                             "   "
                             + to_string( tableline->vmax, 0 );
-                        vmax = vmax.substr( vmax.length() - 3, 3 ); // z wyrównaniem do prawej
+                        vmax = vmax.substr( vmax.size() - 3, 3 ); // z wyrównaniem do prawej
+                        std::string const station = (
+                            Bezogonkow( tableline->StationName, true )
+                            + "                                  " )
+                            .substr( 0, 34 );
+                        std::string const location = (
+                            ( tableline->km > 0.0 ?
+                                to_string( tableline->km, 2 ) :
+                                "" )
+                            + "                                  " )
+                            .substr( 0, 34 - tableline->StationWare.size() );
+                        std::string const arrival = (
+                            tableline->Ah >= 0 ?
+                                to_string( int( 100 + tableline->Ah ) ).substr( 1, 2 ) + ":" + to_string( int( 100 + tableline->Am ) ).substr( 1, 2 ) :
+                                "  |  " );
+                        std::string const departure = (
+                            tableline->Dh >= 0 ?
+                                to_string( int( 100 + tableline->Dh ) ).substr( 1, 2 ) + ":" + to_string( int( 100 + tableline->Dm ) ).substr( 1, 2 ) :
+                                "  |  " );
+                        auto const candeparture = (
+                            ( owner->iStationStart < table->StationIndex )
+                         && ( i < table->StationIndex )
+                         && ( ( time.wHour * 60 + time.wMinute ) >= ( tableline->Dh * 60 + tableline->Dm ) ) );
+                        auto traveltime =
+                            "   "
+                            + ( i < 2 ? "" :
+                                tableline->Ah >= 0 ? to_string( CompareTime( table->TimeTable[ i - 1 ].Dh, table->TimeTable[ i - 1 ].Dm, tableline->Ah, tableline->Am ), 0 ) :
+                                to_string( std::max( 0.0, CompareTime( table->TimeTable[ i - 1 ].Dh, table->TimeTable[ i - 1 ].Dm, tableline->Dh, tableline->Dm ) - 0.5 ), 0 ) );
+                        traveltime = traveltime.substr( traveltime.size() - 3, 3 ); // z wyrównaniem do prawej
 
                         UITable->text_lines.emplace_back(
-                            Bezogonkow( "| " + station + " | " + arrival + " | " + departure + " | " + vmax + " | " + tableline->StationWare, true ),
-                            ( ( owner->iStationStart < table->StationIndex )
-                           && ( i < table->StationIndex )
-                           && ( ( time.wHour * 60 + time.wMinute ) >= ( tableline->Dh * 60 + tableline->Dm ) ) ?
+                            ( "| " + vmax + " | " + station + " | " + arrival + " | " + traveltime + " |" ),
+                             ( candeparture ?
+                                glm::vec4( 0.0f, 1.0f, 0.0f, 1.0f ) :// czas minął i odjazd był, to nazwa stacji będzie na zielono
+                                Global.UITextColor ) );
+                        UITable->text_lines.emplace_back(
+                            ( "|     | " + location + tableline->StationWare + " | " + departure + " |     |" ),
+                             ( candeparture ?
                                 glm::vec4( 0.0f, 1.0f, 0.0f, 1.0f ) :// czas minął i odjazd był, to nazwa stacji będzie na zielono
                                 Global.UITextColor ) );
                         // divider/footer
-                        UITable->text_lines.emplace_back( "+----------------------------+-------+-------+-----+", Global.UITextColor );
+                        UITable->text_lines.emplace_back( "+-----+------------------------------------+-------+-----+", Global.UITextColor );
+                    }
+                    if( owner->iStationStart + 10 < table->StationCount ) {
+                        // if we can't display entire timetable, add a scrolling indicator at the bottom
+                        UITable->text_lines.emplace_back( "                           ...                            ", Global.UITextColor );
                     }
                 }
             }
@@ -444,18 +471,21 @@ ui_layer::update() {
                 // equipment flags
                 uitextline2  = ( vehicle->MoverParameters->Battery ? "B" : "." );
                 uitextline2 += ( vehicle->MoverParameters->Mains ? "M" : "." );
-                uitextline2 += ( vehicle->MoverParameters->PantRearUp ? ( vehicle->MoverParameters->PantRearVolt > 0.0 ? "O" : "o" ) : "." );;
-                uitextline2 += ( vehicle->MoverParameters->PantFrontUp ? ( vehicle->MoverParameters->PantFrontVolt > 0.0 ? "P" : "p" ) : "." );;
+                uitextline2 += ( vehicle->MoverParameters->PantRearUp ? ( vehicle->MoverParameters->PantRearVolt > 0.0 ? "O" : "o" ) : "." );
+                uitextline2 += ( vehicle->MoverParameters->PantFrontUp ? ( vehicle->MoverParameters->PantFrontVolt > 0.0 ? "P" : "p" ) : "." );
                 uitextline2 += ( vehicle->MoverParameters->PantPressLockActive ? "!" : ( vehicle->MoverParameters->PantPressSwitchActive ? "*" : "." ) );
-                uitextline2 += ( vehicle->MoverParameters->FuelPump.is_enabled ? ( vehicle->MoverParameters->FuelPump.is_active ? "F" : "f" ) : "." );;
+                uitextline2 += ( vehicle->MoverParameters->WaterPump.is_active ? "W" : ( false == vehicle->MoverParameters->WaterPump.breaker ? "-" : ( vehicle->MoverParameters->WaterPump.is_enabled ? "w" : "." ) ) );
+                uitextline2 += ( true == vehicle->MoverParameters->WaterHeater.is_damaged ? "!" : ( vehicle->MoverParameters->WaterHeater.is_active ? "H" : ( false == vehicle->MoverParameters->WaterHeater.breaker ? "-" : ( vehicle->MoverParameters->WaterHeater.is_enabled ? "h" : "." ) ) ) );
+                uitextline2 += ( vehicle->MoverParameters->FuelPump.is_active ? "F" : ( vehicle->MoverParameters->FuelPump.is_enabled ? "f" : "." ) );
+                uitextline2 += ( vehicle->MoverParameters->OilPump.is_active ? "O" : ( vehicle->MoverParameters->OilPump.is_enabled ? "o" : "." ) );
                 uitextline2 += ( false == vehicle->MoverParameters->ConverterAllowLocal ? "-" : ( vehicle->MoverParameters->ConverterAllow ? ( vehicle->MoverParameters->ConverterFlag ? "X" : "x" ) : "." ) );
                 uitextline2 += ( vehicle->MoverParameters->ConvOvldFlag ? "!" : "." );
-                uitextline2 += ( false == vehicle->MoverParameters->CompressorAllowLocal ? "-" : ( ( vehicle->MoverParameters->CompressorAllow || vehicle->MoverParameters->CompressorPower > 1 ) ? ( vehicle->MoverParameters->CompressorFlag ? "C" : "c" ) : "." ) );
+                uitextline2 += ( vehicle->MoverParameters->CompressorFlag ? "C" : ( false == vehicle->MoverParameters->CompressorAllowLocal ? "-" : ( ( vehicle->MoverParameters->CompressorAllow || vehicle->MoverParameters->CompressorStart == start::automatic ) ? "c" : "." ) ) );
                 uitextline2 += ( vehicle->MoverParameters->CompressorGovernorLock ? "!" : "." );
 
                 auto const train { Global.pWorld->train() };
                 if( ( train != nullptr ) && ( train->Dynamic() == vehicle ) ) {
-                    uitextline2 += " R: " + std::to_string( train->RadioChannel() );
+                    uitextline2 += ( vehicle->MoverParameters->Radio ? " R: " : " r: " ) + std::to_string( train->RadioChannel() );
                 }
 /*
                 uitextline2 +=
@@ -658,7 +688,34 @@ ui_layer::update() {
 
         case( GLFW_KEY_F10 ) : {
 
-            uitextline1 = ( "Press [Y] key to quit / Aby zakonczyc program, przycisnij klawisz [Y]." );
+            uitextline1 = "Press [Y] key to quit / Aby zakonczyc program, przycisnij klawisz [Y].";
+
+            break;
+        }
+
+        case( GLFW_KEY_F11 ): {
+            // scenario inspector
+            auto const time { Timer::GetTime() };
+            auto const *event { simulation::Events.begin() };
+            auto eventtableindex{ 0 };
+            while( ( event != nullptr )
+                && ( eventtableindex < 30 ) ) {
+
+                if( ( false == event->m_ignored )
+                 && ( true == event->bEnabled ) ) {
+
+                    auto const delay { "   " + to_string( std::max( 0.0, event->fStartTime - time ), 1 ) };
+                    auto const eventline =
+                        "Delay: " + delay.substr( delay.length() - 6 )
+                        + ", Event: " + event->asName
+                        + ( event->Activator ? " (by: " + event->Activator->asName + ")" : "" )
+                        + ( event->evJoined ? " (joint event)" : "" );
+
+                    UITable->text_lines.emplace_back( eventline, Global.UITextColor );
+                    ++eventtableindex;
+                }
+                event = event->evNext;
+            }
 
             break;
         }
@@ -692,7 +749,8 @@ ui_layer::update() {
                     + ", PM=" + to_string( vehicle->MoverParameters->WheelFlat, 1 )
                     + " mm; enrot=" + to_string( vehicle->MoverParameters->enrot * 60, 0 )
                     + " tmrot=" + to_string( std::abs( vehicle->MoverParameters->nrot ) * vehicle->MoverParameters->Transmision.Ratio * 60, 0 )
-                    + "; ventrot=" + to_string( vehicle->MoverParameters->RventRot * 60, 1 );
+                    + "; ventrot=" + to_string( vehicle->MoverParameters->RventRot * 60, 1 )
+                    + "; fanrot=" + to_string( vehicle->MoverParameters->dizel_heat.rpmw, 1 ) + ", " + to_string( vehicle->MoverParameters->dizel_heat.rpmw2, 1 );
 
                 uitextline2 =
                     "HamZ=" + to_string( vehicle->MoverParameters->fBrakeCtrlPos, 2 )
@@ -718,7 +776,15 @@ ui_layer::update() {
                     VelPrev = vehicle->MoverParameters->Vel;
                 }
                 uitextline2 += "; As=" + to_string( Acc, 2 ); // przyspieszenie wzdłużne
+/*
                 uitextline2 += " eAngle=" + to_string( std::cos( vehicle->MoverParameters->eAngle ), 2 );
+*/
+                uitextline2 += "; oilP=" + to_string( vehicle->MoverParameters->OilPump.pressure_present, 3 );
+                uitextline2 += " oilT=" + to_string( vehicle->MoverParameters->dizel_heat.To, 2 );
+                uitextline2 += "; waterT=" + to_string( vehicle->MoverParameters->dizel_heat.temperatura1, 2 );
+                uitextline2 += ( vehicle->MoverParameters->WaterCircuitsLink ? "-" : "|" );
+                uitextline2 += to_string( vehicle->MoverParameters->dizel_heat.temperatura2, 2 );
+                uitextline2 += "; engineT=" + to_string( vehicle->MoverParameters->dizel_heat.Ts, 2 );
 
                 uitextline3 =
                     "cyl.ham. " + to_string( vehicle->MoverParameters->BrakePress, 2 )
