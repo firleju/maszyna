@@ -207,6 +207,7 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::mubrakingindicatortoggle, &TTrain::OnCommand_mubrakingindicatortoggle },
     { user_command::reverserincrease, &TTrain::OnCommand_reverserincrease },
     { user_command::reverserdecrease, &TTrain::OnCommand_reverserdecrease },
+    { user_command::reverserforwardhigh, &TTrain::OnCommand_reverserforwardhigh },
     { user_command::reverserforward, &TTrain::OnCommand_reverserforward },
     { user_command::reverserneutral, &TTrain::OnCommand_reverserneutral },
     { user_command::reverserbackward, &TTrain::OnCommand_reverserbackward },
@@ -336,9 +337,7 @@ std::vector<std::string> const TTrain::fPress_labels = {
 };
 
 TTrain::TTrain() {
-/*
-    Universal4Active = false;
-*/
+
     ShowNextCurrent = false;
     // McZapkie-240302 - przyda sie do tachometru
     fTachoVelocity = 0;
@@ -433,10 +432,10 @@ bool TTrain::Init(TDynamicObject *NewDynamicObject, bool e3d)
 
 PyObject *TTrain::GetTrainState() {
 
-    auto const &mover = DynamicObject->MoverParameters;
+    auto const *mover = DynamicObject->MoverParameters;
     auto *dict = PyDict_New();
     if( ( dict == nullptr )
-        || ( mover == nullptr ) ) {
+     || ( mover == nullptr ) ) {
         return nullptr;
     }
 
@@ -746,12 +745,22 @@ void TTrain::OnCommand_mastercontrollerdecreasefast( TTrain *Train, command_data
 
 void TTrain::OnCommand_mastercontrollerset( TTrain *Train, command_data const &Command ) {
 
-    auto const targetposition { std::min<int>( Command.param1, Train->mvControlled->MainCtrlPosNo ) };
-    while( targetposition < Train->mvControlled->MainCtrlPos ) {
-        Train->mvControlled->DecMainCtrl( 1 );
+    auto positionchange {
+        std::min<int>(
+            Command.param1,
+            ( Train->mvControlled->CoupledCtrl ?
+                Train->mvControlled->MainCtrlPosNo + Train->mvControlled->ScndCtrlPosNo :
+                Train->mvControlled->MainCtrlPosNo ) )
+        - ( Train->mvControlled->CoupledCtrl ?
+                Train->mvControlled->MainCtrlPos + Train->mvControlled->ScndCtrlPos :
+                Train->mvControlled->MainCtrlPos ) };
+    while( ( positionchange < 0 )
+        && ( true == Train->mvControlled->DecMainCtrl( 1 ) ) ) {
+        ++positionchange;
     }
-    while( targetposition > Train->mvControlled->MainCtrlPos ) {
-        Train->mvControlled->IncMainCtrl( 1 );
+    while( ( positionchange > 0 )
+        && ( true == Train->mvControlled->IncMainCtrl( 1 ) ) ) {
+        --positionchange;
     }
 }
 
@@ -759,7 +768,8 @@ void TTrain::OnCommand_secondcontrollerincrease( TTrain *Train, command_data con
 
     if( Command.action != GLFW_RELEASE ) {
         // on press or hold
-        if( Train->mvControlled->ShuntMode ) {
+        if( ( Train->mvControlled->EngineType == DieselElectric )
+         && ( true == Train->mvControlled->ShuntMode ) ) {
             Train->mvControlled->AnPos = clamp(
                 Train->mvControlled->AnPos + 0.025,
                 0.0, 1.0 );
@@ -774,7 +784,13 @@ void TTrain::OnCommand_secondcontrollerincreasefast( TTrain *Train, command_data
 
     if( Command.action != GLFW_RELEASE ) {
         // on press or hold
-        Train->mvControlled->IncScndCtrl( 2 );
+        if( ( Train->mvControlled->EngineType == DieselElectric )
+         && ( true == Train->mvControlled->ShuntMode ) ) {
+            Train->mvControlled->AnPos = 1.0;
+        }
+        else {
+            Train->mvControlled->IncScndCtrl( 2 );
+        }
     }
 }
 
@@ -820,12 +836,15 @@ void TTrain::OnCommand_secondcontrollerdecrease( TTrain *Train, command_data con
 
     if( Command.action != GLFW_RELEASE ) {
         // on press or hold
-        if( Train->mvControlled->ShuntMode ) {
+        if( ( Train->mvControlled->EngineType == DieselElectric )
+         && ( true == Train->mvControlled->ShuntMode ) ) {
             Train->mvControlled->AnPos = clamp(
                 Train->mvControlled->AnPos - 0.025,
                 0.0, 1.0 );
         }
-        Train->mvControlled->DecScndCtrl( 1 );
+        else {
+            Train->mvControlled->DecScndCtrl( 1 );
+        }
     }
 }
 
@@ -833,18 +852,28 @@ void TTrain::OnCommand_secondcontrollerdecreasefast( TTrain *Train, command_data
 
     if( Command.action != GLFW_RELEASE ) {
         // on press or hold
-        Train->mvControlled->DecScndCtrl( 2 );
+        if( ( Train->mvControlled->EngineType == DieselElectric )
+         && ( true == Train->mvControlled->ShuntMode ) ) {
+            Train->mvControlled->AnPos = 0.0;
+        }
+        else {
+            Train->mvControlled->DecScndCtrl( 2 );
+        }
     }
 }
 
 void TTrain::OnCommand_secondcontrollerset( TTrain *Train, command_data const &Command ) {
 
     auto const targetposition { std::min<int>( Command.param1, Train->mvControlled->ScndCtrlPosNo ) };
-    while( targetposition < Train->mvControlled->ScndCtrlPos ) {
-        Train->mvControlled->DecScndCtrl( 1 );
+    while( ( targetposition < Train->mvControlled->ScndCtrlPos )
+        && ( true == Train->mvControlled->DecScndCtrl( 1 ) ) ) {
+        // all work is done in the header
+        ;
     }
-    while( targetposition > Train->mvControlled->ScndCtrlPos ) {
-        Train->mvControlled->IncScndCtrl( 1 );
+    while( ( targetposition > Train->mvControlled->ScndCtrlPos )
+        && ( true == Train->mvControlled->IncScndCtrl( 1 ) ) ) {
+        // all work is done in the header
+        ;
     }
 }
 
@@ -1444,9 +1473,20 @@ void TTrain::OnCommand_reverserdecrease( TTrain *Train, command_data const &Comm
     }
 }
 
+void TTrain::OnCommand_reverserforwardhigh( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+
+        OnCommand_reverserforward( Train, Command );
+        OnCommand_reverserincrease( Train, Command );
+    }
+}
+
 void TTrain::OnCommand_reverserforward( TTrain *Train, command_data const &Command ) {
 
     if( Command.action == GLFW_PRESS ) {
+        // HACK: try to move the reverser one position back, in case it's set to "high forward"
+        OnCommand_reverserdecrease( Train, Command );
 
         if( Train->mvOccupied->ActiveDir < 1 ) {
 
@@ -4308,7 +4348,7 @@ bool TTrain::Update( double const Deltatime )
 
         tor = DynamicObject->GetTrack(); // McZapkie-180203
         // McZapkie: predkosc wyswietlana na tachometrze brana jest z obrotow kol
-        float maxtacho = 3;
+        auto const maxtacho { 3.0 };
         fTachoVelocity = static_cast<float>( std::min( std::abs(11.31 * mvControlled->WheelDiameter * mvControlled->nrot), mvControlled->Vmax * 1.05) );
         { // skacze osobna zmienna
             float ff = simulation::Time.data().wSecond; // skacze co sekunde - pol sekundy
@@ -4324,12 +4364,12 @@ bool TTrain::Update( double const Deltatime )
         }
         if (fTachoVelocity > 1) // McZapkie-270503: podkrecanie tachometru
         {
-            if (fTachoCount < maxtacho)
-                fTachoCount += Deltatime * 3; // szybciej zacznij stukac
+            // szybciej zacznij stukac
+            fTachoCount = std::min( maxtacho, fTachoCount + Deltatime * 3 );
         }
         else if( fTachoCount > 0 ) {
             // schodz powoli - niektore haslery to ze 4 sekundy potrafia stukac
-            fTachoCount -= Deltatime * 0.66;
+            fTachoCount = std::max( 0.0, fTachoCount - Deltatime * 0.66 );
         }
 
         // Ra 2014-09: napięcia i prądy muszą być ustalone najpierw, bo wysyłane są ewentualnie na PoKeys
@@ -5157,10 +5197,8 @@ bool TTrain::Update( double const Deltatime )
         //---------
         // hunter-080812: poprawka na ogrzewanie w elektrykach - usuniete uzaleznienie od przetwornicy
         if( ( mvControlled->Heating == true )
-         && ( ( mvControlled->ConverterFlag )
-           || ( ( mvControlled->EngineType == ElectricSeriesMotor )
-             && ( mvControlled->Mains == true )
-             && ( mvControlled->ConvOvldFlag == false ) ) ) )
+         && ( mvControlled->Mains == true )
+         && ( mvControlled->ConvOvldFlag == false ) )
             btLampkaOgrzewanieSkladu.Turn( true );
         else
             btLampkaOgrzewanieSkladu.Turn( false );
@@ -5873,6 +5911,10 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
         sound->offset( nullvector );
         sound->owner( DynamicObject );
     }
+    // reset view angles
+    pMechViewAngle = { 0.0, 0.0 };
+    Global.pCamera->Pitch = pMechViewAngle.x;
+    Global.pCamera->Yaw = pMechViewAngle.y;
 
     pyScreens.reset(this);
     pyScreens.setLookupPath(DynamicObject->asBaseDir);
@@ -5925,41 +5967,59 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
     {
         // jeśli znaleziony wpis kabiny
         Cabine[cabindex].Load(*parser);
-        // NOTE: the next part is likely to break if sitpos doesn't follow pos
+        // NOTE: the position and angle definitions depend on strict entry order
+        // TODO: refactor into more flexible arrangement
         parser->getTokens();
         *parser >> token;
+        if( token == std::string( "driver" + std::to_string( cabindex ) + "angle:" ) ) {
+            // camera view angle
+            parser->getTokens( 2, false );
+            // angle is specified in degrees but internally stored in radians
+            glm::vec2 viewangle;
+            *parser
+                >> viewangle.y // yaw first, then pitch
+                >> viewangle.x;
+            pMechViewAngle = glm::radians( viewangle );
+            Global.pCamera->Pitch = pMechViewAngle.x;
+            Global.pCamera->Yaw = pMechViewAngle.y;
+
+            parser->getTokens();
+            *parser >> token;
+        }
         if (token == std::string("driver" + std::to_string(cabindex) + "pos:"))
         {
             // pozycja poczatkowa maszynisty
             parser->getTokens(3, false);
-            *parser >> pMechOffset.x >> pMechOffset.y >> pMechOffset.z;
-            pMechSittingPosition.x = pMechOffset.x;
-            pMechSittingPosition.y = pMechOffset.y;
-            pMechSittingPosition.z = pMechOffset.z;
+            *parser
+                >> pMechOffset.x
+                >> pMechOffset.y
+                >> pMechOffset.z;
+            pMechSittingPosition = pMechOffset;
+
+            parser->getTokens();
+            *parser >> token;
         }
         // ABu: pozycja siedzaca mechanika
-        parser->getTokens();
-        *parser >> token;
         if (token == std::string("driver" + std::to_string(cabindex) + "sitpos:"))
         {
             // ABu 180404 pozycja siedzaca maszynisty
             parser->getTokens(3, false);
-            *parser >> pMechSittingPosition.x >> pMechSittingPosition.y >> pMechSittingPosition.z;
-            parse = true;
+            *parser
+                >> pMechSittingPosition.x
+                >> pMechSittingPosition.y
+                >> pMechSittingPosition.z;
+
+            parser->getTokens();
+            *parser >> token;
         }
         // else parse=false;
-        do
-        {
-            // ABu: wstawione warunki, wczesniej tylko to:
-            //   str=Parser->GetNextSymbol().LowerCase();
-            if (parse == true) {
-
+        do {
+            if( parse == true ) {
                 token = "";
                 parser->getTokens();
                 *parser >> token;
             }
-            else
-            {
+            else {
                 parse = true;
             }
             // inicjacja kabiny
@@ -5978,6 +6038,11 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
                     // bieżąca sciezka do tekstur to dynamic/...
                     Global.asCurrentTexturePath = DynamicObject->asBaseDir;
                     // szukaj kabinę jako oddzielny model
+                    // name can contain leading slash, erase it to avoid creation of double slashes when the name is combined with current directory
+                    replace_slashes( token );
+                    if( token[ 0 ] == '/' ) {
+                        token.erase( 0, 1 );
+                    }
                     TModel3d *kabina = TModelsManager::GetModel(DynamicObject->asBaseDir + token, true);
                     // z powrotem defaultowa sciezka do tekstur
                     Global.asCurrentTexturePath = szTexturePath;

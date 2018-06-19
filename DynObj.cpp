@@ -42,6 +42,28 @@ std::string const TDynamicObject::MED_labels[] = {
 
 bool TDynamicObject::bDynamicRemove { false };
 
+// helper, locates submodel with specified name in specified 3d model; returns: pointer to the submodel, or null
+TSubModel *
+GetSubmodelFromName( TModel3d * const Model, std::string const Name ) {
+
+    return (
+        Model ?
+            Model->GetFromName( Name ) :
+            nullptr );
+}
+
+// Ra 2015-01: sprawdzenie dostępności tekstury o podanej nazwie
+std::string
+TextureTest( std::string const &Name ) {
+    
+    auto const lookup {
+        FileExists(
+            { Global.asCurrentTexturePath + Name, Name, szTexturePath + Name },
+            { ".mat", ".dds", ".tga", ".bmp" } ) };
+
+    return ( lookup.first + lookup.second );
+}
+
 //---------------------------------------------------------------------------
 void TAnimPant::AKP_4E()
 { // ustawienie wymiarów dla pantografu AKP-4E
@@ -3023,8 +3045,13 @@ bool TDynamicObject::Update(double dt, double dt1)
 				masa += p->MoverParameters->TotalMass;
 				osie += p->MoverParameters->NAxles;
 			}
+			double RapidMult = 1.0;
+			if (((MoverParameters->BrakeDelays & (bdelay_P + bdelay_R)) == (bdelay_P + bdelay_R))
+				&& (MoverParameters->BrakeDelayFlag & bdelay_P))
+				RapidMult = MoverParameters->RapidMult;
 
-			auto const amax = std::min(FmaxPN / masamax, MoverParameters->MED_amax);
+			auto const amax = RapidMult * std::min(FmaxPN / masamax, MoverParameters->MED_amax);
+
             if ((MoverParameters->Vel < 0.5) && (MoverParameters->BrakePress > 0.2) ||
                 (dDoorMoveL > 0.001) || (dDoorMoveR > 0.001))
             {
@@ -3052,7 +3079,20 @@ bool TDynamicObject::Update(double dt, double dt1)
             {
                 Fzad = std::max(MoverParameters->StopBrakeDecc * masa, Fzad);
             }
-
+			if ((Fzad > 1) && (!MEDLogFile.is_open()) && (MoverParameters->Vel > 1))
+			{
+				MEDLogFile.open(std::string("MEDLOGS/" + MoverParameters->Name + "_" + to_string(++MEDLogCount) + ".csv"),
+					std::ios::in | std::ios::out | std::ios::trunc);
+				MEDLogFile << std::string("t\tVel\tMasa\tOsie\tFmaxPN\tFmaxED\tFfulED\tFrED\tFzad\tFzadED\tFzadPN").c_str();
+				for(int k=1;k<=np;k++)
+				{
+					MEDLogFile << "\tBP" << k;
+				}
+				MEDLogFile << "\n";
+				MEDLogFile.flush();
+				MEDLogInactiveTime = 0;
+				MEDLogTime = 0;
+			}
             auto FzadED { 0.0 };
             if( ( MoverParameters->EpFuse && (MoverParameters->BrakeHandle != MHZ_EN57))
              || ( ( MoverParameters->BrakeHandle == MHZ_EN57 )
@@ -3186,6 +3226,38 @@ bool TDynamicObject::Update(double dt, double dt1)
 			MED[0][5] = FrED*0.001;
 			MED[0][6] = FzadPN*0.001;
 			MED[0][7] = nPrzekrF;
+
+			if (MEDLogFile.is_open())
+			{
+				MEDLogFile << MEDLogTime << "\t" << MoverParameters->Vel << "\t" << masa*0.001 << "\t" << osie << "\t" << FmaxPN*0.001 << "\t" << FmaxED*0.001 << "\t"
+					<< FfulED*0.001 << "\t" << FrED*0.001 << "\t" << Fzad*0.001 << "\t" << FzadED*0.001 << "\t" << FzadPN*0.001;
+				for (TDynamicObject *p = GetFirstDynamic(MoverParameters->ActiveCab < 0 ? 1 : 0, 4); p;
+					(true == kier ? p = p->NextC(4) : p = p->PrevC(4)))
+				{
+					MEDLogFile << "\t" << p->MoverParameters->BrakePress;
+				}
+				MEDLogFile << "\n";
+				if (floor(MEDLogTime + dt1) > floor(MEDLogTime))
+				{
+					MEDLogFile.flush();
+				}
+				MEDLogTime += dt1;
+
+				if ((MoverParameters->Vel < 0.1) || (MoverParameters->MainCtrlPos > 0))
+				{
+					MEDLogInactiveTime += dt1;
+				}
+				else
+				{
+					MEDLogInactiveTime = 0;
+				}
+				if (MEDLogInactiveTime > 5)
+				{
+					MEDLogFile.flush();
+					MEDLogFile.close();
+				}
+
+			}
 
 			delete[] PrzekrF;
 			delete[] FzED;
@@ -3633,14 +3705,31 @@ bool TDynamicObject::Update(double dt, double dt1)
         }
 
     // NBMX Obsluga drzwi, MC: zuniwersalnione
+    // TODO: fully generalized door assembly
     if( ( dDoorMoveL < MoverParameters->DoorMaxShiftL )
      && ( true == MoverParameters->DoorLeftOpened ) ) {
-        dDoorMoveL += dt1 * MoverParameters->DoorOpenSpeed;
-        dDoorMoveL = std::min( dDoorMoveL, MoverParameters->DoorMaxShiftL );
+        // open left door
+        if( ( MoverParameters->TrainType == dt_EZT )
+         || ( MoverParameters->TrainType == dt_DMU ) ) {
+            // multi-unit vehicles typically open door only after unfolding the doorstep
+            if( ( MoverParameters->PlatformMaxShift == 0.0 ) // no wait if no doorstep
+             || ( MoverParameters->PlatformOpenMethod == 2 ) // no wait for rotating doorstep
+             || ( dDoorstepMoveL == 1.0 ) ) {
+                dDoorMoveL = std::min(
+                    MoverParameters->DoorMaxShiftL,
+                    dDoorMoveL + MoverParameters->DoorOpenSpeed * dt1 );
+            }
+        }
+        else {
+            dDoorMoveL = std::min(
+                MoverParameters->DoorMaxShiftL,
+                dDoorMoveL + MoverParameters->DoorOpenSpeed * dt1 );
+        }
         DoorDelayL = 0.f;
     }
     if( ( dDoorMoveL > 0.0 )
      && ( false == MoverParameters->DoorLeftOpened ) ) {
+        // close left door
         DoorDelayL += dt1;
         if( DoorDelayL > MoverParameters->DoorCloseDelay ) {
             dDoorMoveL -= dt1 * MoverParameters->DoorCloseSpeed;
@@ -3649,12 +3738,28 @@ bool TDynamicObject::Update(double dt, double dt1)
     }
     if( ( dDoorMoveR < MoverParameters->DoorMaxShiftR )
      && ( true == MoverParameters->DoorRightOpened ) ) {
-        dDoorMoveR += dt1 * MoverParameters->DoorOpenSpeed;
-        dDoorMoveR = std::min( dDoorMoveR, MoverParameters->DoorMaxShiftR );
+        // open right door
+        if( ( MoverParameters->TrainType == dt_EZT )
+         || ( MoverParameters->TrainType == dt_DMU ) ) {
+            // multi-unit vehicles typically open door only after unfolding the doorstep
+            if( ( MoverParameters->PlatformMaxShift == 0.0 ) // no wait if no doorstep
+             || ( MoverParameters->PlatformOpenMethod == 2 ) // no wait for rotating doorstep
+             || ( dDoorstepMoveR == 1.0 ) ) {
+                dDoorMoveR = std::min(
+                    MoverParameters->DoorMaxShiftR,
+                    dDoorMoveR + MoverParameters->DoorOpenSpeed * dt1 );
+            }
+        }
+        else {
+            dDoorMoveR = std::min(
+                MoverParameters->DoorMaxShiftR,
+                dDoorMoveR + MoverParameters->DoorOpenSpeed * dt1 );
+        }
         DoorDelayR = 0.f;
     }
     if( ( dDoorMoveR > 0.0 )
      && ( false == MoverParameters->DoorRightOpened ) ) {
+        // close right door
         DoorDelayR += dt1;
         if( DoorDelayR > MoverParameters->DoorCloseDelay ) {
             dDoorMoveR -= dt1 * MoverParameters->DoorCloseSpeed;
@@ -3664,6 +3769,7 @@ bool TDynamicObject::Update(double dt, double dt1)
     // doorsteps
     if( ( dDoorstepMoveL < 1.0 )
      && ( true == MoverParameters->DoorLeftOpened ) ) {
+        // unfold left doorstep
         dDoorstepMoveL = std::min(
             1.0,
             dDoorstepMoveL + MoverParameters->PlatformSpeed * dt1 );
@@ -3671,12 +3777,25 @@ bool TDynamicObject::Update(double dt, double dt1)
     if( ( dDoorstepMoveL > 0.0 )
      && ( false == MoverParameters->DoorLeftOpened )
      && ( DoorDelayL > MoverParameters->DoorCloseDelay ) ) {
-        dDoorstepMoveL = std::max(
-            0.0,
-            dDoorstepMoveL - MoverParameters->PlatformSpeed * dt1 );
+        // fold left doorstep
+        if( ( MoverParameters->TrainType == dt_EZT )
+         || ( MoverParameters->TrainType == dt_DMU ) ) {
+            // multi-unit vehicles typically fold the doorstep only after closing the door
+            if( dDoorMoveL == 0.0 ) {
+                dDoorstepMoveL = std::max(
+                    0.0,
+                    dDoorstepMoveL - MoverParameters->PlatformSpeed * dt1 );
+            }
+        }
+        else {
+            dDoorstepMoveL = std::max(
+                0.0,
+                dDoorstepMoveL - MoverParameters->PlatformSpeed * dt1 );
+        }
     }
     if( ( dDoorstepMoveR < 1.0 )
      && ( true == MoverParameters->DoorRightOpened ) ) {
+        // unfold right doorstep
         dDoorstepMoveR = std::min(
             1.0,
             dDoorstepMoveR + MoverParameters->PlatformSpeed * dt1 );
@@ -3684,9 +3803,21 @@ bool TDynamicObject::Update(double dt, double dt1)
     if( ( dDoorstepMoveR > 0.0 )
      && ( false == MoverParameters->DoorRightOpened )
      && ( DoorDelayR > MoverParameters->DoorCloseDelay ) ) {
-        dDoorstepMoveR = std::max(
-            0.0,
-            dDoorstepMoveR - MoverParameters->PlatformSpeed * dt1 );
+        // fold right doorstep
+        if( ( MoverParameters->TrainType == dt_EZT )
+         || ( MoverParameters->TrainType == dt_DMU ) ) {
+            // multi-unit vehicles typically fold the doorstep only after closing the door
+            if( dDoorMoveR == 0.0 ) {
+                dDoorstepMoveR = std::max(
+                    0.0,
+                    dDoorstepMoveR - MoverParameters->PlatformSpeed * dt1 );
+            }
+        }
+        else {
+            dDoorstepMoveR = std::max(
+                0.0,
+                dDoorstepMoveR - MoverParameters->PlatformSpeed * dt1 );
+        }
     }
     // mirrors
     if( MoverParameters->Vel > 5.0 ) {
@@ -4045,10 +4176,13 @@ void TDynamicObject::RenderSounds() {
         }
     }
     // NBMX Obsluga drzwi, MC: zuniwersalnione
+    // TODO: fully generalized door assembly
     if( true == MoverParameters->DoorLeftOpened ) {
         // open left door
         // door sounds
-        if( dDoorMoveL < MoverParameters->DoorMaxShiftL ) {
+        // due to potential wait for the doorstep we play the sound only during actual animation
+        if( ( dDoorMoveL > 0.0 )
+         && ( dDoorMoveL < MoverParameters->DoorMaxShiftL ) ) {
             for( auto &door : m_doorsounds ) {
                 if( door.rsDoorClose.offset().x > 0.f ) {
                     // determine left side doors from their offset
@@ -4095,7 +4229,9 @@ void TDynamicObject::RenderSounds() {
     if( true == MoverParameters->DoorRightOpened ) {
         // open right door
         // door sounds
-        if( dDoorMoveR < MoverParameters->DoorMaxShiftR ) {
+        // due to potential wait for the doorstep we play the sound only during actual animation
+        if( ( dDoorMoveR > 0.0 )
+         && ( dDoorMoveR < MoverParameters->DoorMaxShiftR ) ) {
             for( auto &door : m_doorsounds ) {
                 if( door.rsDoorClose.offset().x < 0.f ) {
                     // determine right side doors from their offset
@@ -4358,7 +4494,7 @@ void TDynamicObject::RenderSounds() {
 // wczytywanie pliku z danymi multimedialnymi (dzwieki)
 void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, std::string ReplacableSkin ) {
 
-    double dSDist;
+    replace_slashes( BaseDir );
     Global.asCurrentDynamicPath = BaseDir;
     std::string asFileName = BaseDir + TypeName + ".mmd";
     std::string asLoadName;
@@ -4406,10 +4542,9 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
             asModel = BaseDir + asModel; // McZapkie 2002-07-20: dynamics maja swoje modele w dynamics/basedir
             Global.asCurrentTexturePath = BaseDir; // biezaca sciezka do tekstur to dynamic/...
             mdModel = TModelsManager::GetModel(asModel, true);
-            assert( mdModel != nullptr ); // TODO: handle this more gracefully than all going to shit
             if (ReplacableSkin != "none")
             {
-				std::string nowheretexture = TextureTest(Global.asCurrentTexturePath + "nowhere"); // na razie prymitywnie
+                std::string nowheretexture = TextureTest( "nowhere" ); // na razie prymitywnie
                 if( false == nowheretexture.empty() ) {
                     m_materialdata.replacable_skins[ 4 ] = GfxRenderer.Fetch_Material( nowheretexture );
                 }
@@ -4423,9 +4558,8 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                         int skinindex = 0;
                         std::string texturename; nameparser >> texturename;
                         while( ( texturename != "" ) && ( skinindex < 4 ) ) {
-                            erase_extension( texturename );
 							std::replace(texturename.begin(), texturename.end(), '\\', '/');
-                            m_materialdata.replacable_skins[ skinindex + 1 ] = GfxRenderer.Fetch_Material( Global.asCurrentTexturePath + texturename );
+                            m_materialdata.replacable_skins[ skinindex + 1 ] = GfxRenderer.Fetch_Material( texturename );
                             ++skinindex;
                             texturename = ""; nameparser >> texturename;
                         }
@@ -4436,7 +4570,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                         erase_extension( ReplacableSkin );
                         int skinindex = 0;
                         do {
-                            material_handle material = GfxRenderer.Fetch_Material( Global.asCurrentTexturePath + ReplacableSkin + "," + std::to_string( skinindex + 1 ), true );
+                            material_handle material = GfxRenderer.Fetch_Material( ReplacableSkin + "," + std::to_string( skinindex + 1 ), true );
                             if( material == null_handle ) {
                                 break;
                             }
@@ -4446,12 +4580,12 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                         m_materialdata.multi_textures = skinindex;
                         if( m_materialdata.multi_textures == 0 ) {
                             // zestaw nie zadziałał, próbujemy normanie
-                            m_materialdata.replacable_skins[ 1 ] = GfxRenderer.Fetch_Material( Global.asCurrentTexturePath + ReplacableSkin );
+                            m_materialdata.replacable_skins[ 1 ] = GfxRenderer.Fetch_Material( ReplacableSkin );
                         }
                     }
                 }
                 else {
-                    m_materialdata.replacable_skins[ 1 ] = GfxRenderer.Fetch_Material( Global.asCurrentTexturePath + ReplacableSkin );
+                    m_materialdata.replacable_skins[ 1 ] = GfxRenderer.Fetch_Material( ReplacableSkin );
                 }
                 if( GfxRenderer.Material( m_materialdata.replacable_skins[ 1 ] ).has_alpha ) {
                     // tekstura -1 z kanałem alfa - nie renderować w cyklu nieprzezroczystych
@@ -4480,7 +4614,8 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
             }
             if( !MoverParameters->LoadAccepted.empty() ) {
 
-                if( MoverParameters->EnginePowerSource.SourceType == CurrentCollector ) {
+                if( ( MoverParameters->EnginePowerSource.SourceType == CurrentCollector )
+                 && ( asLoadName == "pantstate" ) ) {
                     // wartość niby "pantstate" - nazwa dla formalności, ważna jest ilość
                     if( MoverParameters->Load == 1 ) {
                         MoverParameters->PantFront( true );
@@ -4537,10 +4672,12 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 */
                     if( true == pAnimations.empty() )
                     { // jeśli nie ma jeszcze tabeli animacji, można odczytać nowe ilości
-						int co = 0, ile = -1;
+                        int co = 0;
                         iAnimations = 0;
+                        int ile;
                         do
                         { // kolejne liczby to ilość animacj, -1 to znacznik końca
+                            ile = -1;
 							parser.getTokens( 1, false );
                             parser >> ile; // ilość danego typu animacji
                             if (ile >= 0)
@@ -4579,7 +4716,13 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 					// ABu: wnetrze lowpoly
 					parser.getTokens();
 					parser >> asModel;
-					std::replace(asModel.begin(), asModel.end(), '\\', '/');
+
+                    replace_slashes( asModel );
+                    if( asModel[ 0 ] == '/' ) {
+                        // filename can potentially begin with a slash, and we don't need it
+                        asModel.erase( 0, 1 );
+                    }
+
                     asModel = BaseDir + asModel; // McZapkie-200702 - dynamics maja swoje modele w dynamic/basedir
                     Global.asCurrentTexturePath = BaseDir; // biezaca sciezka do tekstur to dynamic/...
                     mdLowPolyInt = TModelsManager::GetModel(asModel, true);
@@ -4589,7 +4732,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                 // Ra 15-01: gałka nastawy hamulca
 					parser.getTokens();
 					parser >> asAnimName;
-                    smBrakeMode = mdModel->GetFromName(asAnimName);
+                    smBrakeMode = GetSubmodelFromName( mdModel, asAnimName );
                     // jeszcze wczytać kąty obrotu dla poszczególnych ustawień
                 }
 
@@ -4597,7 +4740,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                 // Ra 15-01: gałka nastawy hamulca
 					parser.getTokens();
 					parser >> asAnimName;
-                    smLoadMode = mdModel->GetFromName(asAnimName);
+                    smLoadMode = GetSubmodelFromName( mdModel, asAnimName );
                     // jeszcze wczytać kąty obrotu dla poszczególnych ustawień
                 }
 
@@ -4609,7 +4752,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     for (i = 0; i < iAnimType[ANIM_WHEELS]; ++i) // liczba osi
                     { // McZapkie-050402: wyszukiwanie kol o nazwie str*
                         asAnimName = token + std::to_string(i + 1);
-                        pAnimations[i].smAnimated = mdModel->GetFromName(asAnimName); // ustalenie submodelu
+                        pAnimations[i].smAnimated = GetSubmodelFromName( mdModel, asAnimName );
                         if (pAnimations[i].smAnimated)
                         { //++iAnimatedAxles;
                             pAnimations[i].smAnimated->WillBeAnimated(); // wyłączenie optymalizacji transformu
@@ -4672,7 +4815,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                         for (int i = 0; i < iAnimType[ANIM_PANTS]; i++)
                         { // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
                             asAnimName = token + std::to_string(i + 1);
-                            sm = mdModel->GetFromName(asAnimName);
+                            sm = GetSubmodelFromName( mdModel, asAnimName );
                             pants[i].smElement[0] = sm; // jak NULL, to nie będzie animowany
                             if (sm)
                             { // w EP09 wywalało się tu z powodu NULL
@@ -4681,27 +4824,22 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                                 // m(3)[1]=m[3][1]+0.054; //w górę o wysokość ślizgu (na razie tak)
                                 if ((mdModel->Flags() & 0x8000) == 0) // jeśli wczytano z T3D
                                     m.InitialRotate(); // może być potrzebny dodatkowy obrót, jeśli wczytano z T3D, tzn. przed wykonaniem Init()
-                                pants[i].fParamPants->vPos.z =
-                                    m[3][0]; // przesunięcie w bok (asymetria)
-                                pants[i].fParamPants->vPos.y =
-                                    m[3][1]; // przesunięcie w górę odczytane z modelu
+                                pants[i].fParamPants->vPos.z = m[3][0]; // przesunięcie w bok (asymetria)
+                                pants[i].fParamPants->vPos.y = m[3][1]; // przesunięcie w górę odczytane z modelu
                                 if ((sm = pants[i].smElement[0]->ChildGet()) != NULL)
                                 { // jeśli ma potomny, można policzyć długość (odległość potomnego od osi obrotu)
                                     m = float4x4(*sm->GetMatrix()); // wystarczyłby wskaźnik, nie trzeba kopiować
                                     // może trzeba: pobrać macierz dolnego ramienia, wyzerować przesunięcie, przemnożyć przez macierz górnego
                                     pants[i].fParamPants->fHoriz = -fabs(m[3][1]);
-                                    pants[i].fParamPants->fLenL1 =
-                                        hypot(m[3][1], m[3][2]); // po osi OX nie potrzeba
-                                    pants[i].fParamPants->fAngleL0 =
-                                        atan2(fabs(m[3][2]), fabs(m[3][1]));
+                                    pants[i].fParamPants->fLenL1 = hypot(m[3][1], m[3][2]); // po osi OX nie potrzeba
+                                    pants[i].fParamPants->fAngleL0 = atan2(fabs(m[3][2]), fabs(m[3][1]));
                                     // if (pants[i].fParamPants->fAngleL0<M_PI_2)
                                     // pants[i].fParamPants->fAngleL0+=M_PI; //gdyby w odwrotną stronę wyszło
                                     // if
                                     // ((pants[i].fParamPants->fAngleL0<0.03)||(pants[i].fParamPants->fAngleL0>0.09))
                                     // //normalnie ok. 0.05
                                     // pants[i].fParamPants->fAngleL0=pants[i].fParamPants->fAngleL;
-                                    pants[i].fParamPants->fAngleL = pants[i].fParamPants->fAngleL0; // początkowy kąt dolnego
-                                    // ramienia
+                                    pants[i].fParamPants->fAngleL = pants[i].fParamPants->fAngleL0; // początkowy kąt dolnego ramienia
                                     if ((sm = sm->ChildGet()) != NULL)
                                     { // jeśli dalej jest ślizg, można policzyć długość górnego ramienia
                                         m = float4x4(*sm->GetMatrix()); // wystarczyłby wskaźnik,
@@ -4727,12 +4865,9 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                                         float det = Det(m);
                                         if (std::fabs(det - 1.0) < 0.001) // dopuszczamy 1 promil błędu na skalowaniu ślizgu
                                         { // skalowanie jest w normie, można pobrać wymiary z modelu
-                                            pants[i].fParamPants->fHeight =
-                                                sm->MaxY(m); // przeliczenie maksimum wysokości wierzchołków względem macierzy
-                                            pants[i].fParamPants->fHeight -=
-                                                m[3][1]; // odjęcie wysokości pivota ślizgu
-                                            pants[i].fParamPants->vPos.x =
-                                                m[3][2]; // przy okazji odczytać z modelu pozycję w długości
+                                            pants[i].fParamPants->fHeight = sm->MaxY(m); // przeliczenie maksimum wysokości wierzchołków względem macierzy
+                                            pants[i].fParamPants->fHeight -= m[3][1]; // odjęcie wysokości pivota ślizgu
+                                            pants[i].fParamPants->vPos.x = m[3][2]; // przy okazji odczytać z modelu pozycję w długości
                                             // ErrorLog("Model OK: "+asModel+",
                                             // height="+pants[i].fParamPants->fHeight);
                                             // ErrorLog("Model OK: "+asModel+",
@@ -4740,8 +4875,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                                         }
                                         else
                                         { // gdy ktoś przesadził ze skalowaniem
-                                            pants[i].fParamPants->fHeight =
-                                                0.0; // niech będzie odczyt z pantfactors:
+                                            pants[i].fParamPants->fHeight = 0.0; // niech będzie odczyt z pantfactors:
                                             ErrorLog(
                                                 "Bad model: " + asModel + ", scale of " + (sm->pName) + " is " + std::to_string(100.0 * det) + "%",
                                                 logtype::model );
@@ -4749,8 +4883,11 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                                     }
                                 }
                             }
-                            else
-                                ErrorLog("Bad model: " + asFileName + " - missed submodel " + asAnimName, logtype::model); // brak ramienia
+                            else {
+                                // brak ramienia
+                                pants[ i ].fParamPants->fHeight = 0.0; // niech będzie odczyt z pantfactors:
+                                ErrorLog( "Bad model: " + asFileName + " - missed submodel " + asAnimName, logtype::model );
+                            }
                         }
                 }
 
@@ -4763,7 +4900,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 						for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
                             // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
 							asAnimName = token + std::to_string( i + 1 );
-							sm = mdModel->GetFromName( asAnimName );
+                            sm = GetSubmodelFromName( mdModel, asAnimName );
 							pants[ i ].smElement[ 1 ] = sm; // jak NULL, to nie będzie animowany
 							if( sm ) { // w EP09 wywalało się tu z powodu NULL
                                 sm->WillBeAnimated();
@@ -4792,43 +4929,49 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 				else if( token == "animpantrg1prefix:" ) {
                  // prefiks ramion górnych 1
 					parser.getTokens(); parser >> token;
-					if( pants ) {
-						for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
+                    if( pants ) {
+                        for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
                             // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
-							asAnimName = token + std::to_string( i + 1 );
-							pants[ i ].smElement[ 2 ] = mdModel->GetFromName( asAnimName );
-							pants[ i ].smElement[ 2 ]->WillBeAnimated();
-						}
+                            asAnimName = token + std::to_string( i + 1 );
+                            pants[ i ].smElement[ 2 ] = GetSubmodelFromName( mdModel, asAnimName );
+                            if( pants[ i ].smElement[ 2 ] ) {
+                                pants[ i ].smElement[ 2 ]->WillBeAnimated();
+                            }
                         }
+                    }
                 }
 
 				else if( token == "animpantrg2prefix:" ) {
                  // prefiks ramion górnych 2
-					parser.getTokens(); parser >> token;
-					if( pants ) {
-						for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
+                    parser.getTokens(); parser >> token;
+                    if( pants ) {
+                        for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
                             // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
-							asAnimName = token + std::to_string( i + 1 );
-							pants[ i ].smElement[ 3 ] = mdModel->GetFromName( asAnimName );
-							pants[ i ].smElement[ 3 ]->WillBeAnimated();
-						}
+                            asAnimName = token + std::to_string( i + 1 );
+                            pants[ i ].smElement[ 3 ] = GetSubmodelFromName( mdModel, asAnimName );
+                            if( pants[ i ].smElement[ 3 ] ) {
+                                pants[ i ].smElement[ 3 ]->WillBeAnimated();
+                            }
                         }
+                    }
                 }
 
 				else if( token == "animpantslprefix:" ) {
                  // prefiks ślizgaczy
 					parser.getTokens(); parser >> token;
-					if( pants ) {
-						for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
+                    if( pants ) {
+                        for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
                             // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
-							asAnimName = token + std::to_string( i + 1 );
-							pants[ i ].smElement[ 4 ] = mdModel->GetFromName( asAnimName );
-							pants[ i ].smElement[ 4 ]->WillBeAnimated();
-							pants[ i ].yUpdate = std::bind( &TDynamicObject::UpdatePant, this, std::placeholders::_1 );
-							pants[ i ].fMaxDist = 300 * 300; // nie podnosić w większej odległości
-							pants[ i ].iNumber = i;
-						}
+                            asAnimName = token + std::to_string( i + 1 );
+                            pants[ i ].smElement[ 4 ] = GetSubmodelFromName( mdModel, asAnimName );
+                            if( pants[ i ].smElement[ 4 ] ) {
+                                pants[ i ].smElement[ 4 ]->WillBeAnimated();
+                                pants[ i ].yUpdate = std::bind( &TDynamicObject::UpdatePant, this, std::placeholders::_1 );
+                                pants[ i ].fMaxDist = 300 * 300; // nie podnosić w większej odległości
+                                pants[ i ].iNumber = i;
+                            }
                         }
+                    }
                 }
 
 				else if( token == "pantfactors:" ) {
@@ -4853,34 +4996,38 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     if( pants ) {
                         for( int i = 0; i < iAnimType[ ANIM_PANTS ]; ++i ) {
                             // przepisanie współczynników do pantografów (na razie nie będzie lepiej)
-                            pants[ i ].fParamPants->fAngleL = pants[ i ].fParamPants->fAngleL0; // początkowy kąt dolnego ramienia
-                            pants[ i ].fParamPants->fAngleU = pants[ i ].fParamPants->fAngleU0; // początkowy kąt
+                            auto &pantograph { *(pants[ i ].fParamPants) };
+
+                            pantograph.fAngleL = pantograph.fAngleL0; // początkowy kąt dolnego ramienia
+                            pantograph.fAngleU = pantograph.fAngleU0; // początkowy kąt
                             // pants[i].fParamPants->PantWys=1.22*sin(pants[i].fParamPants->fAngleL)+1.755*sin(pants[i].fParamPants->fAngleU);
                             // //wysokość początkowa
                             // pants[i].fParamPants->PantWys=1.176289*sin(pants[i].fParamPants->fAngleL)+1.724482197*sin(pants[i].fParamPants->fAngleU);
                             // //wysokość początkowa
-                            if( pants[ i ].fParamPants->fHeight == 0.0 ) // gdy jest nieprawdopodobna wartość (np. nie znaleziony ślizg)
+                            if( pantograph.fHeight == 0.0 ) // gdy jest nieprawdopodobna wartość (np. nie znaleziony ślizg)
                             { // gdy pomiary modelu nie udały się, odczyt podanych parametrów z MMD
-                                pants[ i ].fParamPants->vPos.x =
+                                pantograph.vPos.x =
                                     ( i & 1 ) ?
                                         pant2x :
                                         pant1x;
-                                pants[ i ].fParamPants->fHeight =
+                                pantograph.fHeight =
                                     ( i & 1 ) ?
                                         pant2h :
                                         pant1h; // wysokość ślizgu jest zapisana w MMD
                             }
-                            pants[ i ].fParamPants->PantWys =
-                                pants[ i ].fParamPants->fLenL1 * sin( pants[ i ].fParamPants->fAngleL ) +
-                                pants[ i ].fParamPants->fLenU1 * sin( pants[ i ].fParamPants->fAngleU ) +
-                                pants[ i ].fParamPants->fHeight; // wysokość początkowa
-                            // pants[i].fParamPants->vPos.y=panty-panth-pants[i].fParamPants->PantWys;
-                            // //np. 4.429-0.097=4.332=~4.335
-                            // pants[i].fParamPants->vPos.z=0; //niezerowe dla pantografów
-                            // asymetrycznych
-                            pants[ i ].fParamPants->PantTraction = pants[ i ].fParamPants->PantWys;
+                            pantograph.PantWys =
+                                pantograph.fLenL1 * sin( pantograph.fAngleL ) +
+                                pantograph.fLenU1 * sin( pantograph.fAngleU ) +
+                                pantograph.fHeight; // wysokość początkowa
+                            // pants[i].fParamPants->vPos.y=panty-panth-pants[i].fParamPants->PantWys; //np. 4.429-0.097=4.332=~4.335
+                            if( pantograph.vPos.y == 0.0 ) {
+                                // crude fallback, place the pantograph(s) atop of the vehicle-sized box
+                                pantograph.vPos.y = MoverParameters->Dim.H - pantograph.fHeight - pantograph.PantWys;
+                            }
+                            // pants[i].fParamPants->vPos.z=0; //niezerowe dla pantografów asymetrycznych
+                            pantograph.PantTraction = pantograph.PantWys;
                             // połowa szerokości ślizgu; jest w "Power: CSW="
-                            pants[ i ].fParamPants->fWidth = 0.5 * MoverParameters->EnginePowerSource.CollectorParameters.CSW;
+                            pantograph.fWidth = 0.5 * MoverParameters->EnginePowerSource.CollectorParameters.CSW;
 
                             // create sound emitters for the pantograph
                             m_pantographsounds.emplace_back();
@@ -4956,11 +5103,13 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                  // prefiks wahaczy
 					parser.getTokens(); parser >> token;
                     asAnimName = "";
-                    for (int i = 1; i <= 4; i++)
-                    { // McZapkie-050402: wyszukiwanie max 4 wahaczy o nazwie str*
-                        asAnimName = token + std::to_string(i);
-                        smWahacze[i - 1] = mdModel->GetFromName(asAnimName);
-                        smWahacze[i - 1]->WillBeAnimated();
+                    for( int i = 1; i <= 4; ++i ) {
+                        // McZapkie-050402: wyszukiwanie max 4 wahaczy o nazwie str*
+                        asAnimName = token + std::to_string( i );
+                        smWahacze[ i - 1 ] = GetSubmodelFromName( mdModel, asAnimName );
+                        if( smWahacze[ i - 1 ] ) {
+                            smWahacze[ i - 1 ]->WillBeAnimated();
+                        }
                     }
 					parser.getTokens(); parser >> token;
 					if( token == "pendulumamplitude:" ) {
@@ -4979,7 +5128,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     { // NBMX wrzesien 2003: wyszukiwanie drzwi o nazwie str*
                       // ustalenie submodelu
                         asAnimName = token + std::to_string(i + 1);
-                        pAnimations[i + j].smAnimated = mdModel->GetFromName(asAnimName);
+                        pAnimations[ i + j ].smAnimated = GetSubmodelFromName( mdModel, asAnimName );
                         if (pAnimations[i + j].smAnimated)
                         { //++iAnimatedDoors;
                             pAnimations[i + j].smAnimated->WillBeAnimated(); // wyłączenie optymalizacji transformu
@@ -5021,7 +5170,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     { // NBMX wrzesien 2003: wyszukiwanie drzwi o nazwie str*
                       // ustalenie submodelu
                         asAnimName = token + std::to_string(i + 1);
-                        pAnimations[i + j].smAnimated = mdModel->GetFromName(asAnimName);
+                        pAnimations[i + j].smAnimated = GetSubmodelFromName( mdModel, asAnimName );
                         if (pAnimations[i + j].smAnimated)
                         { //++iAnimatedDoors;
                             pAnimations[i + j].smAnimated->WillBeAnimated(); // wyłączenie optymalizacji transformu
@@ -5057,7 +5206,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     { // NBMX wrzesien 2003: wyszukiwanie drzwi o nazwie str*
                       // ustalenie submodelu
                         asAnimName = token + std::to_string( i + 1 );
-                        pAnimations[ i + j ].smAnimated = mdModel->GetFromName( asAnimName );
+                        pAnimations[ i + j ].smAnimated = GetSubmodelFromName( mdModel, asAnimName );
                         if( pAnimations[ i + j ].smAnimated ) {
                             pAnimations[ i + j ].smAnimated->WillBeAnimated(); // wyłączenie optymalizacji transformu
                             // od razu zapinamy potrzebny typ animacji
@@ -5092,6 +5241,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 				parser.getTokens(); parser >> token;
 				if( token == "wheel_clatter:" ){
 					// polozenia osi w/m srodka pojazdu
+                    double dSDist;
 					parser.getTokens( 1, false );
 					parser >> dSDist;
                     while( ( ( token = parser.getToken<std::string>() ) != "" )
@@ -5527,6 +5677,9 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     // odpalanie silnika
                     m_powertrainsounds.engine_ignition.deserialize( parser, sound_type::single );
                     m_powertrainsounds.engine_ignition.owner( this );
+                } else if (token == "shutdown:") {
+                    m_powertrainsounds.engine_shutdown.deserialize(parser, sound_type::single);
+                    m_powertrainsounds.engine_shutdown.owner(this);
                 }
                 else if( token == "engageslippery:" ) {
                     // tarcie tarcz sprzegla:
@@ -6124,17 +6277,6 @@ int TDynamicObject::RouteWish(TTrack *tr)
     return Mechanik ? Mechanik->CrossRoute(tr) : 0; // wg AI albo prosto
 };
 
-std::string TDynamicObject::TextureTest(std::string const &name)
-{ // Ra 2015-01: sprawdzenie dostępności tekstury o podanej nazwie
-	std::vector<std::string> extensions = { ".mat", ".dds", ".tga", ".bmp" };
-	for( auto const &extension : extensions ) {
-		if( true == FileExists( name + extension ) ) {
-			return name + extension;
-        }
-    }
-    return ""; // nie znaleziona
-};
-
 void TDynamicObject::DestinationSet(std::string to, std::string numer)
 { // ustawienie stacji docelowej oraz wymiennej tekstury 4, jeśli istnieje plik
     // w zasadzie, to każdy wagon mógłby mieć inną stację docelową
@@ -6148,13 +6290,20 @@ void TDynamicObject::DestinationSet(std::string to, std::string numer)
 	numer = Bezogonkow(numer);
     asDestination = to;
     to = Bezogonkow(to); // do szukania pliku obcinamy ogonki
-
+    if( true == to.empty() ) {
+        to = "nowhere";
+    }
+    // destination textures are kept in the vehicle's directory so we point the current texture path there
+    auto const currenttexturepath { Global.asCurrentTexturePath };
+    Global.asCurrentTexturePath = asBaseDir;
+    // now see if we can find any version of the texture
     std::vector<std::string> destinations = {
-        asBaseDir + numer + "@" + MoverParameters->TypeName,
-        asBaseDir + numer,
-        asBaseDir + to + "@" + MoverParameters->TypeName,
-        asBaseDir + to,
-        asBaseDir + "nowhere" };
+        numer + '@' + MoverParameters->TypeName,
+        numer,
+        to + '@' + MoverParameters->TypeName,
+        to,
+        "nowhere" + '@' + MoverParameters->TypeName,
+        "nowhere" };
 
     for( auto const &destination : destinations ) {
 
@@ -6164,6 +6313,8 @@ void TDynamicObject::DestinationSet(std::string to, std::string numer)
             break;
         }
     }
+    // whether we got anything, restore previous texture path
+    Global.asCurrentTexturePath = currenttexturepath;
 };
 
 void TDynamicObject::OverheadTrack(float o)
@@ -6235,7 +6386,7 @@ TDynamicObject::powertrain_sounds::position( glm::vec3 const Location ) {
     std::vector<sound_source *> enginesounds = {
         &inverter,
         &motor_relay, &dsbWejscie_na_bezoporow, &motor_parallel, &motor_shuntfield, &rsWentylator,
-        &engine, &engine_ignition, &engine_revving, &engine_turbo, &oil_pump, &radiator_fan, &radiator_fan_aux,
+        &engine, &engine_ignition, &engine_shutdown, &engine_revving, &engine_turbo, &oil_pump, &radiator_fan, &radiator_fan_aux,
         &transmission, &rsEngageSlippery
     };
     for( auto sound : enginesounds ) {
@@ -6266,26 +6417,28 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
 
     // engine sounds
     // ignition
-    if( engine_state_last != Vehicle.Mains ) {
-
-        if( true == Vehicle.Mains ) {
+    if (engine_state_last != Vehicle.Mains) {
+        if (Vehicle.Mains) {
            // main circuit/engine activation
            // TODO: separate engine and main circuit
+            engine_shutdown.stop();
             engine_ignition
                 .pitch( engine_ignition.m_frequencyoffset + engine_ignition.m_frequencyfactor * 1.f )
                 .gain( engine_ignition.m_amplitudeoffset + engine_ignition.m_amplitudefactor * 1.f )
                 .play( sound_flags::exclusive );
-        }
-        else {
+        } else {
             // main circuit/engine deactivation
             engine_ignition.stop();
+            engine_shutdown.pitch( engine_shutdown.m_frequencyoffset + engine_shutdown.m_frequencyfactor * 1.f )
+                .gain( engine_shutdown.m_amplitudeoffset + engine_shutdown.m_amplitudefactor * 1.f )
+                .play( sound_flags::exclusive );
         }
         engine_state_last = Vehicle.Mains;
     }
     // main engine sound
     if( true == Vehicle.Mains ) {
 
-        if( ( std::fabs( Vehicle.enrot ) > 0.01 )
+        if( ( std::abs( Vehicle.enrot ) > 0.01 )
             // McZapkie-280503: zeby dla dumb dzialal silnik na jalowych obrotach
          || ( Vehicle.EngineType == Dumb ) ) {
 
@@ -6416,11 +6569,12 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
                 std::max( goalvolume, currentvolume - changerate ) :
                 std::min( goalvolume, currentvolume + changerate ) );
 
+        engine_turbo
+            .pitch( 0.4 + engine_turbo_pitch * 0.4 )
+            .gain( volume );
+
         if( volume > 0.05 ) {
-            engine_turbo
-                .pitch( 0.4 + engine_turbo_pitch * 0.4 )
-                .gain( volume )
-                .play( sound_flags::exclusive | sound_flags::looping );
+            engine_turbo.play( sound_flags::exclusive | sound_flags::looping );
         }
         else {
             engine_turbo.stop();
@@ -6454,7 +6608,7 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
     if( ( true == Vehicle.Mains )
      && ( false == motors.empty() ) ) {
 
-        if( std::fabs( Vehicle.enrot ) > 0.01 ) {
+        if( std::abs( Vehicle.enrot ) > 0.01 ) {
 
             auto const &motor { motors.front() };
             // frequency calculation

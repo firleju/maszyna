@@ -331,12 +331,14 @@ int TSubModel::Load( cParser &parser, TModel3d *Model, /*int Pos,*/ bool dynamic
             m_material = -4;
             iFlags |= (Opacity < 1.0) ? 8 : 0x10; // zmienna tekstura 4
         }
-        else
-        { // jeśli tylko nazwa pliku, to dawać bieżącą ścieżkę do tekstur
+        else {
             Name_Material(material);
+/*
             if( material.find_first_of( "/" ) == material.npos ) {
+                // jeśli tylko nazwa pliku, to dawać bieżącą ścieżkę do tekstur
                 material.insert( 0, Global.asCurrentTexturePath );
             }
+*/
             m_material = GfxRenderer.Fetch_Material( material );
             // renderowanie w cyklu przezroczystych tylko jeśli:
             // 1. Opacity=0 (przejściowo <1, czy tam <100) oraz
@@ -1250,8 +1252,6 @@ bool TModel3d::LoadFromFile(std::string const &FileName, bool dynamic)
 		LoadFromBinFile(asBinary, dynamic);
 		asBinary = ""; // wyłączenie zapisu
 		Init();
-        // cache the file name, in case someone wants it later
-        m_filename = name + ".e3d";
     }
 	else
 	{
@@ -1262,10 +1262,10 @@ bool TModel3d::LoadFromFile(std::string const &FileName, bool dynamic)
                 // pojazdy dopiero po ustawieniu animacji
                 Init(); // generowanie siatek i zapis E3D
             }
-            // cache the file name, in case someone wants it later
-            m_filename = name + ".t3d";
         }
 	}
+    // cache the file name, in case someone wants it later
+    m_filename = name;
 	bool const result =
 		Root ? (iSubModelsCount > 0) : false; // brak pliku albo problem z wczytaniem
 	if (false == result)
@@ -1672,9 +1672,11 @@ void TSubModel::BinInit(TSubModel *s, float4x4 *m, std::vector<std::string> *t, 
         auto const materialindex = static_cast<std::size_t>( iTexture );
         if( materialindex < t->size() ) {
             m_materialname = t->at( materialindex );
+/*
             if( m_materialname.find_last_of( "/" ) == std::string::npos ) {
                 m_materialname = Global.asCurrentTexturePath + m_materialname;
             }
+*/
             m_material = GfxRenderer.Fetch_Material( m_materialname );
             if( ( iFlags & 0x30 ) == 0 ) {
                 // texture-alpha based fallback if for some reason we don't have opacity flag set yet

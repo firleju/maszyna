@@ -335,6 +335,7 @@ private:
         sound_source rsWentylator { sound_placement::engine }; // McZapkie-030302
         sound_source engine { sound_placement::engine }; // generally diesel engine
         sound_source engine_ignition { sound_placement::engine }; // moved from cab
+        sound_source engine_shutdown { sound_placement::engine };
         bool engine_state_last { false }; // helper, cached previous state of the engine
         double engine_volume { 0.0 }; // MC: pomocnicze zeby gladziej silnik buczal
         sound_source engine_revving { sound_placement::engine }; // youBy
@@ -602,11 +603,14 @@ private:
     // zapytanie do AI, po którym segmencie skrzyżowania jechać
     int RouteWish(TTrack *tr);
     void DestinationSet(std::string to, std::string numer);
-    std::string TextureTest(std::string const &name);
     void OverheadTrack(float o);
 
     double MED[9][8]; // lista zmiennych do debugowania hamulca ED
     static std::string const MED_labels[ 8 ];
+	std::ofstream MEDLogFile; // zapis parametrów hamowania
+	double MEDLogTime = 0;
+	double MEDLogInactiveTime = 0;
+	int MEDLogCount = 0;
 };
 
 
