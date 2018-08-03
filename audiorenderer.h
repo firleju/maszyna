@@ -11,7 +11,9 @@ http://mozilla.org/MPL/2.0/.
 
 #include "audio.h"
 #include "ResourceManager.h"
+#include "uitranscripts.h"
 
+class opengl_renderer;
 class sound_source;
 
 using uint32_sequence = std::vector<std::uint32_t>;
@@ -52,7 +54,8 @@ struct openal_source {
     bool is_looping { false };
     sound_properties properties;
     sync_state sync { sync_state::good };
-
+// constructors
+    openal_source() = default;
 // methods
     template <class Iterator_>
     openal_source &
@@ -62,7 +65,7 @@ struct openal_source {
         play();
     // updates state of the source
     void
-        update( double const Deltatime );
+        update( double const Deltatime, glm::vec3 const &Listenervelocity );
     // configures state of the source to match the provided set of properties
     void
         sync_with( sound_properties const &State );
@@ -89,6 +92,7 @@ private:
     float pitch_variation { 1.f }; // emitter-specific variation of the base pitch
     float sound_range { 50.f }; // cached audible range of the emitted samples
     glm::vec3 sound_distance; // cached distance between sound and the listener
+    glm::vec3 sound_velocity; // sound movement vector
     bool is_in_range { false }; // helper, indicates the source was recently within audible range
     bool is_multipart { false }; // multi-part sounds are kept alive at longer ranges
 };
@@ -97,9 +101,11 @@ private:
 
 class openal_renderer {
 
-    friend class opengl_renderer;
+    friend opengl_renderer;
 
 public:
+// constructors
+    openal_renderer() = default;
 // destructor
     ~openal_renderer();
 // methods
@@ -141,6 +147,7 @@ private:
     ALCcontext * m_context { nullptr };
     bool m_ready { false }; // renderer is initialized and functional
     glm::dvec3 m_listenerposition;
+    glm::vec3 m_listenervelocity;
 
     buffer_manager m_buffers;
     // TBD: list of sources as vector, sorted by distance, for openal implementations with limited number of active sources?
@@ -165,8 +172,11 @@ openal_source::bind( sound_source *Controller, uint32_sequence Sounds, Iterator_
     std::vector<ALuint> buffers;
     std::for_each(
         First, Last,
-        [&]( audio::buffer_handle const &buffer ) {
-            buffers.emplace_back( audio::renderer.buffer( buffer ).id ); } );
+        [&]( audio::buffer_handle const &bufferhandle ) {
+            auto const &buffer { audio::renderer.buffer( bufferhandle ) };
+            buffers.emplace_back( buffer.id );
+            if( false == buffer.caption.empty() ) {
+                ui::Transcripts.Add( buffer.caption ); } } );
 
     if( id != audio::null_resource ) {
         ::alSourceQueueBuffers( id, static_cast<ALsizei>( buffers.size() ), buffers.data() );

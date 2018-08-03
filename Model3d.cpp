@@ -17,10 +17,10 @@ Copyright (C) 2001-2004  Marcin Wozniak, Maciej Czapkiewicz and others
 
 #include "Globals.h"
 #include "Logs.h"
-#include "McZapkie/mctools.h"
-#include "usefull.h"
+#include "utilities.h"
 #include "renderer.h"
 #include "Timer.h"
+#include "simulationtime.h"
 #include "mtable.h"
 #include "sn_utils.h"
 #include "World.h"
@@ -111,22 +111,6 @@ int TSubModel::SeekFaceNormal(std::vector<unsigned int> const &Masks, int const 
 float emm1[] = { 1, 1, 1, 0 };
 float emm2[] = { 0, 0, 0, 1 };
 
-inline double readIntAsDouble(cParser &parser, int base = 255)
-{
-	int value = parser.getToken<int>(false);
-	return (static_cast<double>(value) / base);
-};
-
-template <typename ColorT> inline void readColor(cParser &parser, ColorT *color)
-{
-    double discard;
-    parser.getTokens(4, false);
-    parser >> discard >> color[0] >> color[1] >> color[2];
-    color[ 0 ] /= 255.0;
-    color[ 1 ] /= 255.0;
-    color[ 2 ] /= 255.0;
-};
-
 inline void readColor(cParser &parser, glm::vec4 &color)
 {
 	int discard;
@@ -196,41 +180,41 @@ int TSubModel::Load( cParser &parser, TModel3d *Model, /*int Pos,*/ bool dynamic
         {
             iFlags |= 0x4000; // jak animacja, to trzeba przechowywać macierz zawsze
             if (type == "seconds_jump")
-                b_Anim = b_aAnim = at_SecondsJump; // sekundy z przeskokiem
+                b_Anim = b_aAnim = TAnimType::at_SecondsJump; // sekundy z przeskokiem
             else if (type == "minutes_jump")
-                b_Anim = b_aAnim = at_MinutesJump; // minuty z przeskokiem
+                b_Anim = b_aAnim = TAnimType::at_MinutesJump; // minuty z przeskokiem
             else if (type == "hours_jump")
-                b_Anim = b_aAnim = at_HoursJump; // godziny z przeskokiem
+                b_Anim = b_aAnim = TAnimType::at_HoursJump; // godziny z przeskokiem
             else if (type == "hours24_jump")
-                b_Anim = b_aAnim = at_Hours24Jump; // godziny z przeskokiem
+                b_Anim = b_aAnim = TAnimType::at_Hours24Jump; // godziny z przeskokiem
             else if (type == "seconds")
-                b_Anim = b_aAnim = at_Seconds; // minuty płynnie
+                b_Anim = b_aAnim = TAnimType::at_Seconds; // minuty płynnie
             else if (type == "minutes")
-                b_Anim = b_aAnim = at_Minutes; // minuty płynnie
+                b_Anim = b_aAnim = TAnimType::at_Minutes; // minuty płynnie
             else if (type == "hours")
-                b_Anim = b_aAnim = at_Hours; // godziny płynnie
+                b_Anim = b_aAnim = TAnimType::at_Hours; // godziny płynnie
             else if (type == "hours24")
-                b_Anim = b_aAnim = at_Hours24; // godziny płynnie
+                b_Anim = b_aAnim = TAnimType::at_Hours24; // godziny płynnie
             else if (type == "billboard")
-                b_Anim = b_aAnim = at_Billboard; // obrót w pionie do kamery
+                b_Anim = b_aAnim = TAnimType::at_Billboard; // obrót w pionie do kamery
             else if (type == "wind")
-                b_Anim = b_aAnim = at_Wind; // ruch pod wpływem wiatru
+                b_Anim = b_aAnim = TAnimType::at_Wind; // ruch pod wpływem wiatru
             else if (type == "sky")
-                b_Anim = b_aAnim = at_Sky; // aniamacja nieba
+                b_Anim = b_aAnim = TAnimType::at_Sky; // aniamacja nieba
             else if (type == "ik")
-                b_Anim = b_aAnim = at_IK; // IK: zadający
+                b_Anim = b_aAnim = TAnimType::at_IK; // IK: zadający
             else if (type == "ik11")
-                b_Anim = b_aAnim = at_IK11; // IK: kierunkowany
+                b_Anim = b_aAnim = TAnimType::at_IK11; // IK: kierunkowany
             else if (type == "ik21")
-                b_Anim = b_aAnim = at_IK21; // IK: kierunkowany
+                b_Anim = b_aAnim = TAnimType::at_IK21; // IK: kierunkowany
             else if (type == "ik22")
-                b_Anim = b_aAnim = at_IK22; // IK: kierunkowany
+                b_Anim = b_aAnim = TAnimType::at_IK22; // IK: kierunkowany
             else if (type == "digital")
-                b_Anim = b_aAnim = at_Digital; // licznik mechaniczny
+                b_Anim = b_aAnim = TAnimType::at_Digital; // licznik mechaniczny
             else if (type == "digiclk")
-                b_Anim = b_aAnim = at_DigiClk; // zegar cyfrowy
+                b_Anim = b_aAnim = TAnimType::at_DigiClk; // zegar cyfrowy
             else
-                b_Anim = b_aAnim = at_Undefined; // nieznana forma animacji
+                b_Anim = b_aAnim = TAnimType::at_Undefined; // nieznana forma animacji
         }
     }
     if (eType < TP_ROTATOR)
@@ -285,22 +269,20 @@ int TSubModel::Load( cParser &parser, TModel3d *Model, /*int Pos,*/ bool dynamic
     else if (eType < TP_ROTATOR)
     {
         std::string discard;
-        parser.getTokens(5, false);
+        parser.getTokens(6, false);
         parser
             >> discard >> bWire
             >> discard >> fWireSize
-            >> discard;
+            >> discard >> Opacity;
         // wymagane jest 0 dla szyb, 100 idzie w nieprzezroczyste
-        Opacity = readIntAsDouble(parser, 100.0f); 
-        if (Opacity > 1.0f)
-            Opacity *= 0.01f; // w 2013 był błąd i aby go obejść, trzeba było wpisać 10000.0
-/*
-        if ((Global::iConvertModels & 1) == 0) // dla zgodności wstecz
-            Opacity = 0.0; // wszystko idzie w przezroczyste albo zależnie od tekstury
-*/
+        if( Opacity > 1.f ) {
+            Opacity = std::min( 1.f, Opacity * 0.01f );
+        }
+
         if (!parser.expectToken("map:"))
             Error("Model map parse failure!");
         std::string material = parser.getToken<std::string>();
+		std::replace(material.begin(), material.end(), '\\', '/');
         if (material == "none")
         { // rysowanie podanym kolorem
             m_material = null_handle;
@@ -331,12 +313,14 @@ int TSubModel::Load( cParser &parser, TModel3d *Model, /*int Pos,*/ bool dynamic
             m_material = -4;
             iFlags |= (Opacity < 1.0) ? 8 : 0x10; // zmienna tekstura 4
         }
-        else
-        { // jeśli tylko nazwa pliku, to dawać bieżącą ścieżkę do tekstur
+        else {
             Name_Material(material);
-            if( material.find_first_of( "/\\" ) == material.npos ) {
-                material.insert( 0, Global::asCurrentTexturePath );
+/*
+            if( material.find_first_of( "/" ) == material.npos ) {
+                // jeśli tylko nazwa pliku, to dawać bieżącą ścieżkę do tekstur
+                material.insert( 0, Global.asCurrentTexturePath );
             }
+*/
             m_material = GfxRenderer.Fetch_Material( material );
             // renderowanie w cyklu przezroczystych tylko jeśli:
             // 1. Opacity=0 (przejściowo <1, czy tam <100) oraz
@@ -375,6 +359,15 @@ int TSubModel::Load( cParser &parser, TModel3d *Model, /*int Pos,*/ bool dynamic
             glm::length( glm::vec3( glm::column( matrix, 0 ) ) ),
             glm::length( glm::vec3( glm::column( matrix, 1 ) ) ),
             glm::length( glm::vec3( glm::column( matrix, 2 ) ) ) };
+        if( ( std::abs( scale.x - 1.0f ) > 0.01 )
+         || ( std::abs( scale.y - 1.0f ) > 0.01 )
+         || ( std::abs( scale.z - 1.0f ) > 0.01 ) ) {
+            ErrorLog( "Bad model: transformation matrix for sub-model \"" + pName + "\" imposes geometry scaling (factors: " + to_string( scale ) + ")", logtype::model );
+            m_normalizenormals = (
+                ( ( std::abs( scale.x - scale.y ) < 0.01f ) && ( std::abs( scale.y - scale.z ) < 0.01f ) ) ?
+                    rescale :
+                    normalize );
+        }
     }
 	if (eType < TP_ROTATOR)
 	{ // wczytywanie wierzchołków
@@ -455,7 +448,7 @@ int TSubModel::Load( cParser &parser, TModel3d *Model, /*int Pos,*/ bool dynamic
 							--facecount; // o jeden trójkąt mniej
 							iNumVerts -= 3; // czyli o 3 wierzchołki
 							i -= 3; // wczytanie kolejnego w to miejsce
-							WriteLog("Bad model: degenerated triangle ignored in: \"" + pName + "\", vertices " + std::to_string(rawvertexcount-2) + "-" + std::to_string(rawvertexcount));
+							WriteLog("Bad model: degenerated triangle ignored in: \"" + pName + "\", vertices " + std::to_string(rawvertexcount-2) + "-" + std::to_string(rawvertexcount), logtype::model );
 						}
 						if (i > 0) {
                             // jeśli pierwszy trójkąt będzie zdegenerowany, to zostanie usunięty i nie ma co sprawdzać
@@ -467,7 +460,7 @@ int TSubModel::Load( cParser &parser, TModel3d *Model, /*int Pos,*/ bool dynamic
 								--facecount; // o jeden trójkąt mniej
 								iNumVerts -= 3; // czyli o 3 wierzchołki
 								i -= 3; // wczytanie kolejnego w to miejsce
-								WriteLog( "Bad model: too large triangle ignored in: \"" + pName + "\"" );
+								WriteLog( "Bad model: too large triangle ignored in: \"" + pName + "\"", logtype::model );
 							}
                         }
 					}
@@ -506,14 +499,14 @@ int TSubModel::Load( cParser &parser, TModel3d *Model, /*int Pos,*/ bool dynamic
                                 vertexnormal += facenormals[ adjacenvertextidx / 3 ];
                             }
                             else {
-                                ErrorLog( "Bad model: opposite normals in the same smoothing group, check sub-model \"" + pName + "\" for two-sided faces and/or scaling" );
+                                ErrorLog( "Bad model: opposite normals in the same smoothing group, check sub-model \"" + pName + "\" for two-sided faces and/or scaling", logtype::model );
                             }
                             // i szukanie od kolejnego trójkąta
 							adjacenvertextidx = SeekFaceNormal(sg, adjacenvertextidx / 3 + 1, sg[faceidx], Vertices[vertexidx].position, Vertices);
                         }
 						// Ra 15-01: należało by jeszcze uwzględnić skalowanie wprowadzane przez transformy, aby normalne po przeskalowaniu były jednostkowe
                         if( glm::length2( vertexnormal ) == 0.0f ) {
-                            WriteLog( "Bad model: zero lenght normal vector generated for sub-model \"" + pName + "\"" );
+                            WriteLog( "Bad model: zero length normal vector generated for sub-model \"" + pName + "\"", logtype::model );
                         }
                         Vertices[ vertexidx ].normal = (
                             glm::length2( vertexnormal ) > 0.0f ?
@@ -648,13 +641,14 @@ void TSubModel::InitialRotate(bool doit)
             if (fMatrix->IdentityIs())
                 iFlags &= ~0x8000; // jednak jednostkowa po obróceniu
         }
-        if (Child)
-            Child->InitialRotate(false); // potomnych nie obracamy już, tylko
-        // ewentualnie optymalizujemy
-        else if (Global::iConvertModels & 2) // optymalizacja jest opcjonalna
+        if( Child ) {
+            // potomnych nie obracamy już, tylko ewentualnie optymalizujemy
+            Child->InitialRotate( false );
+        }
+        else if (Global.iConvertModels & 2) {
+            // optymalizacja jest opcjonalna
             if ((iFlags & 0xC000) == 0x8000) // o ile nie ma animacji
-            { // jak nie ma potomnych, można wymnożyć przez transform i wyjedynkować
-                // go
+            { // jak nie ma potomnych, można wymnożyć przez transform i wyjedynkować go
                 float4x4 *mat = GetMatrix(); // transform submodelu
                 if( false == Vertices.empty() ) {
                     for( auto &vertex : Vertices ) {
@@ -675,6 +669,7 @@ void TSubModel::InitialRotate(bool doit)
                 mat->Identity(); // jedynkowanie transformu po przeliczeniu wierzchołków
                 iFlags &= ~0x8000; // transform jedynkowy
             }
+        }
     }
     else // jak jest jednostkowy i nie ma animacji
         if (doit)
@@ -719,12 +714,31 @@ void TSubModel::NextAdd(TSubModel *SubModel)
 		Next = SubModel;
 };
 
-int TSubModel::FlagsCheck()
+int TSubModel::count_siblings() {
+
+    auto siblingcount { 0 };
+    auto *sibling { Next };
+    while( sibling != nullptr ) {
+        ++siblingcount;
+        sibling = sibling->Next;
+    }
+    return siblingcount;
+}
+
+int TSubModel::count_children() {
+
+    return (
+        Child == nullptr ?
+            0 :
+            1 + Child->count_siblings() );
+}
+
+uint32_t TSubModel::FlagsCheck()
 { // analiza koniecznych zmian pomiędzy submodelami
   // samo pomijanie glBindTexture() nie poprawi wydajności
   // ale można sprawdzić, czy można w ogóle pominąć kod do tekstur (sprawdzanie
   // replaceskin)
-	int i = 0;
+	uint32_t i = 0;
 	if (Child)
 	{ // Child jest renderowany po danym submodelu
 		if (Child->m_material) // o ile ma teksturę
@@ -765,8 +779,8 @@ void TSubModel::SetRotate(float3 vNewRotateAxis, float fNewAngle)
 	f_Angle = fNewAngle;
 	if (fNewAngle != 0.0)
 	{
-		b_Anim = at_Rotate;
-		b_aAnim = at_Rotate;
+		b_Anim = TAnimType::at_Rotate;
+		b_aAnim = TAnimType::at_Rotate;
 	}
 	iAnimOwner = iInstance; // zapamiętanie czyja jest animacja
 }
@@ -776,38 +790,38 @@ void TSubModel::SetRotateXYZ(float3 vNewAngles)
   // podane kąty wokół osi
   // lokalnego układu
 	v_Angles = vNewAngles;
-	b_Anim = at_RotateXYZ;
-	b_aAnim = at_RotateXYZ;
+	b_Anim = TAnimType::at_RotateXYZ;
+	b_aAnim = TAnimType::at_RotateXYZ;
 	iAnimOwner = iInstance; // zapamiętanie czyja jest animacja
 }
 
-void TSubModel::SetRotateXYZ(vector3 vNewAngles)
+void TSubModel::SetRotateXYZ( Math3D::vector3 vNewAngles)
 { // obrócenie submodelu o
   // podane kąty wokół osi
   // lokalnego układu
 	v_Angles.x = vNewAngles.x;
 	v_Angles.y = vNewAngles.y;
 	v_Angles.z = vNewAngles.z;
-	b_Anim = at_RotateXYZ;
-	b_aAnim = at_RotateXYZ;
+	b_Anim = TAnimType::at_RotateXYZ;
+	b_aAnim = TAnimType::at_RotateXYZ;
 	iAnimOwner = iInstance; // zapamiętanie czyja jest animacja
 }
 
 void TSubModel::SetTranslate(float3 vNewTransVector)
 { // przesunięcie submodelu (np. w kabinie)
 	v_TransVector = vNewTransVector;
-	b_Anim = at_Translate;
-	b_aAnim = at_Translate;
+	b_Anim = TAnimType::at_Translate;
+	b_aAnim = TAnimType::at_Translate;
 	iAnimOwner = iInstance; // zapamiętanie czyja jest animacja
 }
 
-void TSubModel::SetTranslate(vector3 vNewTransVector)
+void TSubModel::SetTranslate( Math3D::vector3 vNewTransVector)
 { // przesunięcie submodelu (np. w kabinie)
 	v_TransVector.x = vNewTransVector.x;
 	v_TransVector.y = vNewTransVector.y;
 	v_TransVector.z = vNewTransVector.z;
-	b_Anim = at_Translate;
-	b_aAnim = at_Translate;
+	b_Anim = TAnimType::at_Translate;
+	b_aAnim = TAnimType::at_Translate;
 	iAnimOwner = iInstance; // zapamiętanie czyja jest animacja
 }
 
@@ -870,17 +884,17 @@ void TSubModel::RaAnimation(glm::mat4 &m, TAnimType a)
 { // wykonanie animacji niezależnie od renderowania
 	switch (a)
 	{ // korekcja położenia, jeśli submodel jest animowany
-	case at_Translate: // Ra: było "true"
+    case TAnimType::at_Translate: // Ra: było "true"
 		if (iAnimOwner != iInstance)
 			break; // cudza animacja
 		m = glm::translate(m, glm::vec3(v_TransVector.x, v_TransVector.y, v_TransVector.z));
 		break;
-	case at_Rotate: // Ra: było "true"
+	case TAnimType::at_Rotate: // Ra: było "true"
 		if (iAnimOwner != iInstance)
 			break; // cudza animacja
 		m = glm::rotate(m, glm::radians(f_Angle), glm::vec3(v_RotateAxis.x, v_RotateAxis.y, v_RotateAxis.z));
 		break;
-	case at_RotateXYZ:
+	case TAnimType::at_RotateXYZ:
 		if (iAnimOwner != iInstance)
 			break; // cudza animacja
 		m = glm::translate(m, glm::vec3(v_TransVector.x, v_TransVector.y, v_TransVector.z));
@@ -888,53 +902,53 @@ void TSubModel::RaAnimation(glm::mat4 &m, TAnimType a)
 		m = glm::rotate(m, glm::radians(v_Angles.y), glm::vec3(0.0f, 1.0f, 0.0f));
 		m = glm::rotate(m, glm::radians(v_Angles.z), glm::vec3(0.0f, 0.0f, 1.0f));
 		break;
-	case at_SecondsJump: // sekundy z przeskokiem
+	case TAnimType::at_SecondsJump: // sekundy z przeskokiem
 		m = glm::rotate(m, glm::radians(simulation::Time.data().wSecond * 6.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_MinutesJump: // minuty z przeskokiem
+	case TAnimType::at_MinutesJump: // minuty z przeskokiem
 		m = glm::rotate(m, glm::radians(simulation::Time.data().wMinute * 6.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_HoursJump: // godziny skokowo 12h/360°
+	case TAnimType::at_HoursJump: // godziny skokowo 12h/360°
 		m = glm::rotate(m, glm::radians(simulation::Time.data().wHour * 30.0f * 0.5f), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_Hours24Jump: // godziny skokowo 24h/360°
+	case TAnimType::at_Hours24Jump: // godziny skokowo 24h/360°
 		m = glm::rotate(m, glm::radians(simulation::Time.data().wHour * 15.0f * 0.25f), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_Seconds: // sekundy płynnie
+	case TAnimType::at_Seconds: // sekundy płynnie
 		m = glm::rotate(m, glm::radians((float)simulation::Time.second() * 6.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_Minutes: // minuty płynnie
+	case TAnimType::at_Minutes: // minuty płynnie
 		m = glm::rotate(m, glm::radians(simulation::Time.data().wMinute * 6.0f + (float)simulation::Time.second() * 0.1f), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_Hours: // godziny płynnie 12h/360°
+	case TAnimType::at_Hours: // godziny płynnie 12h/360°
 				   // glRotatef(GlobalTime->hh*30.0+GlobalTime->mm*0.5+GlobalTime->mr/120.0,0.0,1.0,0.0);
-		m = glm::rotate(m, glm::radians(2.0f * (float)Global::fTimeAngleDeg), glm::vec3(0.0f, 1.0f, 0.0f));
+		m = glm::rotate(m, glm::radians(2.0f * (float)Global.fTimeAngleDeg), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_Hours24: // godziny płynnie 24h/360°
+	case TAnimType::at_Hours24: // godziny płynnie 24h/360°
 					 // glRotatef(GlobalTime->hh*15.0+GlobalTime->mm*0.25+GlobalTime->mr/240.0,0.0,1.0,0.0);
-		m = glm::rotate(m, glm::radians((float)Global::fTimeAngleDeg), glm::vec3(0.0f, 1.0f, 0.0f));
+		m = glm::rotate(m, glm::radians((float)Global.fTimeAngleDeg), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_Billboard: // obrót w pionie do kamery
+	case TAnimType::at_Billboard: // obrót w pionie do kamery
 	{
-        matrix4x4 mat; mat.OpenGL_Matrix( OpenGLMatrices.data_array( GL_MODELVIEW ) );
+        Math3D::matrix4x4 mat; mat.OpenGL_Matrix( OpenGLMatrices.data_array( GL_MODELVIEW ) );
 		float3 gdzie = float3(mat[3][0], mat[3][1], mat[3][2]); // początek układu współrzędnych submodelu względem kamery
 		m = glm::mat4(1.0f);
 		m = glm::translate(m, glm::vec3(gdzie.x, gdzie.y, gdzie.z)); // początek układu zostaje bez zmian
 		m = glm::rotate(m, (float)atan2(gdzie.x, gdzie.y), glm::vec3(0.0f, 1.0f, 0.0f)); // jedynie obracamy w pionie o kąt
 	}
 	break;
-	case at_Wind: // ruch pod wpływem wiatru (wiatr będziemy liczyć potem...)
+	case TAnimType::at_Wind: // ruch pod wpływem wiatru (wiatr będziemy liczyć potem...)
 		m = glm::rotate(m, glm::radians(1.5f * (float)sin(M_PI * simulation::Time.second() / 6.0)), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_Sky: // animacja nieba
-		m = glm::rotate(m, glm::radians((float)Global::fLatitudeDeg), glm::vec3(0.0f, 1.0f, 0.0f)); // ustawienie osi OY na północ
-		m = glm::rotate(m, glm::radians((float)-fmod(Global::fTimeAngleDeg, 360.0)), glm::vec3(0.0f, 1.0f, 0.0f));
+	case TAnimType::at_Sky: // animacja nieba
+		m = glm::rotate(m, glm::radians((float)Global.fLatitudeDeg), glm::vec3(0.0f, 1.0f, 0.0f)); // ustawienie osi OY na północ
+		m = glm::rotate(m, glm::radians((float)-fmod(Global.fTimeAngleDeg, 360.0)), glm::vec3(0.0f, 1.0f, 0.0f));
 		break;
-	case at_IK11: // ostatni element animacji szkieletowej (podudzie, stopa)
+	case TAnimType::at_IK11: // ostatni element animacji szkieletowej (podudzie, stopa)
 		m = glm::rotate(m, glm::radians(v_Angles.z), glm::vec3(0.0f, 1.0f, 0.0f)); // obrót względem osi pionowej (azymut)
 		m = glm::rotate(m, glm::radians(v_Angles.x), glm::vec3(1.0f, 0.0f, 0.0f)); // obrót względem poziomu (deklinacja)
 		break;
-	case at_DigiClk: // animacja zegara cyfrowego
+	case TAnimType::at_DigiClk: // animacja zegara cyfrowego
 	{ // ustawienie animacji w submodelach potomnych
 		TSubModel *sm = ChildGet();
 		do
@@ -944,7 +958,7 @@ void TSubModel::RaAnimation(glm::mat4 &m, TAnimType a)
 				if ((sm->pName[0]) >= '0')
 					if ((sm->pName[0]) <= '5') // zegarek ma 6 cyfr maksymalnie
 						sm->SetRotate(float3(0, 1, 0),
-							-Global::fClockAngleDeg[(sm->pName[0]) - '0']);
+							-Global.fClockAngleDeg[(sm->pName[0]) - '0']);
 			}
 			sm = sm->NextGet();
 		} while (sm);
@@ -997,13 +1011,13 @@ TSubModel::create_geometry( std::size_t &Dataoffset, gfx::geometrybank_handle co
 
     if( m_geometry != 0 ) {
         // calculate bounding radius while we're at it
-        // NOTE: doesn't take into account transformation hierarchy TODO: implement it
-        float squaredradius { 0.f };
+        float squaredradius {};
         // if this happens to be root node it may already have non-squared radius of the largest child
         // since we're comparing squared radii, we need to square it back for correct results
         m_boundingradius *= m_boundingradius;
+        auto const submodeloffset { offset( std::numeric_limits<float>::max() ) };
         for( auto const &vertex : GfxRenderer.Vertices( m_geometry ) ) {
-            squaredradius = static_cast<float>( glm::length2( vertex.position ) );
+            squaredradius = glm::length2( submodeloffset + vertex.position );
             if( squaredradius > m_boundingradius ) {
                 m_boundingradius = squaredradius;
             }
@@ -1111,7 +1125,6 @@ TModel3d::~TModel3d() {
 	if (iFlags & 0x0200) {
         // wczytany z pliku tekstowego, submodele sprzątają same
         SafeDelete( Root );
-//        Root = nullptr;
 	}
 	else {
         // wczytano z pliku binarnego (jest właścicielem tablic)
@@ -1121,17 +1134,19 @@ TModel3d::~TModel3d() {
 
 TSubModel *TModel3d::AddToNamed(const char *Name, TSubModel *SubModel)
 {
-	TSubModel *sm = Name ? GetFromName(Name) : NULL;
+	TSubModel *sm = Name ? GetFromName(Name) : nullptr;
+    if( ( sm == nullptr )
+     && ( Name != nullptr ) && ( std::strcmp( Name, "none" ) != 0 ) ) {
+        ErrorLog( "Bad model: parent for sub-model \"" + SubModel->pName +"\" doesn't exist or is located after in the model data", logtype::model );
+    }
 	AddTo(sm, SubModel); // szukanie nadrzędnego
 	return sm; // zwracamy wskaźnik do nadrzędnego submodelu
 };
 
-void TModel3d::AddTo(TSubModel *tmp, TSubModel *SubModel)
-{ // jedyny poprawny sposób dodawania
-  // submodeli, inaczej mogą zginąć
-  // przy zapisie E3D
-	if (tmp)
-	{ // jeśli znaleziony, podłączamy mu jako potomny
+// jedyny poprawny sposób dodawania submodeli, inaczej mogą zginąć przy zapisie E3D
+void TModel3d::AddTo(TSubModel *tmp, TSubModel *SubModel) {
+	if (tmp) {
+        // jeśli znaleziony, podłączamy mu jako potomny
 		tmp->ChildAdd(SubModel);
 	}
 	else
@@ -1165,22 +1180,34 @@ TSubModel::offset( float const Geometrytestoffsetthreshold ) const {
     
     auto offset { glm::vec3 { glm::make_mat4( parentmatrix.readArray() ) * glm::vec4 { 0, 0, 0, 1 } } };
 
-    if( glm::length2( offset ) < Geometrytestoffsetthreshold ) {
-    // offset of zero generally means the submodel has optimized identity matrix
-    // for such cases we resort to an estimate from submodel geometry
-    // TODO: do proper bounding area calculation for submodel when loading mesh and grab the centre point from it here
-        if( m_geometry != null_handle ) {
-            auto const &vertices{ GfxRenderer.Vertices( m_geometry ) };
-            if( false == vertices.empty() ) {
-                // transformation matrix for the submodel can still contain rotation and/or scaling,
-                // so we pass the vertex positions through it rather than just grab them directly
-                offset = glm::vec3();
-                auto const vertexfactor { 1.f / vertices.size() };
-                auto const transformationmatrix { glm::make_mat4( parentmatrix.readArray() ) };
-                for( auto const &vertex : vertices ) {
-                    offset += glm::vec3 { transformationmatrix * glm::vec4 { vertex.position, 1 } } * vertexfactor;
-                }
+    if( glm::length( offset ) < Geometrytestoffsetthreshold ) {
+        // offset of zero generally means the submodel has optimized identity matrix
+        // for such cases we resort to an estimate from submodel geometry
+        // TODO: do proper bounding area calculation for submodel when loading mesh and grab the centre point from it here
+        auto const &vertices { (
+            m_geometry != null_handle ?
+                GfxRenderer.Vertices( m_geometry ) :
+                Vertices ) };
+        if( false == vertices.empty() ) {
+            // transformation matrix for the submodel can still contain rotation and/or scaling,
+            // so we pass the vertex positions through it rather than just grab them directly
+            offset = glm::vec3();
+            auto const vertexfactor { 1.f / vertices.size() };
+            auto const transformationmatrix { glm::make_mat4( parentmatrix.readArray() ) };
+            for( auto const &vertex : vertices ) {
+                offset += glm::vec3 { transformationmatrix * glm::vec4 { vertex.position, 1 } } * vertexfactor;
             }
+        }
+    }
+
+    if( true == TestFlag( iFlags, 0x0200 ) ) {
+        // flip coordinates for t3d file which wasn't yet initialized
+        if( ( false == Global.pWorld->InitPerformed() )
+         || ( false == Vertices.empty() ) ) {
+            // NOTE, HACK: results require flipping if the model wasn't yet initialized, so we're using crude method to detect possible cases
+            // TODO: sort out this mess, either unify offset lookups to take place before (or after) initialization,
+            // or provide way to determine on submodel level whether the initialization took place
+            offset = { -offset.x, offset.z, offset.y };
         }
     }
 
@@ -1190,12 +1217,16 @@ TSubModel::offset( float const Geometrytestoffsetthreshold ) const {
 bool TModel3d::LoadFromFile(std::string const &FileName, bool dynamic)
 {
     // wczytanie modelu z pliku
+/*
+    // NOTE: disabled, this work is now done by the model manager
     std::string name = ToLower(FileName);
     // trim extension if needed
     if( name.rfind( '.' ) != std::string::npos )
     {
         name.erase(name.rfind('.'));
     }
+*/
+    auto const name { FileName };
 
 	asBinary = name + ".e3d";
 	if (FileExists(asBinary))
@@ -1203,27 +1234,25 @@ bool TModel3d::LoadFromFile(std::string const &FileName, bool dynamic)
 		LoadFromBinFile(asBinary, dynamic);
 		asBinary = ""; // wyłączenie zapisu
 		Init();
-        // cache the file name, in case someone wants it later
-        m_filename = name + ".e3d";
     }
 	else
 	{
 		if (FileExists(name + ".t3d"))
 		{
-			LoadFromTextFile(FileName, dynamic); // wczytanie tekstowego
+			LoadFromTextFile(name + ".t3d", dynamic); // wczytanie tekstowego
             if( !dynamic ) {
                 // pojazdy dopiero po ustawieniu animacji
                 Init(); // generowanie siatek i zapis E3D
             }
-            // cache the file name, in case someone wants it later
-            m_filename = name + ".t3d";
         }
 	}
+    // cache the file name, in case someone wants it later
+    m_filename = name;
 	bool const result =
 		Root ? (iSubModelsCount > 0) : false; // brak pliku albo problem z wczytaniem
 	if (false == result)
 	{
-		ErrorLog("Failed to load 3d model \"" + FileName + "\"");
+		ErrorLog("Bad model: failed to load 3d model \"" + name + "\"");
 	}
 	return result;
 };
@@ -1275,7 +1304,7 @@ void TSubModel::serialize(std::ostream &s,
 		sn_utils::ls_int32(s, (int32_t)get_container_pos(names, pName));
 	sn_utils::ls_int32(s, (int)b_Anim);
 
-	sn_utils::ls_int32(s, iFlags);
+	sn_utils::ls_uint32(s, iFlags);
 	sn_utils::ls_int32(s, (int32_t)get_container_pos(transforms, *fMatrix));
 
 	sn_utils::ls_int32(s, iNumVerts);
@@ -1403,7 +1432,7 @@ void TSubModel::deserialize(std::istream &s)
 
 	b_Anim = (TAnimType)sn_utils::ld_int32(s);
 
-	iFlags = sn_utils::ld_int32(s);
+	iFlags = sn_utils::ld_uint32(s);
 	iMatrix = sn_utils::ld_int32(s);
 
 	iNumVerts = sn_utils::ld_int32(s);
@@ -1506,6 +1535,11 @@ void TModel3d::deserialize(std::istream &s, size_t size, bool dynamic)
                     if( submodel.eType < TP_ROTATOR ) {
                         // normal vectors debug routine
                         auto normallength = glm::length2( vertex.normal );
+                        if( ( false == submodel.m_normalizenormals )
+                         && ( std::abs( normallength - 1.0f ) > 0.01f ) ) {
+                            submodel.m_normalizenormals = TSubModel::normalize; // we don't know if uniform scaling would suffice
+                            WriteLog( "Bad model: non-unit normal vector(s) encountered during sub-model geometry deserialization", logtype::model );
+                        }
                     }
                 }
                 // remap geometry type for custom type submodels
@@ -1549,7 +1583,11 @@ void TModel3d::deserialize(std::istream &s, size_t size, bool dynamic)
 			if (Textures.size())
 				throw std::runtime_error("e3d: duplicated TEX chunk");
 			while (s.tellg() < end)
-				Textures.push_back(sn_utils::d_str(s));
+			{
+				std::string str = sn_utils::d_str(s);
+				std::replace(str.begin(), str.end(), '\\', '/');
+				Textures.push_back(str);
+			}
 		}
 		else if (type == MAKE_ID4('N', 'A', 'M', '0'))
 		{
@@ -1616,9 +1654,11 @@ void TSubModel::BinInit(TSubModel *s, float4x4 *m, std::vector<std::string> *t, 
         auto const materialindex = static_cast<std::size_t>( iTexture );
         if( materialindex < t->size() ) {
             m_materialname = t->at( materialindex );
-            if( m_materialname.find_last_of( "/\\" ) == std::string::npos ) {
-                m_materialname = Global::asCurrentTexturePath + m_materialname;
+/*
+            if( m_materialname.find_last_of( "/" ) == std::string::npos ) {
+                m_materialname = Global.asCurrentTexturePath + m_materialname;
             }
+*/
             m_material = GfxRenderer.Fetch_Material( m_materialname );
             if( ( iFlags & 0x30 ) == 0 ) {
                 // texture-alpha based fallback if for some reason we don't have opacity flag set yet
@@ -1630,7 +1670,7 @@ void TSubModel::BinInit(TSubModel *s, float4x4 *m, std::vector<std::string> *t, 
             }
         }
         else {
-            ErrorLog( "Bad model: reference to nonexistent texture index in sub-model" + ( pName.empty() ? "" : " \"" + pName + "\"" ) );
+            ErrorLog( "Bad model: reference to nonexistent texture index in sub-model" + ( pName.empty() ? "" : " \"" + pName + "\"" ), logtype::model );
             m_material = null_handle;
         }
     }
@@ -1667,16 +1707,23 @@ void TSubModel::BinInit(TSubModel *s, float4x4 *m, std::vector<std::string> *t, 
             glm::length( glm::vec3( glm::column( matrix, 0 ) ) ),
             glm::length( glm::vec3( glm::column( matrix, 1 ) ) ),
             glm::length( glm::vec3( glm::column( matrix, 2 ) ) ) };
+        if( ( std::abs( scale.x - 1.0f ) > 0.01 )
+         || ( std::abs( scale.y - 1.0f ) > 0.01 )
+         || ( std::abs( scale.z - 1.0f ) > 0.01 ) ) {
+            ErrorLog( "Bad model: transformation matrix for sub-model \"" + pName + "\" imposes geometry scaling (factors: " + to_string( scale ) + ")", logtype::model );
+            m_normalizenormals = (
+                ( ( std::abs( scale.x - scale.y ) < 0.01f ) && ( std::abs( scale.y - scale.z ) < 0.01f ) ) ?
+                    rescale :
+                    normalize );
+        }
     }
 };
 
 void TModel3d::LoadFromBinFile(std::string const &FileName, bool dynamic)
 { // wczytanie modelu z pliku binarnego
-	WriteLog("Loading binary format 3d model data from \"" + FileName + "\"...");
+    WriteLog( "Loading binary format 3d model data from \"" + FileName + "\"...", logtype::model );
 	
-	std::string fn = FileName;
-	std::replace(fn.begin(), fn.end(), '\\', '/');
-	std::ifstream file(fn, std::ios::binary);
+	std::ifstream file(FileName, std::ios::binary);
 
 	uint32_t type = sn_utils::ld_uint32(file);
 	uint32_t size = sn_utils::ld_uint32(file) - 8;
@@ -1687,14 +1734,14 @@ void TModel3d::LoadFromBinFile(std::string const &FileName, bool dynamic)
 	deserialize(file, size, dynamic);
 	file.close();
 
-	WriteLog("Finished loading 3d model data from \"" + FileName + "\"");
+    WriteLog( "Finished loading 3d model data from \"" + FileName + "\"", logtype::model );
 };
 
 void TModel3d::LoadFromTextFile(std::string const &FileName, bool dynamic)
 { // wczytanie submodelu z pliku tekstowego
-	WriteLog("Loading text format 3d model data from \"" + FileName + "\"...");
+    WriteLog( "Loading text format 3d model data from \"" + FileName + "\"...", logtype::model );
 	iFlags |= 0x0200; // wczytano z pliku tekstowego (właścicielami tablic są submodle)
-	cParser parser(FileName, cParser::buffer_FILE); // Ra: tu powinno być "models\\"...
+	cParser parser(FileName, cParser::buffer_FILE); // Ra: tu powinno być "models/"...
 	TSubModel *SubModel;
 	std::string token = parser.getToken<std::string>();
 	iNumVerts = 0; // w konstruktorze to jest
@@ -1718,7 +1765,7 @@ void TModel3d::LoadFromTextFile(std::string const &FileName, bool dynamic)
 	}
 	// Ra: od wersji 334 przechylany jest cały model, a nie tylko pierwszy submodel
 	// ale bujanie kabiny nadal używa bananów :( od 393 przywrócone, ale z dodatkowym warunkiem
-	if (Global::iConvertModels & 4)
+	if (Global.iConvertModels & 4)
 	{ // automatyczne banany czasem psuły przechylanie kabin...
 		if (dynamic && Root)
 		{
@@ -1755,7 +1802,7 @@ void TModel3d::Init()
             std::size_t dataoffset = 0;
             Root->create_geometry( dataoffset, m_geometrybank );
         }
-        if( ( Global::iConvertModels > 0 )
+        if( ( Global.iConvertModels > 0 )
          && ( false == asBinary.empty() ) ) {
             SaveToBinFile( asBinary );
             asBinary = ""; // zablokowanie powtórnego zapisu

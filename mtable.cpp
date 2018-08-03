@@ -9,27 +9,10 @@ http://mozilla.org/MPL/2.0/.
 
 #include "stdafx.h"
 #include "mtable.h"
-#include "McZapkie/mctools.h"
-
-double CompareTime(double t1h, double t1m, double t2h, double t2m) /*roznica czasu w minutach*/
-// zwraca różnicę czasu
-// jeśli pierwsza jest aktualna, a druga rozkładowa, to ujemna oznacza opóżnienie
-// na dłuższą metę trzeba uwzględnić datę, jakby opóżnienia miały przekraczać 12h (towarowych)
-{
-    double t;
-
-    if ((t2h < 0))
-        return 0;
-    else
-    {
-        t = (t2h - t1h) * 60 + t2m - t1m; // jeśli t2=00:05, a t1=23:50, to różnica wyjdzie ujemna
-        if ((t < -720)) // jeśli różnica przekracza 12h na minus
-            t = t + 1440; // to dodanie doby minut;else
-        if ((t > 720)) // jeśli przekracza 12h na plus
-            t = t - 1440; // to odjęcie doby minut
-        return t;
-    }
-}
+#include "World.h"
+#include "Globals.h"
+#include "simulationtime.h"
+#include "utilities.h"
 
 double TTrainParameters::CheckTrainLatency()
 {
@@ -66,7 +49,7 @@ bool TTrainParameters::IsStop()
         return true; // na ostatnim się zatrzymać zawsze
 }
 
-bool TTrainParameters::UpdateMTable( simulation_time const &Time, std::string const &NewName ) {
+bool TTrainParameters::UpdateMTable( scenario_time const &Time, std::string const &NewName ) {
 
     return UpdateMTable( Time.data().wHour, Time.data().wMinute, NewName );
 }
@@ -80,8 +63,7 @@ bool TTrainParameters::UpdateMTable(double hh, double mm, std::string const &New
     {
         if (NewName == NextStationName) // jeśli dojechane do następnego
         { // Ra: wywołanie może być powtarzane, jak stoi na W4
-            if (TimeTable[StationIndex + 1].km - TimeTable[StationIndex].km <
-                0) // to jest bez sensu
+            if (TimeTable[StationIndex + 1].km - TimeTable[StationIndex].km < 0) // to jest bez sensu
                 Direction = -1;
             else
                 Direction = 1; // prowizorka bo moze byc zmiana kilometrazu
@@ -89,46 +71,40 @@ bool TTrainParameters::UpdateMTable(double hh, double mm, std::string const &New
             LastStationLatency =
                 CompareTime(hh, mm, TimeTable[StationIndex].Dh, TimeTable[StationIndex].Dm);
             // inc(StationIndex); //przejście do następnej pozycji StationIndex<=StationCount
-            if (StationIndex <
-                StationCount) // Ra: "<", bo dodaje 1 przy przejściu do następnej stacji
-            { // jeśli nie ostatnia stacja
+            // Ra: "<", bo dodaje 1 przy przejściu do następnej stacji
+            if (StationIndex < StationCount) {
+                // jeśli nie ostatnia stacja
                 NextStationName = TimeTable[StationIndex + 1].StationName; // zapamiętanie nazwy
-                TTVmax = TimeTable[StationIndex + 1]
-                             .vmax; // Ra: nowa prędkość rozkładowa na kolejnym odcinku
+                // Ra: nowa prędkość rozkładowa na kolejnym odcinku
+                TTVmax = TimeTable[StationIndex + 1].vmax;
             }
-            else // gdy ostatnia stacja
-                NextStationName = ""; // nie ma następnej stacji
+            else {
+                // gdy ostatnia stacja, nie ma następnej stacji
+                NextStationName = "";
+            }
             OK = true;
         }
     }
     return OK; /*czy jest nastepna stacja*/
 }
 
-void Mtable::TTrainParameters::RewindTimeTable(std::string actualStationName)
-{
-    //actualStationName = ToLower(actualStationName); // na małe znaki
-    if (int s = actualStationName.find("PassengerStopPoint:") != std::string::npos)
-    {
-        actualStationName = ToLower(actualStationName.substr(s + 19));
+bool Mtable::TTrainParameters::RewindTimeTable(std::string actualStationName) {
+
+    if( actualStationName.compare( 0, 19, "PassengerStopPoint:" ) == 0 ) {
+        actualStationName = ToLower( actualStationName.substr( 19 ) );
     }
-    for (int i = 1; i <= StationCount; i++)
-    { // przechodzimy po całej tabelce i sprawdzamy nazwy stacji (bez pierwszej)
-        if (ToLower(TimeTable[i].StationName) == actualStationName)
-        { // nazwa stacji zgodna 
-          // więc ustawiamy na poprzednią, żeby w następnym kroku poprawnie obsłużyć
-            StationIndex = i - 1;
-            if (StationIndex <
-                StationCount) // Ra: "<", bo dodaje 1 przy przejściu do następnej stacji
-            { // jeśli nie ostatnia stacja
-                NextStationName = TimeTable[StationIndex + 1].StationName; // zapamiętanie nazwy
-                TTVmax = TimeTable[StationIndex + 1]
-                    .vmax; // Ra: nowa prędkość rozkładowa na kolejnym odcinku
-            }
-            else // gdy ostatnia stacja
-                NextStationName = ""; // nie ma następnej stacji
-            break; // znaleźliśmy więc kończymy
+    for( auto i = 1; i <= StationCount; ++i ) {
+        // przechodzimy po całej tabelce i sprawdzamy nazwy stacji (bez pierwszej)
+        if (ToLower(TimeTable[i].StationName) == actualStationName) {
+            // nazwa stacji zgodna więc ustawiamy na poprzednią, żeby w następnym kroku poprawnie obsłużyć
+            StationIndex = i;
+            NextStationName = TimeTable[ i ].StationName;
+            TTVmax = TimeTable[ i ].vmax;
+            return true; // znaleźliśmy więc kończymy
         }
     }
+    // failed to find a match
+    return false;
 }
 
 void TTrainParameters::StationIndexInc()
@@ -182,18 +158,7 @@ void TTrainParameters::NewName(std::string const &NewTrainName)
     Relation2 = "";
     for (int i = 0; i < MaxTTableSize + 1; ++i)
     {
-        TMTableLine *t = &TimeTable[i];
-        t->km = 0;
-        t->vmax = -1;
-        t->StationName = "nowhere";
-        t->StationWare = "";
-        t->TrackNo = 1;
-        t->Ah = -1;
-        t->Am = -1;
-        t->Dh = -1;
-        t->Dm = -1;
-        t->tm = 0;
-        t->WaitTime = 0;
+        TimeTable[ i ] = TMTableLine();
     }
     TTVmax = 100; /*wykasowac*/
     BrakeRatio = 0;
@@ -227,8 +192,6 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
     std::ifstream fin;
     bool EndTable;
     double vActual;
-    int i;
-    int time; // do zwiększania czasu
 
     int ConversionError = 0;
     EndTable = false;
@@ -241,7 +204,6 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
         ConversionError = 666;
         vActual = -1;
         s = scnpath + TrainName + ".txt";
-		std::replace(s.begin(), s.end(), '\\', '/');
         // Ra 2014-09: ustalić zasady wyznaczenia pierwotnego pliku przy przesuniętych rozkładach
         // (kolejny pociąg dostaje numer +2)
         fin.open(s.c_str()); // otwieranie pliku
@@ -394,15 +356,12 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                             {
                                 if (s.find(hrsd) != std::string::npos)
                                 {
-                                    record->Ah = atoi(
-                                        s.substr(0, s.find(hrsd)).c_str()); // godzina przyjazdu
-                                    record->Am = atoi(s.substr(s.find(hrsd) + 1, s.length())
-                                                          .c_str()); // minuta przyjazdu
+                                    record->Ah = atoi( s.substr(0, s.find(hrsd)).c_str()); // godzina przyjazdu
+                                    record->Am = atoi(s.substr(s.find(hrsd) + 1, s.length()).c_str()); // minuta przyjazdu
                                 }
                                 else
                                 {
-                                    record->Ah = TimeTable[StationCount - 1]
-                                                     .Ah; // godzina z poprzedniej pozycji
+                                    record->Ah = TimeTable[StationCount - 1].Ah; // godzina z poprzedniej pozycji
                                     record->Am = atoi(s.c_str()); // bo tylko minuty podane
                                 }
                             }
@@ -447,29 +406,20 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
                             {
                                 if (s.find(hrsd) != std::string::npos)
                                 {
-                                    record->Dh =
-                                        atoi(s.substr(0, s.find(hrsd)).c_str()); // godzina odjazdu
-                                    record->Dm = atoi(s.substr(s.find(hrsd) + 1, s.length())
-                                                          .c_str()); // minuta odjazdu
+                                    record->Dh = atoi(s.substr(0, s.find(hrsd)).c_str()); // godzina odjazdu
+                                    record->Dm = atoi(s.substr(s.find(hrsd) + 1, s.length()).c_str()); // minuta odjazdu
                                 }
                                 else
                                 {
-                                    record->Dh = TimeTable[StationCount - 1]
-                                                     .Dh; // godzina z poprzedniej pozycji
+                                    record->Dh = TimeTable[StationCount - 1].Dh; // godzina z poprzedniej pozycji
                                     record->Dm = atoi(s.c_str()); // bo tylko minuty podane
                                 }
                             }
                             else
                             {
-                                record->Dh = record->Ah; // odjazd o tej samej, co przyjazd (dla
-                                                         // ostatniego też)
-                                record->Dm = record->Am; // bo są używane do wyliczenia opóźnienia
-                                                         // po dojechaniu
+                                record->Dh = record->Ah; // odjazd o tej samej, co przyjazd (dla ostatniego też)
+                                record->Dm = record->Am; // bo są używane do wyliczenia opóźnienia po dojechaniu
                             }
-                            if ((record->Ah >= 0))
-                                record->WaitTime = (int)(CompareTime(record->Ah, record->Am,
-                                                                     record->Dh, record->Dm) +
-                                                         0.1);
                             do
                             {
                                 fin >> s;
@@ -520,22 +470,24 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
         // NextStationName:=TimeTable[1].StationName;
         /*  TTVmax:=TimeTable[1].vmax;  */
     }
-    if ((iPlus != 0)) // jeżeli jest przesunięcie rozkładu
+    auto const timeoffset { static_cast<int>( Global.ScenarioTimeOffset * 60 ) + iPlus };
+    if( timeoffset != 0 ) // jeżeli jest przesunięcie rozkładu
     {
         long i_end = StationCount + 1;
-        for (i = 1; i < i_end; ++i) // bez with, bo ciężko się przenosi na C++
+        int adjustedtime; // do zwiększania czasu
+        for (auto i = 1; i < i_end; ++i) // bez with, bo ciężko się przenosi na C++
         {
             if ((TimeTable[i].Ah >= 0))
             {
-                time = iPlus + TimeTable[i].Ah * 60 + TimeTable[i].Am; // nowe minuty
-                TimeTable[i].Am = time % 60;
-                TimeTable[i].Ah = (time /*div*/ / 60) % 60;
+                adjustedtime = clamp_circular( TimeTable[i].Ah * 60 + TimeTable[i].Am + timeoffset, 24 * 60 ); // nowe minuty
+                TimeTable[i].Am = adjustedtime % 60;
+                TimeTable[i].Ah = (adjustedtime / 60) % 24;
             }
             if ((TimeTable[i].Dh >= 0))
             {
-                time = iPlus + TimeTable[i].Dh * 60 + TimeTable[i].Dm; // nowe minuty
-                TimeTable[i].Dm = time % 60;
-                TimeTable[i].Dh = (time /*div*/ / 60) % 60;
+                adjustedtime = clamp_circular( TimeTable[i].Dh * 60 + TimeTable[i].Dm + timeoffset, 24 * 60 ); // nowe minuty
+                TimeTable[i].Dm = adjustedtime % 60;
+                TimeTable[i].Dh = (adjustedtime / 60) % 24;
             }
         }
     }

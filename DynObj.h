@@ -12,8 +12,10 @@ http://mozilla.org/MPL/2.0/.
 #include <string>
 #include <functional>
 
+#include "Classes.h"
+#include "material.h"
+#include "MOVER.h"
 #include "TrkFoll.h"
-// McZapkie:
 #include "Button.h"
 #include "AirCoupler.h"
 #include "Texture.h"
@@ -22,7 +24,6 @@ http://mozilla.org/MPL/2.0/.
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
-int const ANIM_TYPES = 7; // Ra: ilość typów animacji
 int const ANIM_WHEELS = 0; // koła
 int const ANIM_DOORS = 1; // drzwi
 int const ANIM_LEVERS = 2; // elementy obracane (wycieraczki, koła skrętne, przestawiacze, klocki ham.)
@@ -30,6 +31,9 @@ int const ANIM_BUFFERS = 3; // elementy przesuwane (zderzaki)
 int const ANIM_BOOGIES = 4; // wózki (są skręcane w dwóch osiach)
 int const ANIM_PANTS = 5; // pantografy
 int const ANIM_STEAMS = 6; // napęd parowozu
+int const ANIM_DOORSTEPS = 7;
+int const ANIM_MIRRORS = 8;
+int const ANIM_TYPES = 9; // Ra: ilość typów animacji
 
 class TAnim;
 //typedef void(__closure *TUpdate)(TAnim *pAnim); // typ funkcji aktualizującej położenie submodeli
@@ -102,7 +106,14 @@ class TAnimPant
 class TAnim
 { // klasa animowanej części pojazdu (koła, drzwi, pantografy, burty, napęd parowozu, siłowniki
     // itd.)
-  public:
+public:
+// constructor
+    TAnim() = default;
+// destructor
+    ~TAnim();
+// methods
+    int TypeSet( int i, int fl = 0 ); // ustawienie typu
+// members
     union
     {
         TSubModel *smAnimated; // animowany submodel (jeśli tylko jeden, np. oś)
@@ -124,16 +135,15 @@ class TAnim
         int *iIntBase; // jakiś int w fizyce
     };
     // void _fastcall Update(); //wskaźnik do funkcji aktualizacji animacji
-    int iFlags; // flagi animacji
+    int iFlags{ 0 }; // flagi animacji
     float fMaxDist; // do jakiej odległości wykonywana jest animacja
     float fSpeed; // parametr szybkości animacji
     int iNumber; // numer kolejny obiektu
-  public:
-    TAnim();
-    ~TAnim();
+
     TUpdate yUpdate; // metoda TDynamicObject aktualizująca animację
-    int TypeSet(int i, int fl = 0); // ustawienie typu
+/*
     void Parovoz(); // wykonanie obliczeń animacji
+*/
 };
 
 //---------------------------------------------------------------------------
@@ -148,7 +158,7 @@ struct material_data {
 
 class TDynamicObject { // klasa pojazdu
 
-    friend class opengl_renderer;
+    friend opengl_renderer;
 
 public:
     static bool bDynamicRemove; // moved from ground
@@ -193,13 +203,16 @@ public:
         TSubModel *compartment;
         TSubModel *load;
         float level;
-        section_light( TSubModel *Compartment, TSubModel *Load, float const Level ) :
-                      compartment(Compartment),      load(Load),      level(Level)
-        {}
     };
     std::vector<section_light> SectionLightLevels; // table of light levels for specific compartments of associated 3d model
     bool SectionLightsActive { false }; // flag indicating whether section lights were set.
     float fShade; // zacienienie: 0:normalnie, -1:w ciemności, +1:dodatkowe światło (brak koloru?)
+    struct section_visibility {
+        TSubModel *submodel;
+        bool visible;
+        int visible_chunks;
+    };
+    std::vector<section_visibility> SectionLoadVisibility; // visibility of specific sections of the load 3d model
 
 private:
     // zmienne i metody do animacji submodeli; Ra: sprzatam animacje w pojeździe
@@ -211,16 +224,15 @@ public:
         *Material() const {
             return &m_materialdata; }
     // tymczasowo udostępnione do wyszukiwania drutu
-    int iAnimType[ ANIM_TYPES ]; // 0-osie,1-drzwi,2-obracane,3-zderzaki,4-wózki,5-pantografy,6-tłoki
+    std::array<int, ANIM_TYPES> iAnimType{ 0 }; // 0-osie,1-drzwi,2-obracane,3-zderzaki,4-wózki,5-pantografy,6-tłoki
 private:
     int iAnimations; // liczba obiektów animujących
-/*
-    TAnim *pAnimations; // obiekty animujące (zawierają wskaźnik do funkcji wykonującej animację)
-*/
     std::vector<TAnim> pAnimations;
     TSubModel ** pAnimated; // lista animowanych submodeli (może być ich więcej niż obiektów animujących)
     double dWheelAngle[3]; // kąty obrotu kół: 0=przednie toczne, 1=napędzające i wiązary, 2=tylne toczne
+/*
     void UpdateNone(TAnim *pAnim){}; // animacja pusta (funkcje ustawiania submodeli, gdy blisko kamery)
+*/
     void UpdateAxle(TAnim *pAnim); // animacja osi
     void UpdateBoogie(TAnim *pAnim); // animacja wózka
     void UpdateDoorTranslate(TAnim *pAnim); // animacja drzwi - przesuw
@@ -228,10 +240,15 @@ private:
     void UpdateDoorFold(TAnim *pAnim); // animacja drzwi - składanie
 	void UpdateDoorPlug(TAnim *pAnim);      // animacja drzwi - odskokowo-przesuwne
 	void UpdatePant(TAnim *pAnim); // animacja pantografu
+    void UpdatePlatformTranslate(TAnim *pAnim); // doorstep animation, shift
+    void UpdatePlatformRotate(TAnim *pAnim); // doorstep animation, rotate
+    void UpdateMirror(TAnim *pAnim); // mirror animation
+/*
     void UpdateLeverDouble(TAnim *pAnim); // animacja gałki zależna od double
     void UpdateLeverFloat(TAnim *pAnim); // animacja gałki zależna od float
     void UpdateLeverInt(TAnim *pAnim); // animacja gałki zależna od int (wartość)
     void UpdateLeverEnum(TAnim *pAnim); // animacja gałki zależna od int (lista kątów)
+*/
     void toggle_lights(); // switch light levels for registered interior sections
   private: // Ra: ciąg dalszy animacji, dopiero do ogarnięcia
     // ABuWozki 060504
@@ -251,8 +268,14 @@ private:
   public:
     TAnim *pants; // indeks obiektu animującego dla pantografu 0
     double NoVoltTime; // czas od utraty zasilania
+    float DoorDelayL{ 0.f }; // left side door closing delay timer
+    float DoorDelayR{ 0.f }; // right side door closing delay timer
     double dDoorMoveL; // NBMX
     double dDoorMoveR; // NBMX
+    double dDoorstepMoveL{ 0.0 };
+    double dDoorstepMoveR{ 0.0 };
+    double dMirrorMoveL{ 0.0 };
+    double dMirrorMoveR{ 0.0 };
     TSubModel *smBrakeSet; // nastawa hamulca (wajcha)
     TSubModel *smLoadSet; // nastawa ładunku (wajcha)
     TSubModel *smWiper; // wycieraczka (poniekąd też wajcha)
@@ -260,14 +283,24 @@ private:
 
 private:
 // types
+    struct exchange_data {
+        float unload_count { 0.f }; // amount to unload
+        float load_count { 0.f }; // amount to load
+        float speed_factor { 1.f }; // operation speed modifier
+        float time { 0.f }; // time spent on the operation
+    };
+
     struct coupler_sounds {
         sound_source dsbCouplerAttach { sound_placement::external }; // moved from cab
         sound_source dsbCouplerDetach { sound_placement::external }; // moved from cab
         sound_source dsbCouplerStretch { sound_placement::external }; // moved from cab
+        sound_source dsbCouplerStretch_loud { sound_placement::external };
         sound_source dsbBufferClamp { sound_placement::external }; // moved from cab
+        sound_source dsbBufferClamp_loud { sound_placement::external };
     };
 
     struct pantograph_sounds {
+        // TODO: split pantograph sound into one for contact of arm with the wire, and electric arc sound
         sound_source sPantUp { sound_placement::external };
         sound_source sPantDown { sound_placement::external };
     };
@@ -275,6 +308,13 @@ private:
     struct door_sounds {
         sound_source rsDoorOpen { sound_placement::general, 25.f }; // Ra: przeniesione z kabiny
         sound_source rsDoorClose { sound_placement::general, 25.f };
+        sound_source step_open { sound_placement::general, 25.f };
+        sound_source step_close { sound_placement::general, 25.f };
+    };
+
+    struct exchange_sounds {
+        sound_source loading { sound_placement::general };
+        sound_source unloading { sound_placement::general };
     };
 
     struct axle_sounds {
@@ -284,21 +324,28 @@ private:
     };
 
     struct powertrain_sounds {
-        sound_source motor { sound_placement::external }; // generally traction motor
+        sound_source inverter { sound_placement::engine };
+        std::vector<sound_source> motors; // generally traction motor(s)
         double motor_volume { 0.0 }; // MC: pomocnicze zeby gladziej silnik buczal
         float motor_momentum { 0.f }; // recent change in motor revolutions
         sound_source motor_relay { sound_placement::engine };
         sound_source dsbWejscie_na_bezoporow { sound_placement::engine }; // moved from cab
         sound_source motor_parallel { sound_placement::engine }; // moved from cab
+        sound_source motor_shuntfield { sound_placement::engine };
         sound_source rsWentylator { sound_placement::engine }; // McZapkie-030302
         sound_source engine { sound_placement::engine }; // generally diesel engine
         sound_source engine_ignition { sound_placement::engine }; // moved from cab
+        sound_source engine_shutdown { sound_placement::engine };
+        bool engine_state_last { false }; // helper, cached previous state of the engine
         double engine_volume { 0.0 }; // MC: pomocnicze zeby gladziej silnik buczal
         sound_source engine_revving { sound_placement::engine }; // youBy
         float engine_revs_last { -1.f }; // helper, cached rpm of the engine
         float engine_revs_change { 0.f }; // recent change in engine revolutions
         sound_source engine_turbo { sound_placement::engine };
         double engine_turbo_pitch { 1.0 };
+        sound_source oil_pump { sound_placement::engine };
+        sound_source radiator_fan { sound_placement::engine };
+        sound_source radiator_fan_aux { sound_placement::engine };
         sound_source transmission { sound_placement::engine };
         sound_source rsEngageSlippery { sound_placement::engine }; // moved from cab
 
@@ -311,6 +358,8 @@ private:
     void ABuBogies();
     void ABuModelRoll();
     void TurnOff();
+    // update state of load exchange operation
+    void update_exchange( double const Deltatime );
 
 // members
     TButton btCoupler1; // sprzegi
@@ -346,6 +395,8 @@ private:
     TButton btHeadSignals23;
 	TButton btMechanik1;
 	TButton btMechanik2;
+    TButton btShutters1; // cooling shutters for primary water circuit
+    TButton btShutters2; // cooling shutters for auxiliary water circuit
 
     double dRailLength { 0.0 };
     std::vector<axle_sounds> m_axlesounds;
@@ -361,8 +412,10 @@ private:
     bool bBrakeAcc { false };
     sound_source rsPisk { sound_placement::external, EU07_SOUND_BRAKINGCUTOFFRANGE }; // McZapkie-260302
     sound_source rsUnbrake { sound_placement::external }; // yB - odglos luzowania
-    float m_lastbrakepressure { -1.f }; // helper, cached level of pressure in brake cylinder
-    float m_brakepressurechange { 0.f }; // recent change of pressure in brake cylinder
+    sound_source m_brakecylinderpistonadvance { sound_placement::external };
+    sound_source m_brakecylinderpistonrecede { sound_placement::external };
+    float m_lastbrakepressure { -1.f }; // helper, cached level of pressure in the brake cylinder
+    float m_brakepressurechange { 0.f }; // recent change of pressure in the brake cylinder
     sound_source sReleaser { sound_placement::external };
     sound_source rsSlippery { sound_placement::external, EU07_SOUND_BRAKINGCUTOFFRANGE }; // moved from cab
     sound_source sSand { sound_placement::external };
@@ -373,10 +426,14 @@ private:
     sound_source sDepartureSignal { sound_placement::general };
     sound_source sHorn1 { sound_placement::external, 5 * EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
     sound_source sHorn2 { sound_placement::external, 5 * EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
-    sound_source rsOuterNoise { sound_placement::external, EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
+    sound_source sHorn3 { sound_placement::external, 5 * EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
+    std::vector<sound_source> m_bogiesounds; // TBD, TODO: wrapper for all bogie-related sounds (noise, brakes, squeal etc)
     sound_source m_wheelflat { sound_placement::external, EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
     sound_source rscurve { sound_placement::external, EU07_SOUND_RUNNINGNOISECUTOFFRANGE }; // youBy
     sound_source rsDerailment { sound_placement::external, 250.f }; // McZapkie-051202
+
+    exchange_data m_exchange; // state of active load exchange procedure, if any
+    exchange_sounds m_exchangesounds; // sounds associated with the load exchange
 
     Math3D::vector3 modelShake;
 
@@ -451,14 +508,20 @@ private:
 
     TDynamicObject();
     ~TDynamicObject();
-    double Init( // zwraca długość pojazdu albo 0, jeśli błąd
+    // zwraca długość pojazdu albo 0, jeśli błąd
+    double Init(
         std::string Name, std::string BaseDir, std::string asReplacableSkin, std::string Type_Name,
         TTrack *Track, double fDist, std::string DriverType, double fVel, std::string TrainName,
         float Load, std::string LoadType, bool Reversed, std::string);
     void create_controller( std::string const Type, bool const Trainset );
     void AttachPrev(TDynamicObject *Object, int iType = 1);
     bool UpdateForce(double dt, double dt1, bool FullVer);
+    // initiates load change by specified amounts, with a platform on specified side
+    void LoadExchange( int const Disembark, int const Embark, int const Platform );
     void LoadUpdate();
+    void update_load_sections();
+    void update_load_visibility();
+    void shuffle_load_sections();
     bool Update(double dt, double dt1);
     bool FastUpdate(double dt);
     void Move(double fDistance);
@@ -486,7 +549,7 @@ private:
         return mMatrix.readArray(); };
     inline double * Matrix() {
         return mMatrix.getArray(); };
-    inline double GetVelocity() {
+    inline double GetVelocity() const {
         return MoverParameters->Vel; };
     inline double GetLength() const {
         return MoverParameters->Dim.L; };
@@ -503,12 +566,12 @@ private:
     inline double ABuGetDirection() const { // ABu.
         return (Axle1.GetTrack() == MyTrack ? Axle1.GetDirection() : Axle0.GetDirection()); };
     // zwraca kierunek pojazdu na torze z aktywną osą
-    inline double RaDirectionGet() {
+    inline double RaDirectionGet() const {
         return iAxleFirst ?
             Axle1.GetDirection() :
             Axle0.GetDirection(); };
     // zwraca przesunięcie wózka względem Point1 toru z aktywną osią
-    inline double RaTranslationGet() {
+    inline double RaTranslationGet() const {
         return iAxleFirst ?
             Axle1.GetTranslation() :
             Axle0.GetTranslation(); };
@@ -529,7 +592,7 @@ private:
     float GetEPP(); // wyliczanie sredniego cisnienia w PG
     int DirectionSet(int d); // ustawienie kierunku w składzie
     // odczyt kierunku w składzie
-    int DirectionGet() {
+    int DirectionGet() const {
         return iDirection + iDirection - 1; };
     int DettachStatus(int dir);
     int Dettach(int dir);
@@ -540,10 +603,14 @@ private:
     // zapytanie do AI, po którym segmencie skrzyżowania jechać
     int RouteWish(TTrack *tr);
     void DestinationSet(std::string to, std::string numer);
-    std::string TextureTest(std::string const &name);
     void OverheadTrack(float o);
+
     double MED[9][8]; // lista zmiennych do debugowania hamulca ED
     static std::string const MED_labels[ 8 ];
+	std::ofstream MEDLogFile; // zapis parametrów hamowania
+	double MEDLogTime = 0;
+	double MEDLogInactiveTime = 0;
+	int MEDLogCount = 0;
 };
 
 
@@ -560,6 +627,11 @@ public:
     // legacy method, sends list of vehicles over network
     void
         DynamicList( bool const Onlycontrolled = false ) const;
+
+private:
+    // maintenance; removes from tracks consists with vehicles marked as disabled
+    bool
+        erase_disabled();
 };
 
 //---------------------------------------------------------------------------

@@ -12,7 +12,6 @@ http://mozilla.org/MPL/2.0/.
 #include <istream>
 #include "winheaders.h"
 #include <string>
-#include "GL/glew.h"
 #include "ResourceManager.h"
 
 struct opengl_texture {
@@ -21,6 +20,8 @@ struct opengl_texture {
 	static DDPIXELFORMAT deserialize_ddpf(std::istream&);
 	static DDSCAPS2 deserialize_ddscaps(std::istream&);
 
+// constructors
+    opengl_texture() = default;
 // methods
     void
         load();
@@ -30,7 +31,7 @@ struct opengl_texture {
         create();
     // releases resources allocated on the opengl end, storing local copy if requested
     void
-        release( bool const Backup = true );
+        release();
     inline
     int
         width() const {
@@ -56,14 +57,15 @@ private:
     void load_TGA();
     void set_filtering() const;
     void downsize( GLuint const Format );
+    void flip_vertical();
 
 // members
-    std::vector<char> data; // texture data
+    std::vector<char> data; // texture data (stored GL-style, bottom-left origin)
     resource_state data_state{ resource_state::none }; // current state of texture data
     int data_width{ 0 },
         data_height{ 0 },
         data_mapcount{ 0 };
-    GLuint data_format{ 0 },
+    GLint data_format{ 0 },
         data_components{ 0 };
 /*
     std::atomic<bool> is_loaded{ false }; // indicates the texture data was loaded and can be processed
@@ -120,7 +122,7 @@ private:
     texture_handle
         find_in_databank( std::string const &Texturename ) const;
     // checks whether specified file exists. returns name of the located file, or empty string.
-    std::string
+    std::pair<std::string, std::string>
         find_on_disk( std::string const &Texturename ) const;
     void
         delete_textures();

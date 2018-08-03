@@ -1,11 +1,12 @@
 #include "stdafx.h"
 #include "PyInt.h"
+
+#include "Globals.h"
+#include "parser.h"
 #include "renderer.h"
+#include "Model3d.h"
 #include "Train.h"
 #include "Logs.h"
-//#include <process.h>
-//#include <windows.h>
-//#include <stdlib.h>
 
 TPythonInterpreter *TPythonInterpreter::_instance = NULL;
 
@@ -456,6 +457,7 @@ void TPythonScreens::init(cParser &parser, TModel3d *model, std::string const &n
         WriteLog( "Python Screen: null renderer for " + pyClassName + " - Ignoring screen" );
         return; // nie mozna utworzyc obiektu Pythonowego
     }
+    m_updaterate = Global.PythonScreenUpdateRate;
     TPythonScreenRenderer *renderer = new TPythonScreenRenderer(textureId, pyRenderer);
     _screens.push_back(renderer);
     WriteLog( "Created python screen " + pyClassName + " on submodel " + subModelName + " (" + std::to_string(textureId) + ")" );
@@ -479,16 +481,11 @@ void TPythonScreens::update()
 void TPythonScreens::setLookupPath(std::string const &path)
 {
 	_lookupPath = path;
-	std::replace(_lookupPath.begin(), _lookupPath.end(), '\\', '/');
 }
 
 TPythonScreens::TPythonScreens()
 {
     TPythonInterpreter::getInstance()->loadClassFile("", "abstractscreenrenderer");
-    _terminationFlag = false;
-    _renderReadyFlag = false;
-    _cleanupReadyFlag = false;
-    _thread = NULL;
 }
 
 TPythonScreens::~TPythonScreens()
@@ -512,6 +509,7 @@ void TPythonScreens::run()
 {
     while (1)
     {
+        m_updatestopwatch.start();
         if (_terminationFlag)
         {
             return;
@@ -535,12 +533,17 @@ void TPythonScreens::run()
             return;
         }
         _renderReadyFlag = true;
+        m_updatestopwatch.stop();
         while (!_cleanupReadyFlag && !_terminationFlag)
         {
+            auto const sleeptime {
+                std::max(
+                    100,
+                    m_updaterate - static_cast<int>( m_updatestopwatch.average() ) ) };
 #ifdef _WIN32
-            Sleep(100);
+            Sleep( sleeptime );
 #elif __linux__
-			usleep(100*1000);
+			usleep( sleeptime * 1000 );
 #endif
         }
         if (_terminationFlag)
@@ -553,7 +556,7 @@ void TPythonScreens::run()
 
 void TPythonScreens::finish()
 {
-    _thread = NULL;
+    // nothing to do here, proper clean up takes place afterwards
 }
 
 void ScreenRendererThread(TPythonScreens* renderer)

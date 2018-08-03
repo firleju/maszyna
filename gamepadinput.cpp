@@ -11,7 +11,7 @@ http://mozilla.org/MPL/2.0/.
 #include "gamepadinput.h"
 #include "Logs.h"
 #include "Timer.h"
-#include "usefull.h"
+#include "utilities.h"
 
 glm::vec2 circle_to_square( glm::vec2 const &Point, int const Roundness = 0 ) {
 
@@ -198,8 +198,8 @@ gamepad_input::process_axes( glm::vec2 Leftstick, glm::vec2 const &Rightstick, g
         double const turny = -Rightstick.y * 10.0 * deltatime;
         m_relay.post(
             user_command::viewturn,
-            reinterpret_cast<std::uint64_t const &>( turnx ),
-            reinterpret_cast<std::uint64_t const &>( turny ),
+            turnx,
+            turny,
             GLFW_PRESS,
             // as we haven't yet implemented either item id system or multiplayer, the 'local' controlled vehicle and entity have temporary ids of 0
             // TODO: pass correct entity id once the missing systems are in place
@@ -211,12 +211,10 @@ gamepad_input::process_axes( glm::vec2 Leftstick, glm::vec2 const &Rightstick, g
 
         if( (   Leftstick.x != 0.0 ||   Leftstick.y != 0.0 )
          || ( m_leftstick.x != 0.0 || m_leftstick.y != 0.0 ) ) {
-            double const movex = static_cast<double>( Leftstick.x );
-            double const movez = static_cast<double>( Leftstick.y );
             m_relay.post(
-                user_command::movevector,
-                reinterpret_cast<std::uint64_t const &>( movex ),
-                reinterpret_cast<std::uint64_t const &>( movez ),
+                user_command::movehorizontal,
+                Leftstick.x,
+                Leftstick.y,
                 GLFW_PRESS,
                 0 );
         }
@@ -229,42 +227,6 @@ gamepad_input::process_axes( glm::vec2 Leftstick, glm::vec2 const &Rightstick, g
     m_rightstick = Rightstick;
     m_leftstick = Leftstick;
     m_triggers = Triggers;
-}
-
-void
-gamepad_input::process_axis( float const Value, float const Previousvalue, float const Multiplier, user_command Command, std::uint16_t const Recipient ) {
-
-    process_axis( Value, Previousvalue, Multiplier, Command, Command, Recipient );
-}
-
-void
-gamepad_input::process_axis( float const Value, float const Previousvalue, float const Multiplier, user_command Command1, user_command Command2, std::uint16_t const Recipient ) {
-
-    user_command command{ Command1 };
-    if( Value * Multiplier > 0.9 ) {
-        command = Command2;
-    }
-
-    if( Value * Multiplier > 0.0f ) {
-
-        m_relay.post(
-                command,
-                0, 0,
-                GLFW_PRESS,
-                Recipient
-                );
-    }
-    else {
-        // if we had movement before but not now, report this as 'button' release
-        if( Previousvalue != 0.0f ) {
-            m_relay.post(
-                command, // doesn't matter which movement 'mode' we report
-                0, 0,
-                GLFW_RELEASE,
-                0
-                );
-        }
-    }
 }
 
 void

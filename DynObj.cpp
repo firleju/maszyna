@@ -16,6 +16,7 @@ http://mozilla.org/MPL/2.0/.
 #include "DynObj.h"
 
 #include "simulation.h"
+#include "World.h"
 #include "Train.h"
 #include "Globals.h"
 #include "Timer.h"
@@ -24,6 +25,8 @@ http://mozilla.org/MPL/2.0/.
 #include "Traction.h"
 #include "sound.h"
 #include "MdlMngr.h"
+#include "renderer.h"
+#include "uitranscripts.h"
 
 // Ra: taki zapis funkcjonuje lepiej, ale może nie jest optymalny
 #define vWorldFront Math3D::vector3(0, 0, 1)
@@ -39,10 +42,32 @@ std::string const TDynamicObject::MED_labels[] = {
 
 bool TDynamicObject::bDynamicRemove { false };
 
+// helper, locates submodel with specified name in specified 3d model; returns: pointer to the submodel, or null
+TSubModel *
+GetSubmodelFromName( TModel3d * const Model, std::string const Name ) {
+
+    return (
+        Model ?
+            Model->GetFromName( Name ) :
+            nullptr );
+}
+
+// Ra 2015-01: sprawdzenie dostępności tekstury o podanej nazwie
+std::string
+TextureTest( std::string const &Name ) {
+    
+    auto const lookup {
+        FileExists(
+            { Global.asCurrentTexturePath + Name, Name, szTexturePath + Name },
+            { ".mat", ".dds", ".tga", ".bmp" } ) };
+
+    return ( lookup.first + lookup.second );
+}
+
 //---------------------------------------------------------------------------
 void TAnimPant::AKP_4E()
 { // ustawienie wymiarów dla pantografu AKP-4E
-    vPos = vector3(0, 0, 0); // przypisanie domyśnych współczynników do pantografów
+    vPos = Math3D::vector3(0, 0, 0); // przypisanie domyśnych współczynników do pantografów
     fLenL1 = 1.22; // 1.176289 w modelach
     fLenU1 = 1.755; // 1.724482197 w modelach
     fHoriz = 0.535; // 0.54555075 przesunięcie ślizgu w długości pojazdu względem
@@ -69,8 +94,7 @@ void TAnimPant::AKP_4E()
 };
 //---------------------------------------------------------------------------
 int TAnim::TypeSet(int i, int fl)
-{ // ustawienie typu animacji i zależnej od
-    // niego ilości animowanych submodeli
+{ // ustawienie typu animacji i zależnej od niego ilości animowanych submodeli
     fMaxDist = -1.0; // normalnie nie pokazywać
     switch (i)
     { // maska 0x000F: ile używa wskaźników na submodele (0 gdy jeden,
@@ -103,16 +127,19 @@ int TAnim::TypeSet(int i, int fl)
     case 6:
         iFlags = 0x068;
         break; // 6-tłok i rozrząd - 8 submodeli
+    case 7:
+        iFlags = 0x070;
+        break; // doorstep
+    case 8:
+        iFlags = 0x080;
+        break; // mirror
     default:
         iFlags = 0;
     }
     yUpdate = nullptr;
     return iFlags & 15; // ile wskaźników rezerwować dla danego typu animacji
 };
-TAnim::TAnim()
-{ // potrzebne to w ogóle?
-    iFlags = -1; // nieznany typ - destruktor nic nie usuwa
-};
+
 TAnim::~TAnim()
 { // usuwanie animacji
     switch (iFlags & 0xF0)
@@ -123,13 +150,15 @@ TAnim::~TAnim()
     case 0x50: // 5-pantograf
         delete fParamPants;
         break;
-    case 0x60: // 6-tłok i rozrząd
+    default:
         break;
     }
 };
+/*
 void TAnim::Parovoz(){
     // animowanie tłoka i rozrządu parowozu
 };
+*/
 //---------------------------------------------------------------------------
 TDynamicObject * TDynamicObject::FirstFind(int &coupler_nr, int cf)
 { // szukanie skrajnego połączonego pojazdu w pociagu
@@ -289,7 +318,7 @@ odwrócony
 };
 */
 
-void TDynamicObject::ABuSetModelShake(vector3 mShake)
+void TDynamicObject::ABuSetModelShake( Math3D::vector3 mShake )
 {
     modelShake = mShake;
 };
@@ -399,23 +428,18 @@ void TDynamicObject::UpdateBoogie(TAnim *pAnim)
 
 void TDynamicObject::UpdateDoorTranslate(TAnim *pAnim)
 { // animacja drzwi - przesuw
-    // WriteLog("Dla drzwi nr:", i);
-    // WriteLog("Wspolczynnik", DoorSpeedFactor[i]);
-    // Ra: te współczynniki są bez sensu, bo modyfikują wektor przesunięcia
-    // w efekcie drzwi otwierane na zewnątrz będą odlatywac dowolnie daleko :)
-    // ograniczyłem zakres ruchu funkcją max
     if (pAnim->smAnimated) {
 
         if( pAnim->iNumber & 1 ) {
             pAnim->smAnimated->SetTranslate(
-                vector3{
+                Math3D::vector3{
                     0.0,
                     0.0,
                     dDoorMoveR } );
         }
         else {
             pAnim->smAnimated->SetTranslate(
-                vector3{
+                Math3D::vector3{
                     0.0,
                     0.0,
                     dDoorMoveL } );
@@ -426,9 +450,7 @@ void TDynamicObject::UpdateDoorTranslate(TAnim *pAnim)
 void TDynamicObject::UpdateDoorRotate(TAnim *pAnim)
 { // animacja drzwi - obrót
     if (pAnim->smAnimated)
-    { // if (MoverParameters->DoorOpenMethod==2) //obrotowe
-        // albo dwójłomne (trzeba kombinowac
-        // submodelami i ShiftL=90,R=180)
+    {
         if (pAnim->iNumber & 1)
             pAnim->smAnimated->SetRotate(float3(1, 0, 0), dDoorMoveR);
         else
@@ -439,9 +461,7 @@ void TDynamicObject::UpdateDoorRotate(TAnim *pAnim)
 void TDynamicObject::UpdateDoorFold(TAnim *pAnim)
 { // animacja drzwi - obrót
     if (pAnim->smAnimated)
-    { // if (MoverParameters->DoorOpenMethod==2) //obrotowe
-        // albo dwójłomne (trzeba kombinowac
-        // submodelami i ShiftL=90,R=180)
+    {
         if (pAnim->iNumber & 1)
         {
             pAnim->smAnimated->SetRotate(float3(0, 0, 1), dDoorMoveR);
@@ -457,7 +477,6 @@ void TDynamicObject::UpdateDoorFold(TAnim *pAnim)
         else
         {
             pAnim->smAnimated->SetRotate(float3(0, 0, 1), dDoorMoveL);
-            // SubModel->SetRotate(float3(0,1,0),fValue*360.0);
             TSubModel *sm = pAnim->smAnimated->ChildGet(); // skrzydło mniejsze
             if (sm)
             {
@@ -469,6 +488,35 @@ void TDynamicObject::UpdateDoorFold(TAnim *pAnim)
         }
     }
 };
+
+void TDynamicObject::UpdateDoorPlug(TAnim *pAnim)
+{ // animacja drzwi - odskokprzesuw
+    if (pAnim->smAnimated) {
+
+        if( pAnim->iNumber & 1 ) {
+            pAnim->smAnimated->SetTranslate(
+                Math3D::vector3 {
+                    std::min(
+                        dDoorMoveR * 2,
+                        MoverParameters->DoorMaxPlugShift ),
+                    0.0,
+                    std::max(
+                        0.0,
+                        dDoorMoveR - MoverParameters->DoorMaxPlugShift * 0.5f ) } );
+        }
+        else {
+            pAnim->smAnimated->SetTranslate(
+                Math3D::vector3 {
+                    std::min(
+                        dDoorMoveL * 2,
+                        MoverParameters->DoorMaxPlugShift ),
+                    0.0,
+                    std::max(
+                        0.0,
+                        dDoorMoveL - MoverParameters->DoorMaxPlugShift * 0.5f ) } );
+        }
+    }
+}
 
 void TDynamicObject::UpdatePant(TAnim *pAnim)
 { // animacja pantografu - 4 obracane ramiona, ślizg piąty
@@ -486,37 +534,66 @@ void TDynamicObject::UpdatePant(TAnim *pAnim)
         pAnim->smElement[3]->SetRotate(float3(-1, 0, 0), c);
     if (pAnim->smElement[4])
         pAnim->smElement[4]->SetRotate(float3(-1, 0, 0), b); //ślizg
-};
+}
 
-void TDynamicObject::UpdateDoorPlug(TAnim *pAnim)
-{ // animacja drzwi - odskokprzesuw
-    if (pAnim->smAnimated) {
+// doorstep animation, shift
+void TDynamicObject::UpdatePlatformTranslate( TAnim *pAnim ) {
 
-        if( pAnim->iNumber & 1 ) {
-            pAnim->smAnimated->SetTranslate(
-                vector3 {
-                    std::min(
-                        dDoorMoveR * 2,
-                        MoverParameters->DoorMaxPlugShift ),
-                    0.0,
-                    std::max(
-                        0.0,
-                        dDoorMoveR - MoverParameters->DoorMaxPlugShift * 0.5 ) } );
-        }
-        else {
-            pAnim->smAnimated->SetTranslate(
-                vector3 {
-                    std::min(
-                        dDoorMoveL * 2,
-                        MoverParameters->DoorMaxPlugShift ),
-                    0.0,
-                    std::max(
-                        0.0,
-                        dDoorMoveL - MoverParameters->DoorMaxPlugShift * 0.5f ) } );
-        }
+    if( pAnim->smAnimated == nullptr ) { return; }
+
+    if( pAnim->iNumber & 1 ) {
+        pAnim->smAnimated->SetTranslate(
+            Math3D::vector3{
+                interpolate( 0.0, MoverParameters->PlatformMaxShift, dDoorstepMoveR ),
+                0.0,
+                0.0 } );
     }
-};
+    else {
+        pAnim->smAnimated->SetTranslate(
+            Math3D::vector3{
+                interpolate( 0.0, MoverParameters->PlatformMaxShift, dDoorstepMoveL ),
+                0.0,
+                0.0 } );
+    }
+}
 
+// doorstep animation, rotate
+void TDynamicObject::UpdatePlatformRotate( TAnim *pAnim ) {
+
+    if( pAnim->smAnimated == nullptr ) { return; }
+
+    if( pAnim->iNumber & 1 )
+        pAnim->smAnimated->SetRotate(
+            float3( 0, 1, 0 ),
+            interpolate( 0.0, MoverParameters->PlatformMaxShift, dDoorstepMoveR ) );
+    else
+        pAnim->smAnimated->SetRotate(
+            float3( 0, 1, 0 ),
+            interpolate( 0.0, MoverParameters->PlatformMaxShift, dDoorstepMoveL ) );
+}
+
+// mirror animation, rotate
+void TDynamicObject::UpdateMirror( TAnim *pAnim ) {
+
+    if( pAnim->smAnimated == nullptr ) { return; }
+
+    // only animate the mirror if it's located on the same end of the vehicle as the active cab
+    auto const isactive { (
+        MoverParameters->ActiveCab > 0 ? ( ( pAnim->iNumber >> 4 ) == side::front ? 1.0 : 0.0 ) :
+        MoverParameters->ActiveCab < 0 ? ( ( pAnim->iNumber >> 4 ) == side::rear  ? 1.0 : 0.0 ) :
+        0.0 ) };
+
+    if( pAnim->iNumber & 1 )
+        pAnim->smAnimated->SetRotate(
+            float3( 0, 1, 0 ),
+            interpolate( 0.0, MoverParameters->MirrorMaxShift, dMirrorMoveR * isactive ) );
+    else
+        pAnim->smAnimated->SetRotate(
+            float3( 0, 1, 0 ),
+            interpolate( 0.0, MoverParameters->MirrorMaxShift, dMirrorMoveL * isactive ) );
+}
+
+/*
 void TDynamicObject::UpdateLeverDouble(TAnim *pAnim)
 { // animacja gałki zależna od double
     pAnim->smAnimated->SetRotate(float3(1, 0, 0), pAnim->fSpeed * *pAnim->fDoubleBase);
@@ -536,7 +613,7 @@ void TDynamicObject::UpdateLeverEnum(TAnim *pAnim)
     // pAnim->fParam[0]; - dodać lepkość
     pAnim->smAnimated->SetRotate(float3(1, 0, 0), pAnim->fParam[*pAnim->iIntBase]);
 };
-
+*/
 // sets light levels for registered interior sections
 void
 TDynamicObject::toggle_lights() {
@@ -553,14 +630,14 @@ TDynamicObject::toggle_lights() {
         for( auto &sectionlight : SectionLightLevels ) {
 
             std::string const &compartmentname = sectionlight.compartment->pName;
-            if( ( compartmentname.find( "corridor" ) != std::string::npos )
-             || ( compartmentname.find( "korytarz" ) != std::string::npos ) ) {
+            if( ( compartmentname.find( "corridor" ) == 0 )
+             || ( compartmentname.find( "korytarz" ) == 0 ) ) {
                 // corridors are lit 100% of time
                 sectionlight.level = 0.75f;
             }
             else if(
-                ( compartmentname.find( "compartment" ) != std::string::npos )
-             || ( compartmentname.find( "przedzial" )   != std::string::npos ) ) {
+                ( compartmentname.find( "compartment" ) == 0 )
+             || ( compartmentname.find( "przedzial" )   == 0 ) ) {
                 // compartments are lit with 75% probability
                 sectionlight.level = ( Random() < 0.75 ? 0.75f : 0.15f );
             }
@@ -583,18 +660,19 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
         if (vFloor.z > 0.0)
             mdLoad->GetSMRoot()->SetTranslate(modelShake + vFloor);
 
-    if (ObjSqrDist < 160000) // gdy bliżej niż 400m
+    if (ObjSqrDist < ( 400 * 400 ) ) // gdy bliżej niż 400m
     {
-        for (int i = 0; i < iAnimations; ++i) // wykonanie kolejnych animacji
-            if (ObjSqrDist < pAnimations[i].fMaxDist)
-                if (pAnimations[i].yUpdate) // jeśli zdefiniowana funkcja
-                    pAnimations[ i ].yUpdate( &pAnimations[i] ); // aktualizacja animacji (położenia submodeli
-/*
-                    pAnimations[i].yUpdate(pAnimations +
-                                           i); // aktualizacja animacji (położenia submodeli
-*/
+        for( auto &animation : pAnimations ) {
+            // wykonanie kolejnych animacji
+            if( ( ObjSqrDist < animation.fMaxDist )
+             && ( animation.yUpdate ) ) {
+                // jeśli zdefiniowana funkcja aktualizacja animacji (położenia submodeli
+                animation.yUpdate( &animation );
+            }
+        }
+
         if( ( mdModel != nullptr )
-         && ( ObjSqrDist < 2500 ) ) {
+         && ( ObjSqrDist < ( 50 * 50 ) ) ) {
             // gdy bliżej niż 50m
             // ABu290105: rzucanie pudlem
             // te animacje wymagają bananów w modelach!
@@ -631,7 +709,7 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
             // 'render' - juz
             // nie
             // przewody powietrzne, yB: decyzja na podstawie polaczen w t3d
-            if (Global::bnewAirCouplers)
+            if (Global.bnewAirCouplers)
             {
                 SetPneumatic(false, false); // wczytywanie z t3d ulozenia wezykow
                 SetPneumatic(true, false); // i zapisywanie do zmiennej
@@ -657,11 +735,6 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                     }
                     btnOn = true;
                 }
-                // else
-                //{
-                // btCPneumatic1.TurnOff();
-                // btCPneumatic1r.TurnOff();
-                //}
 
                 if (TestFlag(MoverParameters->Couplers[1].CouplingFlag, ctrain_pneumatic))
                 {
@@ -682,11 +755,6 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                     }
                     btnOn = true;
                 }
-                // else
-                //{
-                // btCPneumatic2.TurnOff();
-                // btCPneumatic2r.TurnOff();
-                //}
 
                 // przewody zasilajace, j.w. (yB)
                 if (TestFlag(MoverParameters->Couplers[0].CouplingFlag, ctrain_scndpneumatic))
@@ -708,11 +776,6 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                     }
                     btnOn = true;
                 }
-                // else
-                //{
-                // btPneumatic1.TurnOff();
-                // btPneumatic1r.TurnOff();
-                //}
 
                 if (TestFlag(MoverParameters->Couplers[1].CouplingFlag, ctrain_scndpneumatic))
                 {
@@ -733,11 +796,6 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                     }
                     btnOn = true;
                 }
-                // else
-                //{
-                // btPneumatic2.TurnOff();
-                // btPneumatic2r.TurnOff();
-                //}
             }
             //*********************************************************************************/
             else // po staremu ABu'oewmu
@@ -752,11 +810,6 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                         btCPneumatic1r.TurnOn();
                     btnOn = true;
                 }
-                // else
-                //{
-                // btCPneumatic1.TurnOff();
-                // btCPneumatic1r.TurnOff();
-                //}
 
                 if (TestFlag(MoverParameters->Couplers[1].CouplingFlag, ctrain_pneumatic))
                 {
@@ -766,11 +819,6 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                         btCPneumatic2r.TurnOn();
                     btnOn = true;
                 }
-                // else
-                //{
-                // btCPneumatic2.TurnOff();
-                // btCPneumatic2r.TurnOff();
-                //}
 
                 // przewody powietrzne j.w., ABu: decyzja czy rysowac tylko na podstawie
                 // 'render'
@@ -783,11 +831,6 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                         btPneumatic1r.TurnOn();
                     btnOn = true;
                 }
-                // else
-                //{
-                // btPneumatic1.TurnOff();
-                // btPneumatic1r.TurnOff();
-                //}
 
                 if (TestFlag(MoverParameters->Couplers[1].CouplingFlag, ctrain_scndpneumatic))
                 {
@@ -797,11 +840,6 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                         btPneumatic2r.TurnOn();
                     btnOn = true;
                 }
-                // else
-                //{
-                // btPneumatic2.TurnOff();
-                // btPneumatic2r.TurnOff();
-                //}
             }
             //*************************************************************/// koniec
             // wezykow
@@ -811,12 +849,12 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                 double dist = MoverParameters->Couplers[i].Dist / 2.0;
                 if (smBuforLewy[i])
                     if (dist < 0)
-                        smBuforLewy[i]->SetTranslate(vector3(dist, 0, 0));
+                        smBuforLewy[i]->SetTranslate( Math3D::vector3(dist, 0, 0));
                 if (smBuforPrawy[i])
                     if (dist < 0)
-                        smBuforPrawy[i]->SetTranslate(vector3(dist, 0, 0));
+                        smBuforPrawy[i]->SetTranslate( Math3D::vector3(dist, 0, 0));
             }
-        }
+        } // vehicle within 50m
 
         // Winger 160204 - podnoszenie pantografow
 
@@ -916,19 +954,32 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
                 if (smWahacze[i])
                     smWahacze[i]->SetRotate(float3(1, 0, 0),
                                             fWahaczeAmp * cos(MoverParameters->eAngle));
+
+        // cooling shutters
+        // NOTE: shutters display _on state when they're closed, _off otherwise
+        if( ( true == MoverParameters->dizel_heat.water.config.shutters )
+         && ( false == MoverParameters->dizel_heat.zaluzje1 ) ) {
+            btShutters1.Turn( true );
+            btnOn = true;
+        }
+        if( ( true == MoverParameters->dizel_heat.water_aux.config.shutters )
+         && ( false == MoverParameters->dizel_heat.zaluzje2 ) ) {
+            btShutters2.Turn( true );
+            btnOn = true;
+        }
         
-		if (Mechanik) {
+		if( ( Mechanik != nullptr )
+         && ( Mechanik->GetAction() != TAction::actSleep ) ) {
             // rysowanie figurki mechanika
-            if( MoverParameters->ActiveCab > 0 ) {
-                btMechanik1.Turn( true );
-                btnOn = true;
-            }
-            if( MoverParameters->ActiveCab < 0 ) {
-                btMechanik2.Turn( true );
+            btMechanik1.Turn( MoverParameters->ActiveCab > 0 );
+            btMechanik2.Turn( MoverParameters->ActiveCab < 0 );
+            if( MoverParameters->ActiveCab != 0 ) {
                 btnOn = true;
             }
         }
-    }
+
+    } // vehicle within 400m
+
     if( MoverParameters->Battery || MoverParameters->ConverterFlag )
     { // sygnały czoła pociagu //Ra: wyświetlamy bez
         // ograniczeń odległości, by były widoczne z
@@ -977,6 +1028,23 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
             section.load->SetLightLevel( section.level, true );
         }
     }
+    // load chunks visibility
+    for( auto const &section : SectionLoadVisibility ) {
+        section.submodel->iVisible = section.visible;
+        if( false == section.visible ) {
+            // if the section root isn't visible we can skip meddling with its children
+            continue;
+        }
+        // if the section root is visible set the state of section chunks
+        auto *sectionchunk { section.submodel->ChildGet() };
+        auto visiblechunkcount { section.visible_chunks };
+        while( sectionchunk != nullptr ) {
+            sectionchunk->iVisible = ( visiblechunkcount > 0 );
+            --visiblechunkcount;
+            sectionchunk = sectionchunk->NextGet();
+        }
+    }
+
 }
 // ABu 29.01.05 koniec przeklejenia *************************************
 
@@ -993,19 +1061,19 @@ TDynamicObject * TDynamicObject::ABuFindNearestObject(TTrack *Track, TDynamicObj
 
         if( CouplNr == -2 ) {
             // wektor [kamera-obiekt] - poszukiwanie obiektu
-            if( LengthSquared3( Global::GetCameraPosition() - dynamic->vPosition ) < 100.0 ) {
+            if( Math3D::LengthSquared3( Global.pCameraPosition - dynamic->vPosition ) < 100.0 ) {
                 // 10 metrów
                 return dynamic;
             }
         }
         else {
             // jeśli (CouplNr) inne niz -2, szukamy sprzęgu
-            if( LengthSquared3( Global::GetCameraPosition() - dynamic->vCoulpler[ 0 ] ) < 25.0 ) {
+            if( Math3D::LengthSquared3( Global.pCameraPosition - dynamic->vCoulpler[ 0 ] ) < 25.0 ) {
                 // 5 metrów
                 CouplNr = 0;
                 return dynamic;
             }
-            if( LengthSquared3( Global::GetCameraPosition() - dynamic->vCoulpler[ 1 ] ) < 25.0 ) {
+            if( Math3D::LengthSquared3( Global.pCameraPosition - dynamic->vCoulpler[ 1 ] ) < 25.0 ) {
                 // 5 metrów
                 CouplNr = 1;
                 return dynamic;
@@ -1107,9 +1175,10 @@ void TDynamicObject::ABuCheckMyTrack()
     // do jednej tablicy. Wykonuje sie tylko raz - po to 'ABuChecked'
     TTrack *OldTrack = MyTrack;
     TTrack *NewTrack = Axle0.GetTrack();
-    if ((NewTrack != OldTrack) && OldTrack)
-    {
-        OldTrack->RemoveDynamicObject(this);
+    if( NewTrack != OldTrack ) {
+        if( OldTrack ) {
+            OldTrack->RemoveDynamicObject( this );
+        }
         NewTrack->AddDynamicObject(this);
     }
     iAxleFirst = 0; // pojazd powiązany z przednią osią - Axle0
@@ -1615,7 +1684,7 @@ void TDynamicObject::ABuScanObjects( int Direction, double Distance )
 //----------ABu: koniec skanowania pojazdow
 
 TDynamicObject::TDynamicObject() {
-    modelShake = vector3(0, 0, 0);
+    modelShake = Math3D::vector3(0, 0, 0);
     fTrackBlock = 10000.0; // brak przeszkody na drodze
     btnOn = false;
     vUp = vWorldUp;
@@ -1654,8 +1723,8 @@ TDynamicObject::TDynamicObject() {
     smBuforLewy[0] = smBuforLewy[1] = NULL;
     smBuforPrawy[0] = smBuforPrawy[1] = NULL;
     smBogie[0] = smBogie[1] = NULL;
-    bogieRot[0] = bogieRot[1] = vector3(0, 0, 0);
-    modelRot = vector3(0, 0, 0);
+    bogieRot[0] = bogieRot[1] = Math3D::vector3(0, 0, 0);
+    modelRot = Math3D::vector3(0, 0, 0);
     cp1 = cp2 = sp1 = sp2 = 0;
     iDirection = 1; // stoi w kierunku tradycyjnym (0, gdy jest odwrócony)
     iAxleFirst = 0; // numer pierwszej osi w kierunku ruchu (przełączenie
@@ -1666,13 +1735,6 @@ TDynamicObject::TDynamicObject() {
     // w MMD)
 	// ustawienie liczby modeli animowanych podczas konstruowania obiektu a nie na 0
 	// prowadzi prosto do wysypów jeśli źle zdefiniowane mmd
-    iAnimType[ANIM_WHEELS] = 0; // 0-osie (8)
-    iAnimType[ANIM_DOORS] = 0; // 1-drzwi (8)
-    iAnimType[ANIM_LEVERS] = 0; // 2-wahacze (4) - np. nogi konia
-    iAnimType[ANIM_BUFFERS] = 0; // 3-zderzaki (4)
-    iAnimType[ANIM_BOOGIES] = 0; // 4-wózki (2)
-    iAnimType[ANIM_PANTS] = 0; // 5-pantografy (2)
-    iAnimType[ANIM_STEAMS] = 0; // 6-tłoki (napęd parowozu)
     iAnimations = 0; // na razie nie ma żadnego
     pAnimated = NULL;
     fShade = 0.0; // standardowe oświetlenie na starcie
@@ -1683,7 +1745,6 @@ TDynamicObject::TDynamicObject() {
     smBrakeSet = NULL; // nastawa hamulca (wajcha)
     smLoadSet = NULL; // nastawa ładunku (wajcha)
     smWiper = NULL; // wycieraczka (poniekąd też wajcha)
-    fScanDist = 300.0; // odległość skanowania, zwiększana w trybie łączenia
     ctOwner = NULL; // na początek niczyj
     iOverheadMask = 0; // maska przydzielana przez AI pojazdom posiadającym
     // pantograf, aby wymuszały
@@ -1717,7 +1778,7 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
                      )
 { // Ustawienie początkowe pojazdu
     iDirection = (Reversed ? 0 : 1); // Ra: 0, jeśli ma być wstawiony jako obrócony tyłem
-    asBaseDir = "dynamic\\" + BaseDir + "\\"; // McZapkie-310302
+    asBaseDir = szDynamicPath + BaseDir + "/"; // McZapkie-310302
     asName = Name;
     std::string asAnimName = ""; // zmienna robocza do wyszukiwania osi i wózków
     // Ra: zmieniamy znaczenie obsady na jednoliterowe, żeby dosadzić kierownika
@@ -1751,10 +1812,11 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
     // McZapkie: TypeName musi byc nazwą CHK/MMD pojazdu
     if (!MoverParameters->LoadFIZ(asBaseDir))
     { // jak wczytanie CHK się nie uda, to błąd
-        if (ConversionError == -8)
-            ErrorLog("Missed file: " + BaseDir + "\\" + Type_Name + ".fiz");
-        Error("Cannot load dynamic object " + asName + " from:\r\n" + BaseDir + "\\" + Type_Name +
-              ".fiz\r\nError " + to_string(ConversionError));
+        if (ConversionError == 666)
+            ErrorLog( "Bad vehicle: failed do locate definition file \"" + BaseDir + "/" + Type_Name + ".fiz" + "\"" );
+        else {
+            ErrorLog( "Bad vehicle: failed to load definition from file \"" + BaseDir + "/" + Type_Name + ".fiz\" (error " + to_string( ConversionError ) + ")" );
+        }
         return 0.0; // zerowa długość to brak pojazdu
     }
     bool driveractive = (fVel != 0.0); // jeśli prędkość niezerowa, to aktywujemy ruch
@@ -1763,12 +1825,11 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
             (fVel > 0 ? 1 : -1) * Cab *
                 (iDirection ? 1 : -1))) // jak jedzie lub obsadzony to gotowy do drogi
     {
-        Error("Parameters mismatch: dynamic object " + asName + " from\n" + BaseDir + "\\" +
-              Type_Name);
+        Error("Parameters mismatch: dynamic object " + asName + " from \"" + BaseDir + "/" + Type_Name + "\"" );
         return 0.0; // zerowa długość to brak pojazdu
     }
     // ustawienie pozycji hamulca
-    MoverParameters->LocalBrakePos = 0;
+    MoverParameters->LocalBrakePosA = 0.0;
     if (driveractive)
     {
         if (Cab == 0)
@@ -1794,8 +1855,7 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
     {
         size_t dlugosc = MoreParams.length();
         ActPar = ToUpper(MoreParams.substr(0, kropka)); // pierwszy parametr;
-        MoreParams = MoreParams.substr(kropka + 1, dlugosc - kropka); // reszta do dalszej
-        // obrobki
+        MoreParams = MoreParams.substr(kropka + 1, dlugosc - kropka); // reszta do dalszej obrobki
         kropka = MoreParams.find(".");
 
         if (ActPar.substr(0, 1) == "B") // jesli hamulce
@@ -1907,6 +1967,89 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
             {
             }
         } // koniec hamulce
+        else if( ( ActPar.size() >= 3 )
+              && ( ActPar[ 0 ] == 'W' ) ) {
+            // wheel
+            ActPar.erase( 0, 1 );
+
+            auto fixedflatsize { 0 };
+            auto randomflatsize { 0 };
+            auto flatchance { 100 };
+
+            while( false == ActPar.empty() ) {
+                // TODO: convert this whole copy and paste mess to something more elegant one day
+                switch( ActPar[ 0 ] ) {
+                    case 'F': {
+                        // fixed flat size
+                        auto const indexstart { 1 };
+                        auto const indexend { ActPar.find_first_not_of( "1234567890", indexstart ) };
+                        fixedflatsize = std::atoi( ActPar.substr( indexstart, indexend ).c_str() );
+                        ActPar.erase( 0, indexend );
+                        break;
+                    }
+                    case 'R': {
+                        // random flat size
+                        auto const indexstart { 1 };
+                        auto const indexend { ActPar.find_first_not_of( "1234567890", indexstart ) };
+                        randomflatsize = std::atoi( ActPar.substr( indexstart, indexend ).c_str() );
+                        ActPar.erase( 0, indexend );
+                        break;
+                    }
+                    case 'P': {
+                        // random flat probability
+                        auto const indexstart { 1 };
+                        auto const indexend { ActPar.find_first_not_of( "1234567890", indexstart ) };
+                        flatchance = std::atoi( ActPar.substr( indexstart, indexend ).c_str() );
+                        ActPar.erase( 0, indexend );
+                        break;
+                    }
+                    case 'H': {
+                        // truck hunting
+                        auto const indexstart { 1 };
+                        auto const indexend { ActPar.find_first_not_of( "1234567890", indexstart ) };
+                        auto const huntingchance { std::atoi( ActPar.substr( indexstart, indexend ).c_str() ) };
+                        MoverParameters->TruckHunting = ( Random( 0, 100 ) <= huntingchance );
+                        ActPar.erase( 0, indexend );
+                        break;
+                    }
+                    default: {
+                        // unrecognized key
+                        ActPar.erase( 0, 1 );
+                        break;
+                    }
+                }
+            }
+            if( Random( 0, 100 ) <= flatchance ) {
+                MoverParameters->WheelFlat += fixedflatsize + Random( 0, randomflatsize );
+            }
+        } // wheel
+        else if( ( ActPar.size() >= 2 )
+              && ( ActPar[ 0 ] == 'T' ) ) {
+            // temperature
+            ActPar.erase( 0, 1 );
+
+            auto setambient { false };
+
+            while( false == ActPar.empty() ) {
+                switch( ActPar[ 0 ] ) {
+                    case 'A': {
+                        // cold start, set all temperatures to ambient level
+                        setambient = true;
+                        ActPar.erase( 0, 1 );
+                        break;
+                    }
+                    default: {
+                        // unrecognized key
+                        ActPar.erase( 0, 1 );
+                        break;
+                    }
+                }
+            }
+            if( true == setambient ) {
+                // TODO: pull ambient temperature from environment data
+                MoverParameters->dizel_HeatSet( Global.AirTemperature );
+            }
+        } // temperature
 /*        else if (ActPar.substr(0, 1) == "") // tu mozna wpisac inny prefiks i inne rzeczy
         {
             // jakies inne prefiksy
@@ -2003,15 +2146,21 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
     iInventory[ side::rear ] |= btHeadSignals23.Active() ? light::headlight_right : 0;
     btMechanik1.Init( "mechanik1", mdLowPolyInt, false);
 	btMechanik2.Init( "mechanik2", mdLowPolyInt, false);
+    if( MoverParameters->dizel_heat.water.config.shutters ) {
+        btShutters1.Init( "shutters1", mdModel, false );
+    }
+    if( MoverParameters->dizel_heat.water_aux.config.shutters ) {
+        btShutters1.Init( "shutters2", mdModel, false );
+    }
     TurnOff(); // resetowanie zmiennych submodeli
 
     if( mdLowPolyInt != nullptr ) {
         // check the low poly interior for potential compartments of interest, ie ones which can be individually lit
         // TODO: definition of relevant compartments in the .mmd file
         TSubModel *submodel { nullptr };
-        if( ( submodel = mdLowPolyInt->GetFromName( "cab1" ) ) != nullptr ) { SectionLightLevels.emplace_back( submodel, nullptr, 0.0f ); }
-        if( ( submodel = mdLowPolyInt->GetFromName( "cab2" ) ) != nullptr ) { SectionLightLevels.emplace_back( submodel, nullptr, 0.0f ); }
-        if( ( submodel = mdLowPolyInt->GetFromName( "cab0" ) ) != nullptr ) { SectionLightLevels.emplace_back( submodel, nullptr, 0.0f ); }
+        if( ( submodel = mdLowPolyInt->GetFromName( "cab1" ) ) != nullptr ) { SectionLightLevels.push_back( { submodel, nullptr, 0.0f } ); }
+        if( ( submodel = mdLowPolyInt->GetFromName( "cab2" ) ) != nullptr ) { SectionLightLevels.push_back( { submodel, nullptr, 0.0f } ); }
+        if( ( submodel = mdLowPolyInt->GetFromName( "cab0" ) ) != nullptr ) { SectionLightLevels.push_back( { submodel, nullptr, 0.0f } ); }
         // passenger car compartments
         std::vector<std::string> nameprefixes = { "corridor", "korytarz", "compartment", "przedzial" };
         int compartmentindex;
@@ -2026,19 +2175,17 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
                               std::to_string( compartmentindex ) );
                 submodel = mdLowPolyInt->GetFromName( compartmentname );
                 if( submodel != nullptr ) {
-                    // if specified compartment was found we check also for potential matching section in the currently assigned load
-                    // NOTE: if the load gets changed this will invalidate stored pointers. TODO: rebuild the table on load change
-                    SectionLightLevels.emplace_back(
+                    SectionLightLevels.push_back( {
                         submodel,
-                        ( mdLoad != nullptr ?
-                            mdLoad->GetFromName( compartmentname ):
-                            nullptr ),
-                        0.0f );
+                        nullptr, // pointers to load sections are generated afterwards
+                        0.0f } );
                 }
                 ++compartmentindex;
             } while( ( submodel != nullptr )
                   || ( compartmentindex < 2 ) ); // chain can start from prefix00 or prefix01
         }
+        update_load_sections();
+        update_load_visibility();
     }
     // wyszukiwanie zderzakow
     if( mdModel ) {
@@ -2140,7 +2287,7 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
     // potem juz liczona prawidlowa wartosc masy
     MoverParameters->ComputeConstans();
     // wektor podłogi dla wagonów, przesuwa ładunek
-    vFloor = vector3(0, 0, MoverParameters->Floor);
+    vFloor = Math3D::vector3(0, 0, MoverParameters->Floor);
 
     // długość większa od zera oznacza OK; 2mm docisku?
     return MoverParameters->Dim.L;
@@ -2151,9 +2298,9 @@ TDynamicObject::create_controller( std::string const Type, bool const Trainset )
 
     if( Type == "" ) { return; }
 
-    if( asName == Global::asHumanCtrlVehicle ) {
+    if( asName == Global.asHumanCtrlVehicle ) {
         // jeśli pojazd wybrany do prowadzenia
-        if( MoverParameters->EngineType != Dumb ) {
+        if( MoverParameters->EngineType != TEngineType::Dumb ) {
             // wsadzamy tam sterującego
             Controller = Humandriver;
         }
@@ -2279,7 +2426,7 @@ void TDynamicObject::Move(double fDistance)
         // MoverParameters->Loc.Y= vPosition.z;
         // MoverParameters->Loc.Z= vPosition.y;
         // obliczanie pozycji sprzęgów do liczenia zderzeń
-        vector3 dir = (0.5 * MoverParameters->Dim.L) * vFront; // wektor sprzęgu
+        auto dir = (0.5 * MoverParameters->Dim.L) * vFront; // wektor sprzęgu
         vCoulpler[0] = vPosition + dir; // współrzędne sprzęgu na początku
         vCoulpler[1] = vPosition - dir; // współrzędne sprzęgu na końcu
         MoverParameters->vCoulpler[0] = vCoulpler[0]; // tymczasowo kopiowane na inny poziom
@@ -2310,7 +2457,7 @@ void TDynamicObject::Move(double fDistance)
                 { // liczymy proporcję
                     double d = Axle0.GetTranslation(); // aktualne położenie na torze
                     if (Axle0.GetDirection() < 0)
-                        d = t0->fTrackLength - d; // od drugiej strony liczona długość
+                        d = t0->Length() - d; // od drugiej strony liczona długość
                     d /= fAxleDist; // rozsataw osi procentowe znajdowanie się na torze
 
                     float shadefrom = 1.0f, shadeto = 1.0f;
@@ -2427,31 +2574,202 @@ bool TDynamicObject::UpdateForce(double dt, double dt1, bool FullVer)
     return true;
 }
 
-void TDynamicObject::LoadUpdate()
-{ // przeładowanie modelu ładunku
-    // Ra: nie próbujemy wczytywać modeli miliony razy podczas renderowania!!!
-    if ((mdLoad == NULL) && (MoverParameters->Load > 0))
-    {
-        std::string asLoadName =
-            asBaseDir + MoverParameters->LoadType + ".t3d"; // zapamiętany katalog pojazdu
-        // asLoadName=MoverParameters->LoadType;
-        // if (MoverParameters->LoadType!=AnsiString("passengers"))
-        Global::asCurrentTexturePath = asBaseDir; // bieżąca ścieżka do tekstur to dynamic/...
-        mdLoad = TModelsManager::GetModel(asLoadName.c_str()); // nowy ładunek
-        Global::asCurrentTexturePath =
-            std::string(szTexturePath); // z powrotem defaultowa sciezka do tekstur
-        // Ra: w MMD można by zapisać położenie modelu ładunku (np. węgiel) w
-        // zależności od
-        // załadowania
+// initiates load change by specified amounts, with a platform on specified side
+void TDynamicObject::LoadExchange( int const Disembark, int const Embark, int const Platform ) {
+
+    if( ( MoverParameters->DoorOpenCtrl == control_t::passenger )
+     || ( MoverParameters->DoorOpenCtrl == control_t::mixed ) ) {
+        // jeśli jedzie do tyłu, to drzwi otwiera odwrotnie
+        auto const lewe = ( DirectionGet() > 0 ) ? 1 : 2;
+        auto const prawe = 3 - lewe;
+        if( Platform & lewe ) {
+            MoverParameters->DoorLeft( true, range_t::local );
+        }
+        if( Platform & prawe ) {
+            MoverParameters->DoorRight( true, range_t::local );
+        }
     }
-    else if (MoverParameters->Load == 0)
-        mdLoad = NULL; // nie ma ładunku
-    // if ((mdLoad==NULL)&&(MoverParameters->Load>0))
-    // {
-    //  mdLoad=NULL; //Ra: to jest tu bez sensu - co autor miał na myśli?
-    // }
+    m_exchange.unload_count += Disembark;
+    m_exchange.load_count += Embark;
+    m_exchange.speed_factor = (
+        Platform == 3 ?
+            2.0 :
+            1.0 );
+    m_exchange.time = 0.0;
+}
+
+// update state of load exchange operation
+void TDynamicObject::update_exchange( double const Deltatime ) {
+
+    if( ( m_exchange.unload_count < 0.01 ) && ( m_exchange.load_count < 0.01 ) ) { return; }
+
+    if( ( MoverParameters->Vel < 2.0 )
+     && ( ( true == MoverParameters->DoorLeftOpened )
+       || ( true == MoverParameters->DoorRightOpened ) ) ) {
+
+        m_exchange.time += Deltatime;
+        while( ( m_exchange.unload_count > 0.01 )
+            && ( m_exchange.time >= 1.0 ) ) {
+            
+            m_exchange.time -= 1.0;
+            auto const exchangesize = std::min( m_exchange.unload_count, MoverParameters->UnLoadSpeed * m_exchange.speed_factor );
+            m_exchange.unload_count -= exchangesize;
+            MoverParameters->LoadStatus = 1;
+            MoverParameters->Load = std::max( 0.f, MoverParameters->Load - exchangesize );
+            update_load_visibility();
+        }
+        if( m_exchange.unload_count < 0.01 ) {
+            // finish any potential unloading operation before adding new load
+            // don't load more than can fit
+            m_exchange.load_count = std::min( m_exchange.load_count, MoverParameters->MaxLoad - MoverParameters->Load );
+            while( ( m_exchange.load_count > 0.01 )
+                && ( m_exchange.time >= 1.0 ) ) {
+
+                m_exchange.time -= 1.0;
+                auto const exchangesize = std::min( m_exchange.load_count, MoverParameters->LoadSpeed * m_exchange.speed_factor );
+                m_exchange.load_count -= exchangesize;
+                MoverParameters->LoadStatus = 2;
+                MoverParameters->Load = std::min( MoverParameters->MaxLoad, MoverParameters->Load + exchangesize ); // std::max not strictly needed but, eh
+                update_load_visibility();
+            }
+        }
+    }
+
+    if( MoverParameters->Vel > 2.0 ) {
+        // if the vehicle moves too fast cancel the exchange
+        m_exchange.unload_count = 0;
+        m_exchange.load_count = 0;
+    }
+
+    if( ( m_exchange.unload_count < 0.01 )
+     && ( m_exchange.load_count < 0.01 ) ) {
+
+        MoverParameters->LoadStatus = 0;
+        // if the exchange is completed (or canceled) close the door, if applicable
+        if( ( MoverParameters->DoorCloseCtrl == control_t::passenger )
+         || ( MoverParameters->DoorCloseCtrl == control_t::mixed ) ) {
+
+            if( ( MoverParameters->Vel > 2.0 )
+             || ( Random() < (
+                    // remotely controlled door are more likely to be left open
+                    MoverParameters->DoorCloseCtrl == control_t::passenger ?
+                        0.75 :
+                        0.50 ) ) ) {
+
+                MoverParameters->DoorLeft( false, range_t::local );
+                MoverParameters->DoorRight( false, range_t::local );
+            }
+        }
+    }
+}
+
+void TDynamicObject::LoadUpdate() {
+    // przeładowanie modelu ładunku
+    // Ra: nie próbujemy wczytywać modeli miliony razy podczas renderowania!!!
+    if( ( mdLoad == nullptr )
+     && ( MoverParameters->Load > 0 ) ) {
+
+        if( false == MoverParameters->LoadType.empty() ) {
+
+            Global.asCurrentTexturePath = asBaseDir; // bieżąca ścieżka do tekstur to dynamic/...
+
+            // try first specialized version of the load model, vehiclename_loadname
+            auto const specializedloadfilename { asBaseDir + MoverParameters->TypeName + "_" + MoverParameters->LoadType };
+            mdLoad = TModelsManager::GetModel( specializedloadfilename, true );
+            if( mdLoad == nullptr ) {
+                // if this fails, try generic load model
+                auto const genericloadfilename { asBaseDir + MoverParameters->LoadType };
+                mdLoad = TModelsManager::GetModel( genericloadfilename, true );
+            }
+            if( mdLoad != nullptr ) {
+                // TODO: discern from vehicle component which merely uses vehicle directory and has no animations, so it can be initialized outright
+                // and actual vehicles which get their initialization after their animations are set up
+                mdLoad->Init();
+            }
+            // update bindings between lowpoly sections and potential load chunks placed inside them
+            update_load_sections();
+
+            Global.asCurrentTexturePath = std::string( szTexturePath ); // z powrotem defaultowa sciezka do tekstur
+        }
+        // Ra: w MMD można by zapisać położenie modelu ładunku (np. węgiel) w zależności od załadowania
+    }
+    else if( MoverParameters->Load == 0 ) {
+        // nie ma ładunku
+        mdLoad = nullptr;
+        // erase bindings between lowpoly sections and potential load chunks placed inside them
+        update_load_sections();
+    }
     MoverParameters->LoadStatus &= 3; // po zakończeniu będzie równe zero
-};
+}
+
+void
+TDynamicObject::update_load_sections() {
+
+    SectionLoadVisibility.clear();
+
+    for( auto &section : SectionLightLevels ) {
+
+        section.load = (
+            mdLoad != nullptr ?
+                mdLoad->GetFromName( section.compartment->pName ) :
+                nullptr );
+
+        if( ( section.load != nullptr )
+         && ( section.load->count_children() > 0 ) ) {
+            SectionLoadVisibility.push_back( { section.load, false } );
+        }
+    }
+    shuffle_load_sections();
+}
+
+void
+TDynamicObject::update_load_visibility() {
+/*
+    if( Random() < 0.25 ) {
+        shuffle_load_sections();
+    }
+*/
+    auto loadpercentage { (
+        MoverParameters->MaxLoad == 0.0 ?
+            0.0 :
+            100.0 * MoverParameters->Load / MoverParameters->MaxLoad ) };
+    auto const sectionloadpercentage { (
+        SectionLoadVisibility.empty() ?
+            0.0 :
+            100.0 / SectionLoadVisibility.size() ) };
+    // set as many sections as we can, given overall load percentage and how much of full percentage is covered by each chunk
+    std::for_each(
+        std::begin( SectionLoadVisibility ), std::end( SectionLoadVisibility ),
+        [&]( section_visibility &section ) {
+            section.visible = ( loadpercentage > 0.0 );
+            section.visible_chunks = 0;
+            auto const sectionchunkcount { section.submodel->count_children() };
+            auto const sectionchunkloadpercentage{ (
+                sectionchunkcount == 0 ?
+                    0.0 :
+                    sectionloadpercentage / sectionchunkcount ) };
+            auto *sectionchunk { section.submodel->ChildGet() };
+            while( sectionchunk != nullptr ) {
+                if( loadpercentage > 0.0 ) {
+                    ++section.visible_chunks;
+                    loadpercentage -= sectionchunkloadpercentage;
+                }
+                sectionchunk = sectionchunk->NextGet();
+            } } );
+}
+
+void 
+TDynamicObject::shuffle_load_sections() {
+
+    std::shuffle( std::begin( SectionLoadVisibility ), std::end( SectionLoadVisibility ), Global.random_engine );
+    // shift chunks assigned to corridors to the end of the list, so they show up last
+    std::stable_partition(
+        std::begin( SectionLoadVisibility ), std::end( SectionLoadVisibility ),
+        []( section_visibility const &section ) {
+            return (
+                ( section.submodel->pName.find( "compartment" ) == 0 )
+             || ( section.submodel->pName.find( "przedzial" )   == 0 ) ); } );
+}
 
 /*
 Ra:
@@ -2466,7 +2784,7 @@ histerezę czasową, aby te tryby pracy nie przełączały się zbyt szybko.
 
 bool TDynamicObject::Update(double dt, double dt1)
 {
-    if (dt == 0)
+    if (dt1 == 0)
         return true; // Ra: pauza
     if (!MoverParameters->PhysicActivation &&
         !MechInside) // to drugie, bo będąc w maszynowym blokuje się fizyka
@@ -2477,7 +2795,7 @@ bool TDynamicObject::Update(double dt, double dt1)
         return false; // a normalnie powinny mieć bEnabled==false
 
     // McZapkie-260202
-    if ((MoverParameters->EnginePowerSource.SourceType == CurrentCollector) &&
+    if ((MoverParameters->EnginePowerSource.SourceType == TPowerSource::CurrentCollector) &&
         (MoverParameters->Power > 1.0)) // aby rozrządczy nie opuszczał silnikowemu
 /*
         if ((MechInside) || (MoverParameters->TrainType == dt_EZT))
@@ -2500,7 +2818,7 @@ bool TDynamicObject::Update(double dt, double dt1)
                         // pressure switch safety measure -- open the line breaker, unless there's alternate source of traction voltage
                         if( MoverParameters->GetTrainsetVoltage() < 0.5 * MoverParameters->EnginePowerSource.MaxVoltage ) {
                             // TODO: check whether line breaker should be open EMU-wide
-                            MoverParameters->MainSwitch( false, ( MoverParameters->TrainType == dt_EZT ? range::unit : range::local ) );
+                            MoverParameters->MainSwitch( false, ( MoverParameters->TrainType == dt_EZT ? range_t::unit : range_t::local ) );
                         }
                     }
                     else {
@@ -2508,7 +2826,7 @@ bool TDynamicObject::Update(double dt, double dt1)
                         // and prevents their activation until pressure switch is set again
                         MoverParameters->PantPressLockActive = true;
                         // TODO: separate 'heating allowed' from actual heating flag, so we can disable it here without messing up heating toggle
-                        MoverParameters->ConverterSwitch( false, range::unit );
+                        MoverParameters->ConverterSwitch( false, range_t::unit );
                     }
                     // mark the pressure switch as spent
                     MoverParameters->PantPressSwitchActive = false;
@@ -2583,7 +2901,7 @@ bool TDynamicObject::Update(double dt, double dt1)
     // TTrackParam tp;
     tp.Width = MyTrack->fTrackWidth;
     // McZapkie-250202
-    tp.friction = MyTrack->fFriction * Global::fFriction;
+    tp.friction = MyTrack->fFriction * Global.fFriction;
     tp.CategoryFlag = MyTrack->iCategoryFlag & 15;
     tp.DamageFlag = MyTrack->iDamageFlag;
     tp.QualityFlag = MyTrack->iQualityFlag;
@@ -2606,9 +2924,9 @@ bool TDynamicObject::Update(double dt, double dt1)
     // znane napięcia
     // TTractionParam tmpTraction;
     // tmpTraction.TractionVoltage=0;
-    if (MoverParameters->EnginePowerSource.SourceType == CurrentCollector)
+    if (MoverParameters->EnginePowerSource.SourceType == TPowerSource::CurrentCollector)
     { // dla EZT tylko silnikowy
-        // if (Global::bLiveTraction)
+        // if (Global.bLiveTraction)
         { // Ra 2013-12: to niżej jest chyba trochę bez sensu
             double v = MoverParameters->PantRearVolt;
             if (v == 0.0) {
@@ -2626,7 +2944,7 @@ bool TDynamicObject::Update(double dt, double dt1)
                 tmpTraction.TractionVoltage = v;
             }
             else {
-                NoVoltTime += dt;
+                NoVoltTime += dt1;
                 if( NoVoltTime > 0.2 ) {
                     // jeśli brak zasilania dłużej niż 0.2 sekundy (25km/h pod izolatorem daje 0.15s)
                     // Ra 2F1H: prowizorka, trzeba przechować napięcie, żeby nie wywalało WS pod izolatorem
@@ -2671,7 +2989,7 @@ bool TDynamicObject::Update(double dt, double dt1)
     { // Ra 2F3F: do Driver.cpp to przenieść?
         MoverParameters->EqvtPipePress = GetEPP(); // srednie cisnienie w PG
         if( ( Mechanik->Primary() )
-         && ( MoverParameters->EngineType == ElectricInductionMotor ) ) {
+         && ( MoverParameters->EngineType == TEngineType::ElectricInductionMotor ) ) {
             // jesli glowny i z asynchronami, to niech steruje hamulcem lacznie dla calego pociagu/ezt
 			auto const kier = (DirectionGet() * MoverParameters->ActiveCab > 0);
             auto FED { 0.0 };
@@ -2708,7 +3026,7 @@ bool TDynamicObject::Update(double dt, double dt1)
                              p->MoverParameters->BrakeCylNo * p->MoverParameters->BrakeRigEff;
                 FmaxPN += Nmax * p->MoverParameters->Hamulec->GetFC(
                               Nmax / (p->MoverParameters->NAxles * p->MoverParameters->NBpA),
-                              p->MoverParameters->Vmax) *
+                              p->MoverParameters->MED_Vref) *
                           1000; // sila hamowania pn
                 FmaxED += ((p->MoverParameters->Mains) && (p->MoverParameters->ActiveDir != 0) &&
 					(p->MoverParameters->eimc[eimc_p_Fh] * p->MoverParameters->NPoweredAxles >
@@ -2726,8 +3044,13 @@ bool TDynamicObject::Update(double dt, double dt1)
 				masa += p->MoverParameters->TotalMass;
 				osie += p->MoverParameters->NAxles;
 			}
+			double RapidMult = 1.0;
+			if (((MoverParameters->BrakeDelays & (bdelay_P + bdelay_R)) == (bdelay_P + bdelay_R))
+				&& (MoverParameters->BrakeDelayFlag & bdelay_P))
+				RapidMult = MoverParameters->RapidMult;
 
-            auto const amax = FmaxPN / masamax;
+			auto const amax = RapidMult * std::min(FmaxPN / masamax, MoverParameters->MED_amax);
+
             if ((MoverParameters->Vel < 0.5) && (MoverParameters->BrakePress > 0.2) ||
                 (dDoorMoveL > 0.001) || (dDoorMoveR > 0.001))
             {
@@ -2745,6 +3068,9 @@ bool TDynamicObject::Update(double dt, double dt1)
                                                   (MoverParameters->LocalBrakeRatio() < 0.01);
             }
             auto Fzad = amax * MoverParameters->LocalBrakeRatio() * masa;
+			if ((MoverParameters->BrakeCtrlPos == MoverParameters->Handle->GetPos(bh_EB))
+				&& (MoverParameters->eimc[eimc_p_abed] < 0.001))
+				Fzad = amax * masa; //pętla bezpieczeństwa - pełne służbowe
             if ((MoverParameters->ScndS) &&
                 (MoverParameters->Vel > MoverParameters->eimc[eimc_p_Vh1]) && (FmaxED > 0))
             {
@@ -2755,13 +3081,30 @@ bool TDynamicObject::Update(double dt, double dt1)
             {
                 Fzad = std::max(MoverParameters->StopBrakeDecc * masa, Fzad);
             }
-
+			if ((Fzad > 1) && (!MEDLogFile.is_open()) && (MoverParameters->Vel > 1))
+			{
+                MEDLogFile.open(
+                    "MEDLOGS/" + MoverParameters->Name + "_" + to_string( ++MEDLogCount ) + ".csv",
+                    std::ios::in | std::ios::out | std::ios::trunc );
+				MEDLogFile << "t\tVel\tMasa\tOsie\tFmaxPN\tFmaxED\tFfulED\tFrED\tFzad\tFzadED\tFzadPN";
+				for(int k=1;k<=np;k++)
+				{
+					MEDLogFile << "\tBP" << k;
+				}
+				MEDLogFile << "\n";
+				MEDLogFile.flush();
+				MEDLogInactiveTime = 0;
+				MEDLogTime = 0;
+			}
             auto FzadED { 0.0 };
-            if( ( MoverParameters->EpFuse )
-             || ( ( MoverParameters->BrakeHandle == MHZ_EN57 )
+            if( ( MoverParameters->EpFuse && (MoverParameters->BrakeHandle != TBrakeHandle::MHZ_EN57))
+             || ( ( MoverParameters->BrakeHandle == TBrakeHandle::MHZ_EN57 )
                && ( MoverParameters->BrakeOpModeFlag & bom_MED ) ) ) {
                 FzadED = std::min( Fzad, FmaxED );
             }
+			if ((MoverParameters->BrakeCtrlPos == MoverParameters->Handle->GetPos(bh_EB))
+				&& (MoverParameters->eimc[eimc_p_abed] < 0.001)) 
+				FzadED = 0; //pętla bezpieczeństwa - bez ED
             auto const FzadPN = Fzad - FrED;
             //np = 0;
             // BUG: likely memory leak, allocation per inner loop, deleted only once outside
@@ -2797,7 +3140,7 @@ bool TDynamicObject::Update(double dt, double dt1)
                 FmaxEP[i] = Nmax *
                             p->MoverParameters->Hamulec->GetFC(
                                 Nmax / (p->MoverParameters->NAxles * p->MoverParameters->NBpA),
-                                p->MoverParameters->Vmax) *
+                                p->MoverParameters->MED_Vref) *
                             1000; // sila hamowania pn
 
                 PrzekrF[i] = false;
@@ -2859,25 +3202,25 @@ bool TDynamicObject::Update(double dt, double dt1)
                                   p->MoverParameters->BrakeCylMult[0] -
                               p->MoverParameters->BrakeSlckAdj) *
                              p->MoverParameters->BrakeCylNo * p->MoverParameters->BrakeRigEff;
+				float VelC = ((FrED > 0.1) || p->MoverParameters->MED_EPVC ? clamp(p->MoverParameters->Vel, p->MoverParameters->MED_Vmin, p->MoverParameters->MED_Vmax) : p->MoverParameters->MED_Vref);//korekcja EP po prędkości
                 float FmaxPoj = Nmax * 
 					p->MoverParameters->Hamulec->GetFC(
-						Nmax / (p->MoverParameters->NAxles * p->MoverParameters->NBpA),
-						p->MoverParameters->Vel) *
+						Nmax / (p->MoverParameters->NAxles * p->MoverParameters->NBpA), VelC) *
 					1000; // sila hamowania pn
-				p->MoverParameters->LocalBrakePosA = (p->MoverParameters->SlippingWheels ? 0 : FzEP[i] / FmaxPoj);
-				if (p->MoverParameters->LocalBrakePosA>0.009)
+				p->MoverParameters->LocalBrakePosAEIM = (p->MoverParameters->SlippingWheels ? 0 : FzEP[i] / FmaxPoj);
+				if (p->MoverParameters->LocalBrakePosAEIM>0.009)
 					if (p->MoverParameters->P2FTrans * p->MoverParameters->BrakeCylMult[0] *
 						p->MoverParameters->MaxBrakePress[0] != 0)
 					{
 						float x = (p->MoverParameters->BrakeSlckAdj / p->MoverParameters->BrakeCylMult[0] +
 							p->MoverParameters->BrakeCylSpring) / (p->MoverParameters->P2FTrans *
 								p->MoverParameters->MaxBrakePress[0]);
-						p->MoverParameters->LocalBrakePosA = x + (1 - x) * p->MoverParameters->LocalBrakePosA;
+						p->MoverParameters->LocalBrakePosAEIM = x + (1 - x) * p->MoverParameters->LocalBrakePosAEIM;
 					}
 					else
-						p->MoverParameters->LocalBrakePosA = p->MoverParameters->LocalBrakePosA;
+						p->MoverParameters->LocalBrakePosAEIM = p->MoverParameters->LocalBrakePosAEIM;
 				else
-					p->MoverParameters->LocalBrakePosA = 0;
+					p->MoverParameters->LocalBrakePosAEIM = 0;
 				++i;
 			}
 
@@ -2889,6 +3232,38 @@ bool TDynamicObject::Update(double dt, double dt1)
 			MED[0][5] = FrED*0.001;
 			MED[0][6] = FzadPN*0.001;
 			MED[0][7] = nPrzekrF;
+
+			if (MEDLogFile.is_open())
+			{
+				MEDLogFile << MEDLogTime << "\t" << MoverParameters->Vel << "\t" << masa*0.001 << "\t" << osie << "\t" << FmaxPN*0.001 << "\t" << FmaxED*0.001 << "\t"
+					<< FfulED*0.001 << "\t" << FrED*0.001 << "\t" << Fzad*0.001 << "\t" << FzadED*0.001 << "\t" << FzadPN*0.001;
+				for (TDynamicObject *p = GetFirstDynamic(MoverParameters->ActiveCab < 0 ? 1 : 0, 4); p;
+					(true == kier ? p = p->NextC(4) : p = p->PrevC(4)))
+				{
+					MEDLogFile << "\t" << p->MoverParameters->BrakePress;
+				}
+				MEDLogFile << "\n";
+				if (floor(MEDLogTime + dt1) > floor(MEDLogTime))
+				{
+					MEDLogFile.flush();
+				}
+				MEDLogTime += dt1;
+
+				if ((MoverParameters->Vel < 0.1) || (MoverParameters->MainCtrlPos > 0))
+				{
+					MEDLogInactiveTime += dt1;
+				}
+				else
+				{
+					MEDLogInactiveTime = 0;
+				}
+				if (MEDLogInactiveTime > 5)
+				{
+					MEDLogFile.flush();
+					MEDLogFile.close();
+				}
+
+			}
 
 			delete[] PrzekrF;
 			delete[] FzED;
@@ -2907,10 +3282,10 @@ bool TDynamicObject::Update(double dt, double dt1)
         // NOTE: disabled on account of multi-unit setups, where the unmanned unit wouldn't be affected
           && ( Controller == Humandriver )
 */
-          && ( MoverParameters->EngineType != DieselEngine )
-          && ( MoverParameters->EngineType != WheelsDriven ) )
+          && ( MoverParameters->EngineType != TEngineType::DieselEngine )
+          && ( MoverParameters->EngineType != TEngineType::WheelsDriven ) )
         { // jeśli bateria wyłączona, a nie diesel ani drezyna reczna
-            if( MoverParameters->MainSwitch( false, ( MoverParameters->TrainType == dt_EZT ? range::unit : range::local ) ) ) {
+            if( MoverParameters->MainSwitch( false, ( MoverParameters->TrainType == dt_EZT ? range_t::unit : range_t::local ) ) ) {
                 // wyłączyć zasilanie
                 // NOTE: we turn off entire EMU, but only the affected unit for other multi-unit consists
                 MoverParameters->EventFlag = true;
@@ -2935,7 +3310,6 @@ bool TDynamicObject::Update(double dt, double dt1)
         bDynamicRemove = true; // sprawdzić
         return false;
     }
-    Global::ABuDebug = dDOMoveLen / dt1;
     ResetdMoveLen();
 
     // McZapkie-260202
@@ -2950,8 +3324,13 @@ bool TDynamicObject::Update(double dt, double dt1)
         }
         if( dRailLength != -1 ) {
             if( MoverParameters->Vel > 0 ) {
-
-                double volume = ( 20.0 + MyTrack->iDamageFlag ) / 21;
+                // TODO: track quality and/or environment factors as separate subroutine
+                auto volume =
+                    interpolate(
+                        0.8, 1.2,
+                        clamp(
+                            MyTrack->iQualityFlag / 20.0,
+                            0.0, 1.0 ) );
                 switch( MyTrack->eEnvironment ) {
                     case e_tunnel: {
                         volume *= 1.1;
@@ -2966,27 +3345,34 @@ bool TDynamicObject::Update(double dt, double dt1)
                     }
                 }
 
+                auto axleindex { 0 };
                 for( auto &axle : m_axlesounds ) {
                     axle.distance -= dDOMoveLen * Sign( dDOMoveLen );
                     if( axle.distance < 0 ) {
                         axle.distance += dRailLength;
-/*
-                        // McZapkie-040302
-                        if( i == iAxles - 1 ) {
-                            rsStukot[ 0 ].stop();
-                            MoverParameters->AccV += 0.5 * GetVelocity() / ( 1 + MoverParameters->Vmax );
-                        }
-                        else {
-                            rsStukot[ i + 1 ].stop();
-                        }
-                        if( i == 1 ) {
-                            MoverParameters->AccV -= 0.5 * GetVelocity() / ( 1 + MoverParameters->Vmax );
-                        }
-*/
                         if( MoverParameters->Vel > 2.5 ) {
-                            axle.clatter.gain( volume ).play();
+                            // NOTE: for combined clatter sound we supply 1/100th of actual value, as the sound module converts does the opposite, converting received (typically) 0-1 values to 0-100 range
+                            auto const frequency = (
+                                true == axle.clatter.is_combined() ?
+                                    MoverParameters->Vel * 0.01 :
+                                    1.0 );
+                            axle.clatter
+                                .pitch( frequency )
+                                .gain( volume )
+                                .play();
+                            // crude bump simulation, drop down on even axles, move back up on the odd ones
+                            MoverParameters->AccVert +=
+                                interpolate(
+                                    0.01, 0.05,
+                                    clamp(
+                                        GetVelocity() / ( 1 + MoverParameters->Vmax ),
+                                        0.0, 1.0 ) )
+                                * ( ( axleindex % 2 ) != 0 ?
+                                     1 :
+                                    -1 );
                         }
                     }
+                    ++axleindex;
                 }
             }
         }
@@ -3011,25 +3397,6 @@ bool TDynamicObject::Update(double dt, double dt1)
 
                       }
          }   */
-    if ((MoverParameters->TrainType == dt_ET40) || (MoverParameters->TrainType == dt_EP05))
-    { // dla ET40 i EU05 automatyczne cofanie nastawnika - i tak
-        // nie będzie to działać dobrze...
-        /* if
-           ((MoverParameters->MainCtrlPos>MoverParameters->MainCtrlActualPos)&&(abs(MoverParameters->Im)>MoverParameters->IminHi))
-           {
-            MoverParameters->DecMainCtrl(1);
-           } */
-        if ((!Console::Pressed(Global::Keys[k_IncMainCtrl])) &&
-            (MoverParameters->MainCtrlPos > MoverParameters->MainCtrlActualPos))
-        {
-            MoverParameters->DecMainCtrl(1);
-        }
-        if ((!Console::Pressed(Global::Keys[k_DecMainCtrl])) &&
-            (MoverParameters->MainCtrlPos < MoverParameters->MainCtrlActualPos))
-        {
-            MoverParameters->IncMainCtrl(1); // Ra 15-01: a to nie miało być tylko cofanie?
-        }
-    }
 
     if (MoverParameters->Vel != 0)
     { // McZapkie-050402: krecenie kolami:
@@ -3051,10 +3418,11 @@ bool TDynamicObject::Update(double dt, double dt1)
         double k; // tymczasowy kąt
         double PantDiff;
         TAnimPant *p; // wskaźnik do obiektu danych pantografu
-        double fCurrent = (MoverParameters->DynamicBrakeFlag && MoverParameters->ResistorsFlag ?
-                               0 :
-                               MoverParameters->Itot) +
-                          MoverParameters->TotalCurrent; // prąd pobierany przez pojazd - bez
+        double fCurrent = (
+            ( MoverParameters->DynamicBrakeFlag && MoverParameters->ResistorsFlag ) ?
+                0 :
+                MoverParameters->Itot )
+            + MoverParameters->TotalCurrent; // prąd pobierany przez pojazd - bez
         // sensu z tym (TotalCurrent)
         // TotalCurrent to bedzie prad nietrakcyjny (niezwiazany z napedem)
         // fCurrent+=fabs(MoverParameters->Voltage)*1e-6; //prąd płynący przez
@@ -3091,8 +3459,8 @@ bool TDynamicObject::Update(double dt, double dt1)
             switch (i) // numer pantografu
             { // trzeba usunąć to rozróżnienie
             case 0:
-                if( ( Global::bLiveTraction == false )
-                    && ( p->hvPowerWire == nullptr ) ) {
+                if( ( Global.bLiveTraction == false )
+                 && ( p->hvPowerWire == nullptr ) ) {
                     // jeśli nie ma drutu, może pooszukiwać
                     MoverParameters->PantFrontVolt =
                         ( p->PantWys >= 1.2 ) ?
@@ -3102,20 +3470,21 @@ bool TDynamicObject::Update(double dt, double dt1)
                 else if( ( true == MoverParameters->PantFrontUp )
                       && ( PantDiff < 0.01 ) ) // tolerancja niedolegania
                 {
-                    if( ( MoverParameters->PantFrontVolt == 0.0 )
-                     && ( MoverParameters->PantRearVolt == 0.0 ) ) {
-                        for( auto &pantograph : m_pantographsounds ) {
-                            if( pantograph.sPantUp.offset().z > 0 ) {
-                                // limit to pantographs located in the front half of the vehicle
-                                pantograph.sPantUp.play( sound_flags::exclusive );
+                    if (p->hvPowerWire) {
+                        auto const lastvoltage { MoverParameters->PantFrontVolt };
+                        // TODO: wyliczyć trzeba prąd przypadający na pantograf i wstawić do GetVoltage()
+                        MoverParameters->PantFrontVolt = p->hvPowerWire->VoltageGet( MoverParameters->Voltage, fPantCurrent );
+                        fCurrent -= fPantCurrent; // taki prąd płynie przez powyższy pantograf
+                        // TODO: refactor reaction to voltage change to mover as sound event for specific pantograph
+                        if( ( lastvoltage == 0.0 )
+                         && ( MoverParameters->PantFrontVolt > 0.0 ) ) {
+                            for( auto &pantograph : m_pantographsounds ) {
+                                if( pantograph.sPantUp.offset().z > 0 ) {
+                                    // limit to pantographs located in the front half of the vehicle
+                                    pantograph.sPantUp.play( sound_flags::exclusive );
+                                }
                             }
                         }
-                    }
-                    if (p->hvPowerWire) {
-                        // TODO: wyliczyć trzeba prąd przypadający na pantograf i wstawić do GetVoltage()
-                        MoverParameters->PantFrontVolt =
-                            p->hvPowerWire->VoltageGet(MoverParameters->Voltage, fPantCurrent);
-                        fCurrent -= fPantCurrent; // taki prąd płynie przez powyższy pantograf
                     }
                     else
                         MoverParameters->PantFrontVolt = 0.0;
@@ -3124,7 +3493,7 @@ bool TDynamicObject::Update(double dt, double dt1)
                     MoverParameters->PantFrontVolt = 0.0;
                 break;
             case 1:
-                if( ( false == Global::bLiveTraction )
+                if( ( false == Global.bLiveTraction )
                  && ( nullptr == p->hvPowerWire ) ) {
                     // jeśli nie ma drutu, może pooszukiwać
                     MoverParameters->PantRearVolt =
@@ -3135,25 +3504,27 @@ bool TDynamicObject::Update(double dt, double dt1)
                 else if ( ( true == MoverParameters->PantRearUp )
                        && ( PantDiff < 0.01 ) )
                 {
-                    if( ( MoverParameters->PantRearVolt == 0.0 )
-                     && ( MoverParameters->PantFrontVolt == 0.0 ) ) {
-                        for( auto &pantograph : m_pantographsounds ) {
-                            if( pantograph.sPantUp.offset().z < 0 ) {
-                                // limit to pantographs located in the rear half of the vehicle
-                                pantograph.sPantUp.play( sound_flags::exclusive );
-                            }
-                        }
-                    }
                     if (p->hvPowerWire) {
+                        auto const lastvoltage { MoverParameters->PantRearVolt };
                         // TODO: wyliczyć trzeba prąd przypadający na pantograf i wstawić do GetVoltage()
                         MoverParameters->PantRearVolt = p->hvPowerWire->VoltageGet( MoverParameters->Voltage, fPantCurrent );
                         fCurrent -= fPantCurrent; // taki prąd płynie przez powyższy pantograf
+                        // TODO: refactor reaction to voltage change to mover as sound event for specific pantograph
+                        if( ( lastvoltage == 0.0 )
+                         && ( MoverParameters->PantRearVolt > 0.0 ) ) {
+                            for( auto &pantograph : m_pantographsounds ) {
+                                if( pantograph.sPantUp.offset().z < 0 ) {
+                                    // limit to pantographs located in the rear half of the vehicle
+                                    pantograph.sPantUp.play( sound_flags::exclusive );
+                                }
+                            }
+                        }
                     }
                     else
                         MoverParameters->PantRearVolt = 0.0;
                 }
                 else {
-//                    Global::iPause ^= 2;
+//                    Global.iPause ^= 2;
                     MoverParameters->PantRearVolt = 0.0;
                 }
                 break;
@@ -3181,26 +3552,21 @@ bool TDynamicObject::Update(double dt, double dt1)
                     MoverParameters->PantFrontUp ) )// jeśli ma być podniesiony
             {
                 if (PantDiff > 0.001) // jeśli nie dolega do drutu
-                { // jeśli poprzednia wysokość jest mniejsza niż pożądana, zwiększyć kąt
-                    // dolnego
+                { // jeśli poprzednia wysokość jest mniejsza niż pożądana, zwiększyć kąt dolnego
                     // ramienia zgodnie z ciśnieniem
                     if (pantspeedfactor >
                         0.55 * PantDiff) // 0.55 to około pochodna kąta po wysokości
                         k += 0.55 * PantDiff; // ograniczenie "skoku" w danej klatce
                     else
                         k += pantspeedfactor; // dolne ramię
-                    // jeśli przekroczono kąt graniczny, zablokować pantograf (wymaga
-                    // interwencji
-                    // pociągu sieciowego)
+                    // jeśli przekroczono kąt graniczny, zablokować pantograf
+                    // (wymaga interwencji pociągu sieciowego)
                 }
-                else if (PantDiff < -0.001)
-                { // drut się obniżył albo pantograf
-                    // podniesiony za wysoko
+                else if (PantDiff < -0.001) {
+                    // drut się obniżył albo pantograf podniesiony za wysoko
                     // jeśli wysokość jest zbyt duża, wyznaczyć zmniejszenie kąta
-                    // jeśli zmniejszenie kąta jest zbyt duże, przejść do trybu łamania
-                    // pantografu
-                    // if (PantFrontDiff<-0.05) //skok w dół o 5cm daje złąmanie
-                    // pantografu
+                    // jeśli zmniejszenie kąta jest zbyt duże, przejść do trybu łamania pantografu
+                    // if (PantFrontDiff<-0.05) //skok w dół o 5cm daje złąmanie pantografu
                     k += 0.4 * PantDiff; // mniej niż pochodna kąta po wysokości
                 } // jeśli wysokość jest dobra, nic więcej nie liczyć
             }
@@ -3261,8 +3627,8 @@ bool TDynamicObject::Update(double dt, double dt1)
         }
 */
     }
-    else if (MoverParameters->EnginePowerSource.SourceType == InternalSource)
-        if (MoverParameters->EnginePowerSource.PowerType == SteamPower)
+    else if (MoverParameters->EnginePowerSource.SourceType == TPowerSource::InternalSource)
+        if (MoverParameters->EnginePowerSource.PowerType == TPowerType::SteamPower)
         // if (smPatykird1[0])
         { // Ra: animacja rozrządu parowozu, na razie nieoptymalizowane
             /* //Ra: tymczasowo wyłączone ze względu na porządkowanie animacji
@@ -3345,25 +3711,148 @@ bool TDynamicObject::Update(double dt, double dt1)
         }
 
     // NBMX Obsluga drzwi, MC: zuniwersalnione
+    // TODO: fully generalized door assembly
     if( ( dDoorMoveL < MoverParameters->DoorMaxShiftL )
      && ( true == MoverParameters->DoorLeftOpened ) ) {
-        dDoorMoveL += dt1 * MoverParameters->DoorOpenSpeed;
-        dDoorMoveL = std::min( dDoorMoveL, MoverParameters->DoorMaxShiftL );
+        // open left door
+        if( ( MoverParameters->TrainType == dt_EZT )
+         || ( MoverParameters->TrainType == dt_DMU ) ) {
+            // multi-unit vehicles typically open door only after unfolding the doorstep
+            if( ( MoverParameters->PlatformMaxShift == 0.0 ) // no wait if no doorstep
+             || ( MoverParameters->PlatformOpenMethod == 2 ) // no wait for rotating doorstep
+             || ( dDoorstepMoveL == 1.0 ) ) {
+                dDoorMoveL = std::min(
+                    MoverParameters->DoorMaxShiftL,
+                    dDoorMoveL + MoverParameters->DoorOpenSpeed * dt1 );
+            }
+        }
+        else {
+            dDoorMoveL = std::min(
+                MoverParameters->DoorMaxShiftL,
+                dDoorMoveL + MoverParameters->DoorOpenSpeed * dt1 );
+        }
+        DoorDelayL = 0.f;
     }
-    if( ( dDoorMoveL > 0 )
+    if( ( dDoorMoveL > 0.0 )
      && ( false == MoverParameters->DoorLeftOpened ) ) {
-        dDoorMoveL -= dt1 * MoverParameters->DoorCloseSpeed;
-        dDoorMoveL = std::max( dDoorMoveL, 0.0 );
+        // close left door
+        DoorDelayL += dt1;
+        if( DoorDelayL > MoverParameters->DoorCloseDelay ) {
+            dDoorMoveL -= dt1 * MoverParameters->DoorCloseSpeed;
+            dDoorMoveL = std::max( dDoorMoveL, 0.0 );
+        }
     }
     if( ( dDoorMoveR < MoverParameters->DoorMaxShiftR )
      && ( true == MoverParameters->DoorRightOpened ) ) {
-        dDoorMoveR += dt1 * MoverParameters->DoorOpenSpeed;
-        dDoorMoveR = std::min( dDoorMoveR, MoverParameters->DoorMaxShiftR );
-	}
-    if( ( dDoorMoveR > 0 )
+        // open right door
+        if( ( MoverParameters->TrainType == dt_EZT )
+         || ( MoverParameters->TrainType == dt_DMU ) ) {
+            // multi-unit vehicles typically open door only after unfolding the doorstep
+            if( ( MoverParameters->PlatformMaxShift == 0.0 ) // no wait if no doorstep
+             || ( MoverParameters->PlatformOpenMethod == 2 ) // no wait for rotating doorstep
+             || ( dDoorstepMoveR == 1.0 ) ) {
+                dDoorMoveR = std::min(
+                    MoverParameters->DoorMaxShiftR,
+                    dDoorMoveR + MoverParameters->DoorOpenSpeed * dt1 );
+            }
+        }
+        else {
+            dDoorMoveR = std::min(
+                MoverParameters->DoorMaxShiftR,
+                dDoorMoveR + MoverParameters->DoorOpenSpeed * dt1 );
+        }
+        DoorDelayR = 0.f;
+    }
+    if( ( dDoorMoveR > 0.0 )
      && ( false == MoverParameters->DoorRightOpened ) ) {
-        dDoorMoveR -= dt1 * MoverParameters->DoorCloseSpeed;
-        dDoorMoveR = std::max( dDoorMoveR, 0.0 );
+        // close right door
+        DoorDelayR += dt1;
+        if( DoorDelayR > MoverParameters->DoorCloseDelay ) {
+            dDoorMoveR -= dt1 * MoverParameters->DoorCloseSpeed;
+            dDoorMoveR = std::max( dDoorMoveR, 0.0 );
+        }
+    }
+    // doorsteps
+    if( ( dDoorstepMoveL < 1.0 )
+     && ( true == MoverParameters->DoorLeftOpened ) ) {
+        // unfold left doorstep
+        dDoorstepMoveL = std::min(
+            1.0,
+            dDoorstepMoveL + MoverParameters->PlatformSpeed * dt1 );
+    }
+    if( ( dDoorstepMoveL > 0.0 )
+     && ( false == MoverParameters->DoorLeftOpened )
+     && ( DoorDelayL > MoverParameters->DoorCloseDelay ) ) {
+        // fold left doorstep
+        if( ( MoverParameters->TrainType == dt_EZT )
+         || ( MoverParameters->TrainType == dt_DMU ) ) {
+            // multi-unit vehicles typically fold the doorstep only after closing the door
+            if( dDoorMoveL == 0.0 ) {
+                dDoorstepMoveL = std::max(
+                    0.0,
+                    dDoorstepMoveL - MoverParameters->PlatformSpeed * dt1 );
+            }
+        }
+        else {
+            dDoorstepMoveL = std::max(
+                0.0,
+                dDoorstepMoveL - MoverParameters->PlatformSpeed * dt1 );
+        }
+    }
+    if( ( dDoorstepMoveR < 1.0 )
+     && ( true == MoverParameters->DoorRightOpened ) ) {
+        // unfold right doorstep
+        dDoorstepMoveR = std::min(
+            1.0,
+            dDoorstepMoveR + MoverParameters->PlatformSpeed * dt1 );
+    }
+    if( ( dDoorstepMoveR > 0.0 )
+     && ( false == MoverParameters->DoorRightOpened )
+     && ( DoorDelayR > MoverParameters->DoorCloseDelay ) ) {
+        // fold right doorstep
+        if( ( MoverParameters->TrainType == dt_EZT )
+         || ( MoverParameters->TrainType == dt_DMU ) ) {
+            // multi-unit vehicles typically fold the doorstep only after closing the door
+            if( dDoorMoveR == 0.0 ) {
+                dDoorstepMoveR = std::max(
+                    0.0,
+                    dDoorstepMoveR - MoverParameters->PlatformSpeed * dt1 );
+            }
+        }
+        else {
+            dDoorstepMoveR = std::max(
+                0.0,
+                dDoorstepMoveR - MoverParameters->PlatformSpeed * dt1 );
+        }
+    }
+    // mirrors
+    if( MoverParameters->Vel > 5.0 ) {
+        // automatically fold mirrors when above velocity threshold
+        if( dMirrorMoveL > 0.0 ) {
+            dMirrorMoveL = std::max(
+                0.0,
+                dMirrorMoveL - 1.0 * dt1 );
+        }
+        if( dMirrorMoveR > 0.0 ) {
+            dMirrorMoveR = std::max(
+                0.0,
+                dMirrorMoveR - 1.0 * dt1 );
+        }
+    }
+    else {
+        // unfold mirror on the side with open doors, if not moving too fast
+        if( ( dMirrorMoveL < 1.0 )
+         && ( true == MoverParameters->DoorLeftOpened ) ) {
+            dMirrorMoveL = std::min(
+                1.0,
+                dMirrorMoveL + 1.0 * dt1 );
+        }
+        if( ( dMirrorMoveR < 1.0 )
+         && ( true == MoverParameters->DoorRightOpened ) ) {
+            dMirrorMoveR = std::min(
+                1.0,
+                dMirrorMoveR + 1.0 * dt1 );
+        }
     }
 
     // compartment lights
@@ -3393,6 +3882,8 @@ bool TDynamicObject::Update(double dt, double dt1)
         }
         MoverParameters->DerailReason = 0; //żeby tylko raz
     }
+
+    update_exchange( dt );
     if (MoverParameters->LoadStatus)
         LoadUpdate(); // zmiana modelu ładunku
 	
@@ -3433,6 +3924,7 @@ bool TDynamicObject::FastUpdate(double dt)
     // ResetdMoveLen();
     FastMove(dDOMoveLen);
 
+    update_exchange( dt );
     if (MoverParameters->LoadStatus)
         LoadUpdate(); // zmiana modelu ładunku
     return true; // Ra: chyba tak?
@@ -3478,25 +3970,27 @@ void TDynamicObject::TurnOff()
     btHeadSignals23.Turn( false );
 	btMechanik1.Turn( false );
 	btMechanik2.Turn( false );
+    btShutters1.Turn( false );
+    btShutters2.Turn( false );
 };
 
 // przeliczanie dźwięków, bo będzie słychać bez wyświetlania sektora z pojazdem
 void TDynamicObject::RenderSounds() {
 
-    if( Global::iPause != 0 ) { return; }
+    if( Global.iPause != 0 ) { return; }
 
-    double const dt { Timer::GetDeltaRenderTime() };
-    double volume { 0.0 };
-    double frequency { 1.0 };
+    double const dt{ Timer::GetDeltaRenderTime() };
+    double volume{ 0.0 };
+    double frequency{ 1.0 };
 
     m_powertrainsounds.render( *MoverParameters, dt );
 
     // NBMX dzwiek przetwornicy
     if( MoverParameters->ConverterFlag ) {
         frequency = (
-            MoverParameters->EngineType == ElectricSeriesMotor ?
-                MoverParameters->Voltage / ( MoverParameters->NominalVoltage * MoverParameters->RList[ MoverParameters->RlistSize ].Mn ) :
-                1.0 );
+            MoverParameters->EngineType == TEngineType::ElectricSeriesMotor ?
+            ( MoverParameters->RunningTraction.TractionVoltage / MoverParameters->NominalVoltage ) * MoverParameters->RList[ MoverParameters->RlistSize ].Mn :
+            1.0 );
         frequency = sConverter.m_frequencyoffset + sConverter.m_frequencyfactor * frequency;
         sConverter
             .pitch( clamp( frequency, 0.5, 1.25 ) ) // arbitrary limits )
@@ -3506,7 +4000,7 @@ void TDynamicObject::RenderSounds() {
         sConverter.stop();
     }
 
-    if( MoverParameters->VeselVolume > 0 ) {
+    if( MoverParameters->CompressorSpeed > 0.0 ) {
         // McZapkie! - dzwiek compressor.wav tylko gdy dziala sprezarka
         if( MoverParameters->CompressorFlag ) {
             sCompressor.play( sound_flags::exclusive | sound_flags::looping );
@@ -3526,14 +4020,40 @@ void TDynamicObject::RenderSounds() {
 
 
     // brake system and braking sounds:
+
+    // brake cylinder piston
+    auto const brakepressureratio { std::max( 0.0, MoverParameters->BrakePress ) / std::max( 1.0, MoverParameters->MaxBrakePress[ 3 ] ) };
+    if( m_lastbrakepressure != -1.f ) {
+        auto const quantizedratio { static_cast<int>( 15 * brakepressureratio ) };
+        auto const lastbrakepressureratio { std::max( 0.f, m_lastbrakepressure ) / std::max( 1.0, MoverParameters->MaxBrakePress[ 3 ] ) };
+        auto const quantizedratiochange { quantizedratio - static_cast<int>( 15 * lastbrakepressureratio ) };
+        if( quantizedratiochange > 0 ) {
+            m_brakecylinderpistonadvance
+                .pitch(
+                    true == m_brakecylinderpistonadvance.is_combined() ?
+                        quantizedratio * 0.01f :
+                        m_brakecylinderpistonadvance.m_frequencyoffset + m_brakecylinderpistonadvance.m_frequencyfactor * 1.f )
+                .play();
+        }
+        else if( quantizedratiochange < 0 ) {
+            m_brakecylinderpistonrecede
+                .pitch(
+                    true == m_brakecylinderpistonrecede.is_combined() ?
+                        quantizedratio * 0.01f :
+                        m_brakecylinderpistonrecede.m_frequencyoffset + m_brakecylinderpistonrecede.m_frequencyfactor * 1.f )
+                .play();
+        }
+    }
+
+    // air release
     if( m_lastbrakepressure != -1.f ) {
         // calculate rate of pressure drop in brake cylinder, once it's been initialized
-        auto const brakepressuredifference { m_lastbrakepressure - MoverParameters->BrakePress };
+        auto const brakepressuredifference{ m_lastbrakepressure - MoverParameters->BrakePress };
         m_brakepressurechange = interpolate<float>( m_brakepressurechange, brakepressuredifference / dt, 0.005f );
     }
     m_lastbrakepressure = MoverParameters->BrakePress;
-    // ensure some basic level of volume and scale it up depending on pressure in the cylinder; scale this by the leak rate
-    volume = 20 * m_brakepressurechange * ( 0.25 + 0.75 * ( std::max( 0.0, MoverParameters->BrakePress ) / std::max( 1.0, MoverParameters->MaxBrakePress[ 3 ] ) ) );
+    // ensure some basic level of volume and scale it up depending on pressure in the cylinder; scale this by the air release rate
+    volume = 20 * m_brakepressurechange * ( 0.25 + 0.75 * brakepressureratio );
     if( volume > 0.075f ) {
         rsUnbrake
             .gain( volume )
@@ -3561,12 +4081,13 @@ void TDynamicObject::RenderSounds() {
         sReleaser.stop();
     }
 
+    // slipping wheels
     if( MoverParameters->SlippingWheels ) {
 
         if( ( MoverParameters->UnitBrakeForce > 100.0 )
-         && ( GetVelocity() > 1.0 ) ) {
+            && ( GetVelocity() > 1.0 ) ) {
 
-            auto const velocitydifference { GetVelocity() / MoverParameters->Vmax };
+            auto const velocitydifference{ GetVelocity() / MoverParameters->Vmax };
             rsSlippery
                 .gain( rsSlippery.m_amplitudeoffset + rsSlippery.m_amplitudefactor * velocitydifference )
                 .play( sound_flags::exclusive | sound_flags::looping );
@@ -3584,10 +4105,11 @@ void TDynamicObject::RenderSounds() {
         sSand.stop();
     }
 
-    auto brakeforceratio { 0.0 };
+    // brakes
+    auto brakeforceratio{ 0.0 };
     if( //( false == mvOccupied->SlippingWheels ) &&
         ( MoverParameters->UnitBrakeForce > 10.0 )
-     && ( MoverParameters->Vel > 0.05 ) ) {
+        && ( MoverParameters->Vel > 0.05 ) ) {
 
         brakeforceratio =
             clamp(
@@ -3595,7 +4117,7 @@ void TDynamicObject::RenderSounds() {
                 0.0, 1.0 );
         rsBrake
             .pitch( rsBrake.m_frequencyoffset + MoverParameters->Vel * rsBrake.m_frequencyfactor )
-            .gain( rsBrake.m_amplitudeoffset + std::sqrt( brakeforceratio * interpolate( 0.4, 1.0, ( MoverParameters->Vel / ( 1 + MoverParameters->Vmax ) ) ) ) )
+            .gain( rsBrake.m_amplitudeoffset + std::sqrt( brakeforceratio * interpolate( 0.4, 1.0, ( MoverParameters->Vel / ( 1 + MoverParameters->Vmax ) ) ) ) * rsBrake.m_amplitudefactor )
             .play( sound_flags::exclusive | sound_flags::looping );
     }
     else {
@@ -3610,27 +4132,48 @@ void TDynamicObject::RenderSounds() {
     }
 
     // McZapkie-280302 - pisk mocno zacisnietych hamulcow
-    if( //( false == MoverParameters->SlippingWheels ) &&
-          ( MoverParameters->UnitBrakeForce > rsPisk.m_amplitudefactor )
-       && ( MoverParameters->Vel > 2.5 ) ) {
+    if( MoverParameters->Vel > 2.5 ) {
 
-        rsPisk
-            .gain( MoverParameters->UnitBrakeForce / ( rsPisk.m_amplitudefactor + 1 ) + rsPisk.m_amplitudeoffset )
-            .play( sound_flags::exclusive | sound_flags::looping );
+        volume = rsPisk.m_amplitudeoffset + interpolate( -1.0, 1.0, brakeforceratio ) * rsPisk.m_amplitudefactor;
+        if( volume > 0.075 ) {
+            rsPisk
+                .gain( volume )
+                .play( sound_flags::exclusive | sound_flags::looping );
+        }
     }
     else {
         // don't stop the sound too abruptly
         volume = std::max( 0.0, rsPisk.gain() - ( rsPisk.gain() * 2.5 * dt ) );
         rsPisk.gain( volume );
-        if( volume < 0.05 ) {
-            rsPisk.stop();
-        }
+    }
+    if( volume < 0.05 ) {
+        rsPisk.stop();
     }
 
     // other sounds
+    // load exchange
+    if( MoverParameters->LoadStatus & 1 ) {
+        m_exchangesounds.unloading.play( sound_flags::exclusive );
+    }
+    else {
+        m_exchangesounds.unloading.stop();
+    }
+    if( MoverParameters->LoadStatus & 2 ) {
+        m_exchangesounds.loading.play( sound_flags::exclusive );
+    }
+    else {
+        m_exchangesounds.loading.stop();
+    }
     // NBMX sygnal odjazdu
     if( MoverParameters->DoorClosureWarning ) {
-        if( MoverParameters->DepartureSignal ) {
+        if( ( MoverParameters->DepartureSignal )
+/*
+         || ( ( MoverParameters->DoorCloseCtrl = control::autonomous )
+           && ( ( ( false == MoverParameters->DoorLeftOpened )  && ( dDoorMoveL > 0.0 ) )
+             || ( ( false == MoverParameters->DoorRightOpened ) && ( dDoorMoveR > 0.0 ) ) ) )
+*/
+             ) {
+            // for the autonomous doors play the warning automatically whenever a door is closing
             // MC: pod warunkiem ze jest zdefiniowane w chk
             sDepartureSignal.play( sound_flags::exclusive | sound_flags::looping );
         }
@@ -3639,47 +4182,101 @@ void TDynamicObject::RenderSounds() {
         }
     }
     // NBMX Obsluga drzwi, MC: zuniwersalnione
-    if( ( true == MoverParameters->DoorLeftOpened )
-     && ( dDoorMoveL < MoverParameters->DoorMaxShiftL ) ) {
-
-        for( auto &door : m_doorsounds ) {
-            if( door.rsDoorClose.offset().x > 0.f ) {
-                // determine left side doors from their offset
-                door.rsDoorOpen.play( sound_flags::exclusive );
-                door.rsDoorClose.stop();
+    // TODO: fully generalized door assembly
+    if( true == MoverParameters->DoorLeftOpened ) {
+        // open left door
+        // door sounds
+        // due to potential wait for the doorstep we play the sound only during actual animation
+        if( ( dDoorMoveL > 0.0 )
+         && ( dDoorMoveL < MoverParameters->DoorMaxShiftL ) ) {
+            for( auto &door : m_doorsounds ) {
+                if( door.rsDoorClose.offset().x > 0.f ) {
+                    // determine left side doors from their offset
+                    door.rsDoorOpen.play( sound_flags::exclusive );
+                    door.rsDoorClose.stop();
+                }
+            }
+        }
+        // doorstep sounds
+        if( dDoorstepMoveL < 1.0 ) {
+            for( auto &door : m_doorsounds ) {
+                if( door.step_close.offset().x > 0.f ) {
+                    door.step_open.play( sound_flags::exclusive );
+                    door.step_close.stop();
+                }
             }
         }
     }
-    if( ( false == MoverParameters->DoorLeftOpened )
-     && ( dDoorMoveL > 0.01 ) ) {
-
-        for( auto &door : m_doorsounds ) {
-            if( door.rsDoorClose.offset().x > 0.f ) {
-                // determine left side doors from their offset
-                door.rsDoorClose.play( sound_flags::exclusive );
-                door.rsDoorOpen.stop();
+    if( false == MoverParameters->DoorLeftOpened ) {
+        // close left door
+        // door sounds can start playing before the door begins moving
+        if( dDoorMoveL > 0.0 ) {
+            for( auto &door : m_doorsounds ) {
+                if( door.rsDoorClose.offset().x > 0.f ) {
+                    // determine left side doors from their offset
+                    door.rsDoorClose.play( sound_flags::exclusive );
+                    door.rsDoorOpen.stop();
+                }
+            }
+        }
+        // doorstep sounds are played only when the doorstep is moving
+        if( ( dDoorstepMoveL > 0.0 )
+         && ( dDoorstepMoveL < 1.0 ) ) {
+            for( auto &door : m_doorsounds ) {
+                if( door.step_close.offset().x > 0.f ) {
+                    // determine left side doors from their offset
+                    door.step_close.play( sound_flags::exclusive );
+                    door.step_open.stop();
+                }
             }
         }
     }
-    if( ( true == MoverParameters->DoorRightOpened )
-     && ( dDoorMoveR < MoverParameters->DoorMaxShiftR ) ) {
 
-        for( auto &door : m_doorsounds ) {
-            if( door.rsDoorClose.offset().x < 0.f ) {
-                // determine left side doors from their offset
-                door.rsDoorOpen.play( sound_flags::exclusive );
-                door.rsDoorClose.stop();
+    if( true == MoverParameters->DoorRightOpened ) {
+        // open right door
+        // door sounds
+        // due to potential wait for the doorstep we play the sound only during actual animation
+        if( ( dDoorMoveR > 0.0 )
+         && ( dDoorMoveR < MoverParameters->DoorMaxShiftR ) ) {
+            for( auto &door : m_doorsounds ) {
+                if( door.rsDoorClose.offset().x < 0.f ) {
+                    // determine right side doors from their offset
+                    door.rsDoorOpen.play( sound_flags::exclusive );
+                    door.rsDoorClose.stop();
+                }
+            }
+        }
+        // doorstep sounds
+        if( dDoorstepMoveR < 1.0 ) {
+            for( auto &door : m_doorsounds ) {
+                if( door.step_close.offset().x < 0.f ) {
+                    door.step_open.play( sound_flags::exclusive );
+                    door.step_close.stop();
+                }
             }
         }
     }
-    if( ( false == MoverParameters->DoorRightOpened )
-     && ( dDoorMoveR > 0.01 ) ) {
-
-        for( auto &door : m_doorsounds ) {
-            if( door.rsDoorClose.offset().x < 0.f ) {
-                // determine left side doors from their offset
-                door.rsDoorClose.play( sound_flags::exclusive );
-                door.rsDoorOpen.stop();
+    if( false == MoverParameters->DoorRightOpened ) {
+        // close right door
+        // door sounds can start playing before the door begins moving
+        if( dDoorMoveR > 0.0 ) {
+            for( auto &door : m_doorsounds ) {
+                if( door.rsDoorClose.offset().x < 0.f ) {
+                    // determine left side doors from their offset
+                    door.rsDoorClose.play( sound_flags::exclusive );
+                    door.rsDoorOpen.stop();
+                }
+            }
+        }
+        // doorstep sounds are played only when the doorstep is moving
+        if( ( dDoorstepMoveR > 0.0 )
+         && ( dDoorstepMoveR < 1.0 ) ) {
+            for( auto &door : m_doorsounds ) {
+                if( door.step_close.offset().x < 0.f ) {
+                    // determine left side doors from their offset
+                    door.step_close.play( sound_flags::exclusive );
+                    door.step_open.stop();
+                }
             }
         }
     }
@@ -3696,53 +4293,94 @@ void TDynamicObject::RenderSounds() {
     else {
         sHorn2.stop();
     }
+    if( TestFlag( MoverParameters->WarningSignal, 4 ) ) {
+        sHorn3.play( sound_flags::exclusive | sound_flags::looping );
+    }
+    else {
+        sHorn3.stop();
+    }
     // szum w czasie jazdy
     if( ( GetVelocity() > 0.5 )
+     && ( false == m_bogiesounds.empty() )
      && ( // compound test whether the vehicle belongs to user-driven consist (as these don't emit outer noise in cab view)
-        FreeFlyModeFlag ? true : // in external view all vehicles emit outer noise
-        // Global::pWorld->train() == nullptr ? true : // (can skip this check, with no player train the external view is a given)
-        ctOwner == nullptr ? true : // standalone vehicle, can't be part of user-driven train
-        ctOwner != Global::pWorld->train()->Dynamic()->ctOwner ? true : // confirmed isn't a part of the user-driven train
-        Global::CabWindowOpen ? true : // sticking head out we get to hear outer noise
-        false ) ) {
+            FreeFlyModeFlag ? true : // in external view all vehicles emit outer noise
+            // Global.pWorld->train() == nullptr ? true : // (can skip this check, with no player train the external view is a given)
+            ctOwner == nullptr ? true : // standalone vehicle, can't be part of user-driven train
+            ctOwner != Global.pWorld->train()->Dynamic()->ctOwner ? true : // confirmed isn't a part of the user-driven train
+            Global.CabWindowOpen ? true : // sticking head out we get to hear outer noise
+            false ) ) {
 
-        volume = rsOuterNoise.m_amplitudefactor * MoverParameters->Vel + rsOuterNoise.m_amplitudeoffset;
-        frequency = rsOuterNoise.m_frequencyfactor * MoverParameters->Vel + rsOuterNoise.m_frequencyoffset;
+        auto const &bogiesound { m_bogiesounds.front() };
+        // frequency calculation
+        auto const normalizer { (
+            true == bogiesound.is_combined() ?
+                MoverParameters->Vmax * 0.01f :
+                1.f ) };
+        frequency =
+            bogiesound.m_frequencyoffset
+            + bogiesound.m_frequencyfactor * MoverParameters->Vel * normalizer;
 
+        // volume calculation
+        volume =
+            bogiesound.m_amplitudeoffset
+            + bogiesound.m_amplitudefactor * MoverParameters->Vel;
         if( brakeforceratio > 0.0 ) {
             // hamulce wzmagaja halas
-            volume *= 1 + 0.25 * brakeforceratio;
+            volume *= 1 + 0.125 * brakeforceratio;
         }
         // scale volume by track quality
-        volume *= ( 20.0 + MyTrack->iDamageFlag ) / 21;
-        // scale volume with vehicle speed
-        // TBD, TODO: disable the scaling for sounds combined from speed-based samples?
+        // TODO: track quality and/or environment factors as separate subroutine
         volume *=
             interpolate(
-                0.0, 1.0,
+                0.8, 1.2,
                 clamp(
-                    MoverParameters->Vel / 40.0,
+                    MyTrack->iQualityFlag / 20.0,
                     0.0, 1.0 ) );
+        // for single sample sounds muffle the playback at low speeds
+        if( false == bogiesound.is_combined() ) {
+            volume *=
+                interpolate(
+                    0.0, 1.0,
+                    clamp(
+                        MoverParameters->Vel / 40.0,
+                        0.0, 1.0 ) );
+        }
 
-        rsOuterNoise
-            .pitch( frequency ) // arbitrary limits to prevent the pitch going out of whack
-            .gain( volume )
-            .play( sound_flags::exclusive | sound_flags::looping );
+        if( volume > 0.05 ) {
+            // apply calculated parameters to all motor instances
+            for( auto &bogiesound : m_bogiesounds ) {
+                bogiesound
+                    .pitch( frequency ) // arbitrary limits to prevent the pitch going out of whack
+                    .gain( volume )
+                    .play( sound_flags::exclusive | sound_flags::looping );
+            }
+        }
+        else {
+            // stop all noise instances
+            for( auto &bogiesound : m_bogiesounds ) {
+                bogiesound.stop();
+            }
+        }
     }
     else {
         // don't play the optional ending sound if the listener switches views
-        rsOuterNoise.stop( false == FreeFlyModeFlag );
+        for( auto &bogiesound : m_bogiesounds ) {
+            bogiesound.stop( false == FreeFlyModeFlag );
+        }
     }
     // flat spot sound
-    if( ( GetVelocity() > 1.0 )
-     && ( MoverParameters->WheelFlat > 5.0 ) ) {
-        m_wheelflat
-            .pitch( m_wheelflat.m_frequencyoffset + std::abs( MoverParameters->nrot ) * m_wheelflat.m_frequencyfactor )
-            .gain( m_wheelflat.m_amplitudeoffset + m_wheelflat.m_amplitudefactor * ( ( 1.0 + ( MoverParameters->Vel / MoverParameters->Vmax ) + clamp( MoverParameters->WheelFlat / 60.0, 0.0, 1.0 ) ) / 3.0 ) )
-            .play( sound_flags::exclusive | sound_flags::looping );
-    }
-    else {
-        m_wheelflat.stop();
+    if( MoverParameters->CategoryFlag == 1 ) {
+        // trains only
+        if( ( GetVelocity() > 1.0 )
+         && ( MoverParameters->WheelFlat > 5.0 ) ) {
+            m_wheelflat
+                .pitch( m_wheelflat.m_frequencyoffset + std::abs( MoverParameters->nrot ) * m_wheelflat.m_frequencyfactor )
+                .gain( m_wheelflat.m_amplitudeoffset + m_wheelflat.m_amplitudefactor * ( ( 1.0 + ( MoverParameters->Vel / MoverParameters->Vmax ) + clamp( MoverParameters->WheelFlat / 60.0, 0.0, 1.0 ) ) / 3.0 ) )
+                .play( sound_flags::exclusive | sound_flags::looping );
+        }
+        else {
+            m_wheelflat.stop();
+        }
     }
 
     // youBy: dzwiek ostrych lukow i ciasnych zwrotek
@@ -3771,24 +4409,6 @@ void TDynamicObject::RenderSounds() {
 
     // McZapkie! - to wazne - SoundFlag wystawiane jest przez moje moduly
     // gdy zachodza pewne wydarzenia komentowane dzwiekiem.
-    if( TestFlag( MoverParameters->SoundFlag, sound::relay ) ) {
-        // przekaznik - gdy bezpiecznik, automatyczny rozruch itp
-        if( true == TestFlag( MoverParameters->SoundFlag, sound::parallel ) ) {
-            if( TestFlag( MoverParameters->SoundFlag, sound::loud ) )
-                m_powertrainsounds.dsbWejscie_na_bezoporow.play();
-            else
-                m_powertrainsounds.motor_parallel.play();
-        }
-        else {
-            m_powertrainsounds.motor_relay
-                .gain(
-                    true == TestFlag( MoverParameters->SoundFlag, sound::loud ) ?
-                        1.0f :
-                        0.8f )
-                .play();
-        }
-    }
-
     if( TestFlag( MoverParameters->SoundFlag, sound::pneumatic ) ) {
         // pneumatic relay
         dsbPneumaticRelay
@@ -3798,7 +4418,6 @@ void TDynamicObject::RenderSounds() {
                     0.8f )
             .play();
     }
-
     // couplers
     int couplerindex { 0 };
     for( auto &couplersounds : m_couplersounds ) {
@@ -3807,21 +4426,51 @@ void TDynamicObject::RenderSounds() {
 
         if( true == TestFlag( coupler.sounds, sound::bufferclash ) ) {
             // zderzaki uderzaja o siebie
-            couplersounds.dsbBufferClamp
-                .gain(
-                    true == TestFlag( coupler.sounds, sound::loud ) ?
-                        1.f :
-                        0.65f )
-                .play( sound_flags::exclusive );
+            if( true == TestFlag( coupler.sounds, sound::loud ) ) {
+                // loud clash
+                if( false == couplersounds.dsbBufferClamp_loud.empty() ) {
+                    // dedicated sound for loud clash
+                    couplersounds.dsbBufferClamp_loud
+                        .gain( 1.f )
+                        .play( sound_flags::exclusive );
+                }
+                else {
+                    // fallback on the standard sound
+                    couplersounds.dsbBufferClamp
+                        .gain( 1.f )
+                        .play( sound_flags::exclusive );
+                }
+            }
+            else {
+                // basic clash
+                couplersounds.dsbBufferClamp
+                    .gain( 0.65f )
+                    .play( sound_flags::exclusive );
+            }
         }
         if( true == TestFlag( coupler.sounds, sound::couplerstretch ) ) {
             // sprzegi sie rozciagaja
-            couplersounds.dsbCouplerStretch
-                .gain(
-                    true == TestFlag( coupler.sounds, sound::loud ) ?
-                        1.f :
-                        0.65f )
-                .play( sound_flags::exclusive );
+            if( true == TestFlag( coupler.sounds, sound::loud ) ) {
+                // loud stretch
+                if( false == couplersounds.dsbCouplerStretch_loud.empty() ) {
+                    // dedicated sound for loud stretch
+                    couplersounds.dsbCouplerStretch_loud
+                        .gain( 1.f )
+                        .play( sound_flags::exclusive );
+                }
+                else {
+                    // fallback on the standard sound
+                    couplersounds.dsbCouplerStretch
+                        .gain( 1.f )
+                        .play( sound_flags::exclusive );
+                }
+            }
+            else {
+                // basic clash
+                couplersounds.dsbCouplerStretch
+                    .gain( 0.65f )
+                    .play( sound_flags::exclusive );
+            }
         }
 
         coupler.sounds = 0;
@@ -3833,7 +4482,6 @@ void TDynamicObject::RenderSounds() {
 
 // special events
     if( MoverParameters->EventFlag ) {
-        // TODO: dedicated sound, played alongside regular noise
         // McZapkie: w razie wykolejenia
         if( true == TestFlag( MoverParameters->DamageFlag, dtrain_out ) ) {
             if( GetVelocity() > 0 ) {
@@ -3852,12 +4500,12 @@ void TDynamicObject::RenderSounds() {
 // wczytywanie pliku z danymi multimedialnymi (dzwieki)
 void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, std::string ReplacableSkin ) {
 
-    double dSDist;
-    Global::asCurrentDynamicPath = BaseDir;
+    replace_slashes( BaseDir );
+    Global.asCurrentDynamicPath = BaseDir;
     std::string asFileName = BaseDir + TypeName + ".mmd";
     std::string asLoadName;
     if( false == MoverParameters->LoadType.empty() ) {
-        asLoadName = BaseDir + MoverParameters->LoadType + ".t3d";
+        asLoadName = BaseDir + MoverParameters->LoadType;
     }
 
     std::string asAnimName;
@@ -3879,10 +4527,15 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
             m_materialdata.multi_textures = 0; // czy jest wiele tekstur wymiennych?
 			parser.getTokens();
 			parser >> asModel;
+            replace_slashes( asModel );
             if( asModel[asModel.size() - 1] == '#' ) // Ra 2015-01: nie podoba mi siê to
             { // model wymaga wielu tekstur wymiennych
                 m_materialdata.multi_textures = 1;
                 asModel.erase( asModel.length() - 1 );
+            }
+            // name can contain leading slash, erase it to avoid creation of double slashes when the name is combined with current directory
+            if( asModel[ 0 ] == '/' ) {
+                asModel.erase( 0, 1 );
             }
             std::size_t i = asModel.find( ',' );
             if ( i != std::string::npos )
@@ -3893,12 +4546,11 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                 m_materialdata.multi_textures = clamp( m_materialdata.multi_textures, 0, 1 ); // na razie ustawiamy na 1
             }
             asModel = BaseDir + asModel; // McZapkie 2002-07-20: dynamics maja swoje modele w dynamics/basedir
-            Global::asCurrentTexturePath = BaseDir; // biezaca sciezka do tekstur to dynamic/...
+            Global.asCurrentTexturePath = BaseDir; // biezaca sciezka do tekstur to dynamic/...
             mdModel = TModelsManager::GetModel(asModel, true);
-            assert( mdModel != nullptr ); // TODO: handle this more gracefully than all going to shit
             if (ReplacableSkin != "none")
             {
-				std::string nowheretexture = TextureTest(Global::asCurrentTexturePath + "nowhere"); // na razie prymitywnie
+                std::string nowheretexture = TextureTest( "nowhere" ); // na razie prymitywnie
                 if( false == nowheretexture.empty() ) {
                     m_materialdata.replacable_skins[ 4 ] = GfxRenderer.Fetch_Material( nowheretexture );
                 }
@@ -3912,7 +4564,8 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                         int skinindex = 0;
                         std::string texturename; nameparser >> texturename;
                         while( ( texturename != "" ) && ( skinindex < 4 ) ) {
-                            m_materialdata.replacable_skins[ skinindex + 1 ] = GfxRenderer.Fetch_Material( Global::asCurrentTexturePath + texturename );
+							std::replace(texturename.begin(), texturename.end(), '\\', '/');
+                            m_materialdata.replacable_skins[ skinindex + 1 ] = GfxRenderer.Fetch_Material( texturename );
                             ++skinindex;
                             texturename = ""; nameparser >> texturename;
                         }
@@ -3920,9 +4573,10 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     }
                     else {
                         // otherwise try the basic approach
+                        erase_extension( ReplacableSkin );
                         int skinindex = 0;
                         do {
-                            material_handle material = GfxRenderer.Fetch_Material( Global::asCurrentTexturePath + ReplacableSkin + "," + std::to_string( skinindex + 1 ), true );
+                            material_handle material = GfxRenderer.Fetch_Material( ReplacableSkin + "," + std::to_string( skinindex + 1 ), true );
                             if( material == null_handle ) {
                                 break;
                             }
@@ -3932,12 +4586,12 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                         m_materialdata.multi_textures = skinindex;
                         if( m_materialdata.multi_textures == 0 ) {
                             // zestaw nie zadziałał, próbujemy normanie
-                            m_materialdata.replacable_skins[ 1 ] = GfxRenderer.Fetch_Material( Global::asCurrentTexturePath + ReplacableSkin );
+                            m_materialdata.replacable_skins[ 1 ] = GfxRenderer.Fetch_Material( ReplacableSkin );
                         }
                     }
                 }
                 else {
-                    m_materialdata.replacable_skins[ 1 ] = GfxRenderer.Fetch_Material( Global::asCurrentTexturePath + ReplacableSkin );
+                    m_materialdata.replacable_skins[ 1 ] = GfxRenderer.Fetch_Material( ReplacableSkin );
                 }
                 if( GfxRenderer.Material( m_materialdata.replacable_skins[ 1 ] ).has_alpha ) {
                     // tekstura -1 z kanałem alfa - nie renderować w cyklu nieprzezroczystych
@@ -3966,7 +4620,8 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
             }
             if( !MoverParameters->LoadAccepted.empty() ) {
 
-                if( MoverParameters->EnginePowerSource.SourceType == CurrentCollector ) {
+                if( ( MoverParameters->EnginePowerSource.SourceType == TPowerSource::CurrentCollector )
+                 && ( asLoadName == "pantstate" ) ) {
                     // wartość niby "pantstate" - nazwa dla formalności, ważna jest ilość
                     if( MoverParameters->Load == 1 ) {
                         MoverParameters->PantFront( true );
@@ -3997,9 +4652,13 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                 }
                 else {
                     // Ra: tu wczytywanie modelu ładunku jest w porządku
-                   if( false == asLoadName.empty() ) {
-                        // try first specialized version of the load model, vehiclename_loadname
-                        mdLoad = TModelsManager::GetModel( BaseDir + TypeName + "_" + MoverParameters->LoadType + ".t3d", true );
+                    if( false == asLoadName.empty() ) {
+                         // try first specialized version of the load model, vehiclename_loadname
+                        auto const specializedloadfilename { BaseDir + TypeName + "_" + MoverParameters->LoadType };
+                        if( ( true == FileExists( specializedloadfilename + ".e3d" ) )
+                         || ( true == FileExists( specializedloadfilename + ".t3d" ) ) ) {
+                            mdLoad = TModelsManager::GetModel( specializedloadfilename, true );
+                        }
                         if( mdLoad == nullptr ) {
                             // if this fails, try generic load model
                             mdLoad = TModelsManager::GetModel( asLoadName, true );
@@ -4007,7 +4666,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     }
                 }
             }
-            Global::asCurrentTexturePath = szTexturePath; // z powrotem defaultowa sciezka do tekstur
+            Global.asCurrentTexturePath = szTexturePath; // z powrotem defaultowa sciezka do tekstur
             do {
 				token = "";
 				parser.getTokens(); parser >> token;
@@ -4019,92 +4678,75 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 */
                     if( true == pAnimations.empty() )
                     { // jeśli nie ma jeszcze tabeli animacji, można odczytać nowe ilości
-						int co = 0, ile = -1;
+                        int co = 0;
                         iAnimations = 0;
+                        int ile;
                         do
                         { // kolejne liczby to ilość animacj, -1 to znacznik końca
+                            ile = -1;
 							parser.getTokens( 1, false );
                             parser >> ile; // ilość danego typu animacji
-                            // if (co==ANIM_PANTS)
-                            // if (!Global::bLoadTraction)
-                            //  if (!DebugModeFlag) //w debugmode pantografy mają "niby działać"
-                            //   ile=0; //wyłączenie animacji pantografów
-                            if (co < ANIM_TYPES)
-                                if (ile >= 0)
-                                {
-                                    iAnimType[co] = ile; // zapamiętanie
-                                    iAnimations += ile; // ogólna ilość animacji
-                                }
+                            if (ile >= 0)
+                            {
+                                iAnimType[co] = ile; // zapamiętanie
+                                iAnimations += ile; // ogólna ilość animacji
+                            }
+                            else {
+                                iAnimType[co] = 0;
+                            }
                             ++co;
-                        } while (ile >= 0); //-1 to znacznik końca
+                        } while ( (ile >= 0) && (co < ANIM_TYPES) ); //-1 to znacznik końca
 
-						while( co < ANIM_TYPES ) {
-							iAnimType[ co++ ] = 0; // zerowanie pozostałych
-                        }
-						parser.getTokens(); parser >> token; // NOTE: should this be here? seems at best superfluous
-                    }
-                    // WriteLog("Total animations: "+AnsiString(iAnimations));
-                }
-
-                if( true == pAnimations.empty() ) {
-                    // Ra: tworzenie tabeli animacji, jeśli jeszcze nie było
-/*
-                    // disabled as default animation amounts are no longer supported
-                    if( !iAnimations ) {
-                        // jeśli nie podano jawnie, ile ma być animacji
-                        iAnimations = 28; // tyle było kiedyś w każdym pojeździe (2 wiązary wypadły)
-                    }
-*/
-                    /* //pojazd może mieć pantograf do innych celów niż napęd
-                    if (MoverParameters->EnginePowerSource.SourceType!=CurrentCollector)
-                    {//nie będzie pantografów, to się trochę uprości
-                     iAnimations-=iAnimType[ANIM_PANTS]; //domyślnie były 2 pantografy
-                     iAnimType[ANIM_PANTS]=0;
-                    }
-                    */
-                    pAnimations.resize( iAnimations );
-                    int i, j, k = 0, sm = 0;
-                    for (j = 0; j < ANIM_TYPES; ++j)
-                        for (i = 0; i < iAnimType[j]; ++i)
+                        pAnimations.resize( iAnimations );
+                        int i, j, k = 0, sm = 0;
+                        for (j = 0; j < ANIM_TYPES; ++j)
+                            for (i = 0; i < iAnimType[j]; ++i)
+                            {
+                                if (j == ANIM_PANTS) // zliczamy poprzednie animacje
+                                    if (!pants)
+                                        if (iAnimType[ANIM_PANTS]) // o ile jakieś pantografy są (a domyślnie są)
+                                            pants = &pAnimations[k]; // zapamiętanie na potrzeby wyszukania submodeli
+                                pAnimations[k].iShift = sm; // przesunięcie do przydzielenia wskaźnika
+                                sm += pAnimations[k++].TypeSet(j); // ustawienie typu animacji i zliczanie tablicowanych submodeli
+                            }
+                        if (sm) // o ile są bardziej złożone animacje
                         {
-                            if (j == ANIM_PANTS) // zliczamy poprzednie animacje
-                                if (!pants)
-                                    if (iAnimType[ANIM_PANTS]) // o ile jakieś pantografy są (a domyślnie są)
-                                        pants = &pAnimations[k]; // zapamiętanie na potrzeby wyszukania submodeli
-                            pAnimations[k].iShift = sm; // przesunięcie do przydzielenia wskaźnika
-                            sm += pAnimations[k++].TypeSet(j); // ustawienie typu animacji i zliczanie tablicowanych submodeli
+                            pAnimated = new TSubModel *[sm]; // tabela na animowane submodele
+                            for (k = 0; k < iAnimations; ++k)
+                                pAnimations[k].smElement = pAnimated + pAnimations[k].iShift; // przydzielenie wskaźnika do tabelki
                         }
-                    if (sm) // o ile są bardziej złożone animacje
-                    {
-                        pAnimated = new TSubModel *[sm]; // tabela na animowane submodele
-                        for (k = 0; k < iAnimations; ++k)
-                            pAnimations[k].smElement = pAnimated + pAnimations[k].iShift; // przydzielenie wskaźnika do tabelki
                     }
                 }
 
-                if(token == "lowpolyinterior:") {
+                else if(token == "lowpolyinterior:") {
 					// ABu: wnetrze lowpoly
 					parser.getTokens();
 					parser >> asModel;
+
+                    replace_slashes( asModel );
+                    if( asModel[ 0 ] == '/' ) {
+                        // filename can potentially begin with a slash, and we don't need it
+                        asModel.erase( 0, 1 );
+                    }
+
                     asModel = BaseDir + asModel; // McZapkie-200702 - dynamics maja swoje modele w dynamic/basedir
-                    Global::asCurrentTexturePath = BaseDir; // biezaca sciezka do tekstur to dynamic/...
+                    Global.asCurrentTexturePath = BaseDir; // biezaca sciezka do tekstur to dynamic/...
                     mdLowPolyInt = TModelsManager::GetModel(asModel, true);
-                    // Global::asCurrentTexturePath=AnsiString(szTexturePath); //kiedyś uproszczone wnętrze mieszało tekstury nieba
                 }
 
-				if( token == "brakemode:" ) {
+				else if( token == "brakemode:" ) {
                 // Ra 15-01: gałka nastawy hamulca
 					parser.getTokens();
 					parser >> asAnimName;
-                    smBrakeMode = mdModel->GetFromName(asAnimName);
+                    smBrakeMode = GetSubmodelFromName( mdModel, asAnimName );
                     // jeszcze wczytać kąty obrotu dla poszczególnych ustawień
                 }
 
-				if( token == "loadmode:" ) {
+				else if( token == "loadmode:" ) {
                 // Ra 15-01: gałka nastawy hamulca
 					parser.getTokens();
 					parser >> asAnimName;
-                    smLoadMode = mdModel->GetFromName(asAnimName);
+                    smLoadMode = GetSubmodelFromName( mdModel, asAnimName );
                     // jeszcze wczytać kąty obrotu dla poszczególnych ustawień
                 }
 
@@ -4116,14 +4758,14 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     for (i = 0; i < iAnimType[ANIM_WHEELS]; ++i) // liczba osi
                     { // McZapkie-050402: wyszukiwanie kol o nazwie str*
                         asAnimName = token + std::to_string(i + 1);
-                        pAnimations[i].smAnimated = mdModel->GetFromName(asAnimName); // ustalenie submodelu
+                        pAnimations[i].smAnimated = GetSubmodelFromName( mdModel, asAnimName );
                         if (pAnimations[i].smAnimated)
                         { //++iAnimatedAxles;
                             pAnimations[i].smAnimated->WillBeAnimated(); // wyłączenie optymalizacji transformu
 							pAnimations[i].yUpdate = std::bind( &TDynamicObject::UpdateAxle, this, std::placeholders::_1 );
                             pAnimations[i].fMaxDist = 50 * MoverParameters->WheelDiameter; // nie kręcić w większej odległości
                             pAnimations[i].fMaxDist *= pAnimations[i].fMaxDist * MoverParameters->WheelDiameter; // 50m do kwadratu, a średnica do trzeciej
-                            pAnimations[i].fMaxDist *= Global::fDistanceFactor; // współczynnik przeliczeniowy jakości ekranu
+                            pAnimations[i].fMaxDist *= Global.fDistanceFactor; // współczynnik przeliczeniowy jakości ekranu
                         }
                     }
                     // Ra: ustawianie indeksów osi
@@ -4170,7 +4812,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                  // Ra: pantografy po nowemu mają literki i numerki
                 }
                 // Pantografy - Winger 160204
-				if( token == "animpantrd1prefix:" ) {
+				else if( token == "animpantrd1prefix:" ) {
                 // prefiks ramion dolnych 1
 					parser.getTokens(); parser >> token;
                     float4x4 m; // macierz do wyliczenia pozycji i wektora ruchu pantografu
@@ -4179,7 +4821,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                         for (int i = 0; i < iAnimType[ANIM_PANTS]; i++)
                         { // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
                             asAnimName = token + std::to_string(i + 1);
-                            sm = mdModel->GetFromName(asAnimName);
+                            sm = GetSubmodelFromName( mdModel, asAnimName );
                             pants[i].smElement[0] = sm; // jak NULL, to nie będzie animowany
                             if (sm)
                             { // w EP09 wywalało się tu z powodu NULL
@@ -4188,27 +4830,22 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                                 // m(3)[1]=m[3][1]+0.054; //w górę o wysokość ślizgu (na razie tak)
                                 if ((mdModel->Flags() & 0x8000) == 0) // jeśli wczytano z T3D
                                     m.InitialRotate(); // może być potrzebny dodatkowy obrót, jeśli wczytano z T3D, tzn. przed wykonaniem Init()
-                                pants[i].fParamPants->vPos.z =
-                                    m[3][0]; // przesunięcie w bok (asymetria)
-                                pants[i].fParamPants->vPos.y =
-                                    m[3][1]; // przesunięcie w górę odczytane z modelu
+                                pants[i].fParamPants->vPos.z = m[3][0]; // przesunięcie w bok (asymetria)
+                                pants[i].fParamPants->vPos.y = m[3][1]; // przesunięcie w górę odczytane z modelu
                                 if ((sm = pants[i].smElement[0]->ChildGet()) != NULL)
                                 { // jeśli ma potomny, można policzyć długość (odległość potomnego od osi obrotu)
                                     m = float4x4(*sm->GetMatrix()); // wystarczyłby wskaźnik, nie trzeba kopiować
                                     // może trzeba: pobrać macierz dolnego ramienia, wyzerować przesunięcie, przemnożyć przez macierz górnego
                                     pants[i].fParamPants->fHoriz = -fabs(m[3][1]);
-                                    pants[i].fParamPants->fLenL1 =
-                                        hypot(m[3][1], m[3][2]); // po osi OX nie potrzeba
-                                    pants[i].fParamPants->fAngleL0 =
-                                        atan2(fabs(m[3][2]), fabs(m[3][1]));
+                                    pants[i].fParamPants->fLenL1 = hypot(m[3][1], m[3][2]); // po osi OX nie potrzeba
+                                    pants[i].fParamPants->fAngleL0 = atan2(fabs(m[3][2]), fabs(m[3][1]));
                                     // if (pants[i].fParamPants->fAngleL0<M_PI_2)
                                     // pants[i].fParamPants->fAngleL0+=M_PI; //gdyby w odwrotną stronę wyszło
                                     // if
                                     // ((pants[i].fParamPants->fAngleL0<0.03)||(pants[i].fParamPants->fAngleL0>0.09))
                                     // //normalnie ok. 0.05
                                     // pants[i].fParamPants->fAngleL0=pants[i].fParamPants->fAngleL;
-                                    pants[i].fParamPants->fAngleL = pants[i].fParamPants->fAngleL0; // początkowy kąt dolnego
-                                    // ramienia
+                                    pants[i].fParamPants->fAngleL = pants[i].fParamPants->fAngleL0; // początkowy kąt dolnego ramienia
                                     if ((sm = sm->ChildGet()) != NULL)
                                     { // jeśli dalej jest ślizg, można policzyć długość górnego ramienia
                                         m = float4x4(*sm->GetMatrix()); // wystarczyłby wskaźnik,
@@ -4234,12 +4871,9 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                                         float det = Det(m);
                                         if (std::fabs(det - 1.0) < 0.001) // dopuszczamy 1 promil błędu na skalowaniu ślizgu
                                         { // skalowanie jest w normie, można pobrać wymiary z modelu
-                                            pants[i].fParamPants->fHeight =
-                                                sm->MaxY(m); // przeliczenie maksimum wysokości wierzchołków względem macierzy
-                                            pants[i].fParamPants->fHeight -=
-                                                m[3][1]; // odjęcie wysokości pivota ślizgu
-                                            pants[i].fParamPants->vPos.x =
-                                                m[3][2]; // przy okazji odczytać z modelu pozycję w długości
+                                            pants[i].fParamPants->fHeight = sm->MaxY(m); // przeliczenie maksimum wysokości wierzchołków względem macierzy
+                                            pants[i].fParamPants->fHeight -= m[3][1]; // odjęcie wysokości pivota ślizgu
+                                            pants[i].fParamPants->vPos.x = m[3][2]; // przy okazji odczytać z modelu pozycję w długości
                                             // ErrorLog("Model OK: "+asModel+",
                                             // height="+pants[i].fParamPants->fHeight);
                                             // ErrorLog("Model OK: "+asModel+",
@@ -4247,17 +4881,19 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                                         }
                                         else
                                         { // gdy ktoś przesadził ze skalowaniem
-                                            pants[i].fParamPants->fHeight =
-                                                0.0; // niech będzie odczyt z pantfactors:
-                                            ErrorLog("Bad model: " + asModel + ", scale of " +
-                                                     (sm->pName) + " is " +
-                                                     std::to_string(100.0 * det) + "%");
+                                            pants[i].fParamPants->fHeight = 0.0; // niech będzie odczyt z pantfactors:
+                                            ErrorLog(
+                                                "Bad model: " + asModel + ", scale of " + (sm->pName) + " is " + std::to_string(100.0 * det) + "%",
+                                                logtype::model );
                                         }
                                     }
                                 }
                             }
-                            else
-                                ErrorLog("Bad model: " + asFileName + " - missed submodel " + asAnimName); // brak ramienia
+                            else {
+                                // brak ramienia
+                                pants[ i ].fParamPants->fHeight = 0.0; // niech będzie odczyt z pantfactors:
+                                ErrorLog( "Bad model: " + asFileName + " - missed submodel " + asAnimName, logtype::model );
+                            }
                         }
                 }
 
@@ -4270,7 +4906,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 						for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
                             // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
 							asAnimName = token + std::to_string( i + 1 );
-							sm = mdModel->GetFromName( asAnimName );
+                            sm = GetSubmodelFromName( mdModel, asAnimName );
 							pants[ i ].smElement[ 1 ] = sm; // jak NULL, to nie będzie animowany
 							if( sm ) { // w EP09 wywalało się tu z powodu NULL
                                 sm->WillBeAnimated();
@@ -4291,7 +4927,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                                 }
                             }
                             else
-								ErrorLog( "Bad model: " + asFileName + " - missed submodel " + asAnimName ); // brak ramienia
+								ErrorLog( "Bad model: " + asFileName + " - missed submodel " + asAnimName, logtype::model ); // brak ramienia
 						}
                     }
                 }
@@ -4299,45 +4935,51 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 				else if( token == "animpantrg1prefix:" ) {
                  // prefiks ramion górnych 1
 					parser.getTokens(); parser >> token;
-					if( pants ) {
-						for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
+                    if( pants ) {
+                        for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
                             // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
-							asAnimName = token + std::to_string( i + 1 );
-							pants[ i ].smElement[ 2 ] = mdModel->GetFromName( asAnimName );
-							pants[ i ].smElement[ 2 ]->WillBeAnimated();
-						}
+                            asAnimName = token + std::to_string( i + 1 );
+                            pants[ i ].smElement[ 2 ] = GetSubmodelFromName( mdModel, asAnimName );
+                            if( pants[ i ].smElement[ 2 ] ) {
+                                pants[ i ].smElement[ 2 ]->WillBeAnimated();
+                            }
                         }
+                    }
                 }
 
 				else if( token == "animpantrg2prefix:" ) {
                  // prefiks ramion górnych 2
-					parser.getTokens(); parser >> token;
-					if( pants ) {
-						for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
+                    parser.getTokens(); parser >> token;
+                    if( pants ) {
+                        for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
                             // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
-							asAnimName = token + std::to_string( i + 1 );
-							pants[ i ].smElement[ 3 ] = mdModel->GetFromName( asAnimName );
-							pants[ i ].smElement[ 3 ]->WillBeAnimated();
-						}
+                            asAnimName = token + std::to_string( i + 1 );
+                            pants[ i ].smElement[ 3 ] = GetSubmodelFromName( mdModel, asAnimName );
+                            if( pants[ i ].smElement[ 3 ] ) {
+                                pants[ i ].smElement[ 3 ]->WillBeAnimated();
+                            }
                         }
+                    }
                 }
 
 				else if( token == "animpantslprefix:" ) {
                  // prefiks ślizgaczy
 					parser.getTokens(); parser >> token;
-					if( pants ) {
-						for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
+                    if( pants ) {
+                        for( int i = 0; i < iAnimType[ ANIM_PANTS ]; i++ ) {
                             // Winger 160204: wyszukiwanie max 2 patykow o nazwie str*
-							asAnimName = token + std::to_string( i + 1 );
-							pants[ i ].smElement[ 4 ] = mdModel->GetFromName( asAnimName );
-							pants[ i ].smElement[ 4 ]->WillBeAnimated();
-/*							pants[ i ].yUpdate = UpdatePant;
-*/							pants[ i ].yUpdate = std::bind( &TDynamicObject::UpdatePant, this, std::placeholders::_1 );
-							pants[ i ].fMaxDist = 300 * 300; // nie podnosić w większej odległości
-							pants[ i ].iNumber = i;
-						}
+                            asAnimName = token + std::to_string( i + 1 );
+                            pants[ i ].smElement[ 4 ] = GetSubmodelFromName( mdModel, asAnimName );
+                            if( pants[ i ].smElement[ 4 ] ) {
+                                pants[ i ].smElement[ 4 ]->WillBeAnimated();
+                                pants[ i ].yUpdate = std::bind( &TDynamicObject::UpdatePant, this, std::placeholders::_1 );
+                                pants[ i ].fMaxDist = 300 * 300; // nie podnosić w większej odległości
+                                pants[ i ].iNumber = i;
+                            }
                         }
+                    }
                 }
+
 				else if( token == "pantfactors:" ) {
                  // Winger 010304:
                     // parametry pantografow
@@ -4360,34 +5002,38 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     if( pants ) {
                         for( int i = 0; i < iAnimType[ ANIM_PANTS ]; ++i ) {
                             // przepisanie współczynników do pantografów (na razie nie będzie lepiej)
-                            pants[ i ].fParamPants->fAngleL = pants[ i ].fParamPants->fAngleL0; // początkowy kąt dolnego ramienia
-                            pants[ i ].fParamPants->fAngleU = pants[ i ].fParamPants->fAngleU0; // początkowy kąt
+                            auto &pantograph { *(pants[ i ].fParamPants) };
+
+                            pantograph.fAngleL = pantograph.fAngleL0; // początkowy kąt dolnego ramienia
+                            pantograph.fAngleU = pantograph.fAngleU0; // początkowy kąt
                             // pants[i].fParamPants->PantWys=1.22*sin(pants[i].fParamPants->fAngleL)+1.755*sin(pants[i].fParamPants->fAngleU);
                             // //wysokość początkowa
                             // pants[i].fParamPants->PantWys=1.176289*sin(pants[i].fParamPants->fAngleL)+1.724482197*sin(pants[i].fParamPants->fAngleU);
                             // //wysokość początkowa
-                            if( pants[ i ].fParamPants->fHeight == 0.0 ) // gdy jest nieprawdopodobna wartość (np. nie znaleziony ślizg)
+                            if( pantograph.fHeight == 0.0 ) // gdy jest nieprawdopodobna wartość (np. nie znaleziony ślizg)
                             { // gdy pomiary modelu nie udały się, odczyt podanych parametrów z MMD
-                                pants[ i ].fParamPants->vPos.x =
+                                pantograph.vPos.x =
                                     ( i & 1 ) ?
                                         pant2x :
                                         pant1x;
-                                pants[ i ].fParamPants->fHeight =
+                                pantograph.fHeight =
                                     ( i & 1 ) ?
                                         pant2h :
                                         pant1h; // wysokość ślizgu jest zapisana w MMD
                             }
-                            pants[ i ].fParamPants->PantWys =
-                                pants[ i ].fParamPants->fLenL1 * sin( pants[ i ].fParamPants->fAngleL ) +
-                                pants[ i ].fParamPants->fLenU1 * sin( pants[ i ].fParamPants->fAngleU ) +
-                                pants[ i ].fParamPants->fHeight; // wysokość początkowa
-                            // pants[i].fParamPants->vPos.y=panty-panth-pants[i].fParamPants->PantWys;
-                            // //np. 4.429-0.097=4.332=~4.335
-                            // pants[i].fParamPants->vPos.z=0; //niezerowe dla pantografów
-                            // asymetrycznych
-                            pants[ i ].fParamPants->PantTraction = pants[ i ].fParamPants->PantWys;
+                            pantograph.PantWys =
+                                pantograph.fLenL1 * sin( pantograph.fAngleL ) +
+                                pantograph.fLenU1 * sin( pantograph.fAngleU ) +
+                                pantograph.fHeight; // wysokość początkowa
+                            // pants[i].fParamPants->vPos.y=panty-panth-pants[i].fParamPants->PantWys; //np. 4.429-0.097=4.332=~4.335
+                            if( pantograph.vPos.y == 0.0 ) {
+                                // crude fallback, place the pantograph(s) atop of the vehicle-sized box
+                                pantograph.vPos.y = MoverParameters->Dim.H - pantograph.fHeight - pantograph.PantWys;
+                            }
+                            // pants[i].fParamPants->vPos.z=0; //niezerowe dla pantografów asymetrycznych
+                            pantograph.PantTraction = pantograph.PantWys;
                             // połowa szerokości ślizgu; jest w "Power: CSW="
-                            pants[ i ].fParamPants->fWidth = 0.5 * MoverParameters->EnginePowerSource.CollectorParameters.CSW;
+                            pantograph.fWidth = 0.5 * MoverParameters->EnginePowerSource.CollectorParameters.CSW;
 
                             // create sound emitters for the pantograph
                             m_pantographsounds.emplace_back();
@@ -4434,7 +5080,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                        (k)
                     */
                     MoverParameters->EnginePowerSource.PowerType =
-                        SteamPower; // Ra: po chamsku, ale z CHK nie działa
+                        TPowerType::SteamPower; // Ra: po chamsku, ale z CHK nie działa
                 }
 
 				else if( token == "animreturnprefix:" ) {
@@ -4463,11 +5109,13 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                  // prefiks wahaczy
 					parser.getTokens(); parser >> token;
                     asAnimName = "";
-                    for (int i = 1; i <= 4; i++)
-                    { // McZapkie-050402: wyszukiwanie max 4 wahaczy o nazwie str*
-                        asAnimName = token + std::to_string(i);
-                        smWahacze[i - 1] = mdModel->GetFromName(asAnimName);
-                        smWahacze[i - 1]->WillBeAnimated();
+                    for( int i = 1; i <= 4; ++i ) {
+                        // McZapkie-050402: wyszukiwanie max 4 wahaczy o nazwie str*
+                        asAnimName = token + std::to_string( i );
+                        smWahacze[ i - 1 ] = GetSubmodelFromName( mdModel, asAnimName );
+                        if( smWahacze[ i - 1 ] ) {
+                            smWahacze[ i - 1 ]->WillBeAnimated();
+                        }
                     }
 					parser.getTokens(); parser >> token;
 					if( token == "pendulumamplitude:" ) {
@@ -4475,23 +5123,6 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 						parser >> fWahaczeAmp;
 					}
                 }
-                /*
-				else if (str == AnsiString("engineer:"))
-                { // nazwa submodelu maszynisty
-                    str = Parser->GetNextSymbol();
-                    smMechanik0 = mdModel->GetFromName(str.c_str());
-                    if (!smMechanik0)
-                    { // jak nie ma bez numerka, to może jest z
-                        // numerkiem?
-                        smMechanik0 = mdModel->GetFromName(AnsiString(str + "1").c_str());
-                        smMechanik1 = mdModel->GetFromName(AnsiString(str + "2").c_str());
-                    }
-                    // aby dało się go obracać, musi mieć włączoną animację w T3D!
-                    // if (!smMechanik1) //jeśli drugiego nie ma
-                    // if (smMechanik0) //a jest pierwszy
-                    //  smMechanik0->WillBeAnimated(); //to będziemy go obracać
-                }
-				*/
 
 				else if( token == "animdoorprefix:" ) {
                     // nazwa animowanych drzwi
@@ -4503,7 +5134,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     { // NBMX wrzesien 2003: wyszukiwanie drzwi o nazwie str*
                       // ustalenie submodelu
                         asAnimName = token + std::to_string(i + 1);
-                        pAnimations[i + j].smAnimated = mdModel->GetFromName(asAnimName);
+                        pAnimations[ i + j ].smAnimated = GetSubmodelFromName( mdModel, asAnimName );
                         if (pAnimations[i + j].smAnimated)
                         { //++iAnimatedDoors;
                             pAnimations[i + j].smAnimated->WillBeAnimated(); // wyłączenie optymalizacji transformu
@@ -4526,12 +5157,81 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 							}
                             pAnimations[i + j].iNumber = i; // parzyste działają inaczej niż nieparzyste
                             pAnimations[i + j].fMaxDist = 300 * 300; // drzwi to z daleka widać
+/*
+                            // NOTE: no longer used
                             pAnimations[i + j].fSpeed = Random(150); // oryginalny koncept z DoorSpeedFactor
                             pAnimations[i + j].fSpeed = (pAnimations[i + j].fSpeed + 100) / 100;
-                            // Ra: te współczynniki są bez sensu, bo modyfikują wektor przesunięcia
+*/
                         }
-                        // create sound emitters for the door
-                        m_doorsounds.emplace_back();
+                    }
+                }
+
+                else if( token == "animstepprefix:" ) {
+                    // animated doorstep submodel name prefix
+					int i, j;
+					parser.getTokens(1, false); parser >> token;
+                    for (i = 0, j = 0; i < ANIM_DOORSTEPS; ++i)
+                        j += iAnimType[i]; // zliczanie wcześniejszych animacji
+                    for (i = 0; i < iAnimType[ANIM_DOORSTEPS]; ++i) // liczba drzwi
+                    { // NBMX wrzesien 2003: wyszukiwanie drzwi o nazwie str*
+                      // ustalenie submodelu
+                        asAnimName = token + std::to_string(i + 1);
+                        pAnimations[i + j].smAnimated = GetSubmodelFromName( mdModel, asAnimName );
+                        if (pAnimations[i + j].smAnimated)
+                        { //++iAnimatedDoors;
+                            pAnimations[i + j].smAnimated->WillBeAnimated(); // wyłączenie optymalizacji transformu
+                            switch (MoverParameters->PlatformOpenMethod)
+                            { // od razu zapinamy potrzebny typ animacji
+                            case 1: // shift
+								pAnimations[ i + j ].yUpdate = std::bind( &TDynamicObject::UpdatePlatformTranslate, this, std::placeholders::_1 );
+                                break;
+                            case 2: // rotate
+								pAnimations[ i + j ].yUpdate = std::bind( &TDynamicObject::UpdatePlatformRotate, this, std::placeholders::_1 );
+                                break;
+							default:
+								break;
+							}
+                            pAnimations[i + j].iNumber = i; // parzyste działają inaczej niż nieparzyste
+                            pAnimations[i + j].fMaxDist = 150 * 150; // drzwi to z daleka widać
+/*
+                            // NOTE: no longer used
+                            pAnimations[i + j].fSpeed = Random(150); // oryginalny koncept z DoorSpeedFactor
+                            pAnimations[i + j].fSpeed = (pAnimations[i + j].fSpeed + 100) / 100;
+*/
+                        }
+                    }
+                }
+
+                else if( token == "animmirrorprefix:" ) {
+                    // animated mirror submodel name prefix
+                    int i, j;
+                    parser.getTokens( 1, false ); parser >> token;
+                    for( i = 0, j = 0; i < ANIM_MIRRORS; ++i )
+                        j += iAnimType[ i ]; // zliczanie wcześniejszych animacji
+                    for( i = 0; i < iAnimType[ ANIM_MIRRORS ]; ++i ) // liczba drzwi
+                    { // NBMX wrzesien 2003: wyszukiwanie drzwi o nazwie str*
+                      // ustalenie submodelu
+                        asAnimName = token + std::to_string( i + 1 );
+                        pAnimations[ i + j ].smAnimated = GetSubmodelFromName( mdModel, asAnimName );
+                        if( pAnimations[ i + j ].smAnimated ) {
+                            pAnimations[ i + j ].smAnimated->WillBeAnimated(); // wyłączenie optymalizacji transformu
+                            // od razu zapinamy potrzebny typ animacji
+                            auto const offset { pAnimations[ i + j ].smAnimated->offset() };
+                            pAnimations[ i + j ].yUpdate = std::bind( &TDynamicObject::UpdateMirror, this, std::placeholders::_1 );
+                            // we don't expect more than 2-4 mirrors, so it should be safe to store submodel location (front/rear) in the higher bits
+                            // parzyste działają inaczej niż nieparzyste
+                            pAnimations[ i + j ].iNumber =
+                                ( ( pAnimations[ i + j ].smAnimated->offset().z > 0 ?
+                                    side::front :
+                                    side::rear ) << 4 )
+                                + i;
+                            pAnimations[ i + j ].fMaxDist = 150 * 150; // drzwi to z daleka widać
+/*
+                            // NOTE: no longer used
+                            pAnimations[i + j].fSpeed = Random(150); // oryginalny koncept z DoorSpeedFactor
+                            pAnimations[i + j].fSpeed = (pAnimations[i + j].fSpeed + 100) / 100;
+*/
+                        }
                     }
                 }
 
@@ -4547,6 +5247,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 				parser.getTokens(); parser >> token;
 				if( token == "wheel_clatter:" ){
 					// polozenia osi w/m srodka pojazdu
+                    double dSDist;
 					parser.getTokens( 1, false );
 					parser >> dSDist;
                     while( ( ( token = parser.getToken<std::string>() ) != "" )
@@ -4575,35 +5276,78 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     m_powertrainsounds.engine.owner( this );
 
                     auto const amplitudedivisor = static_cast<float>( (
-                        MoverParameters->EngineType == DieselEngine ? MoverParameters->nmax * 60 + MoverParameters->Power :
-                        MoverParameters->EngineType == DieselElectric ? MoverParameters->Power * 3 :
+                        MoverParameters->EngineType == TEngineType::DieselEngine ? 1 :
+                        MoverParameters->EngineType == TEngineType::DieselElectric ? 1 :
                         MoverParameters->nmax * 60 + MoverParameters->Power * 3 ) );
                     m_powertrainsounds.engine.m_amplitudefactor /= amplitudedivisor;
 				}
 
+                else if( token == "dieselinc:" ) {
+                    // dzwiek przy wlazeniu na obroty woodwarda
+                    m_powertrainsounds.engine_revving.deserialize( parser, sound_type::single, sound_parameters::range );
+                    m_powertrainsounds.engine_revving.owner( this );
+                }
+
+                else if( token == "oilpump:" ) {
+                    // plik z dzwiekiem wentylatora, mnozniki i ofsety amp. i czest.
+                    m_powertrainsounds.oil_pump.deserialize( parser, sound_type::single );
+                    m_powertrainsounds.oil_pump.owner( this );
+                }
+
                 else if( ( token == "tractionmotor:" )
                       && ( MoverParameters->Power > 0 ) ) {
                     // plik z dzwiekiem silnika, mnozniki i ofsety amp. i czest.
-                    m_powertrainsounds.motor.deserialize( parser, sound_type::single, sound_parameters::range | sound_parameters::amplitude | sound_parameters::frequency );
-                    m_powertrainsounds.motor.owner( this );
+                    sound_source motortemplate { sound_placement::external };
+                    motortemplate.deserialize( parser, sound_type::single, sound_parameters::range | sound_parameters::amplitude | sound_parameters::frequency );
+                    motortemplate.owner( this );
 
                     auto const amplitudedivisor = static_cast<float>( MoverParameters->nmax * 60 + MoverParameters->Power * 3 );
-                    m_powertrainsounds.motor.m_amplitudefactor /= amplitudedivisor;
+                    motortemplate.m_amplitudefactor /= amplitudedivisor;
+
+                    if( true == m_powertrainsounds.motors.empty() ) {
+                        // fallback for cases without specified motor locations, convert sound template to a single sound source
+                        m_powertrainsounds.motors.emplace_back( motortemplate );
+                    }
+                    else {
+                        // apply configuration to all defined motors
+                        for( auto &motor : m_powertrainsounds.motors ) {
+                            // combine potential x- and y-axis offsets of the sound template with z-axis offsets of individual motors
+                            auto motoroffset { motortemplate.offset() };
+                            motoroffset.z = motor.offset().z;
+                            motor = motortemplate;
+                            motor.offset( motoroffset );
+                        }
+                    }
                 }
 
-				else if( token == "ventilator:" ) {
+				else if( token == "inverter:" ) {
+					// plik z dzwiekiem wentylatora, mnozniki i ofsety amp. i czest.
+                    m_powertrainsounds.inverter.deserialize( parser, sound_type::single, sound_parameters::range | sound_parameters::amplitude | sound_parameters::frequency );
+                    m_powertrainsounds.inverter.owner( this );
+				}
+
+                else if( token == "ventilator:" ) {
 					// plik z dzwiekiem wentylatora, mnozniki i ofsety amp. i czest.
                     m_powertrainsounds.rsWentylator.deserialize( parser, sound_type::single, sound_parameters::range | sound_parameters::amplitude | sound_parameters::frequency );
                     m_powertrainsounds.rsWentylator.owner( this );
 
-                    if( ( MoverParameters->EngineType == ElectricSeriesMotor )
-                     || ( MoverParameters->EngineType == ElectricInductionMotor ) ) {
-                        m_powertrainsounds.rsWentylator.m_amplitudefactor /= MoverParameters->RVentnmax;
-                        m_powertrainsounds.rsWentylator.m_frequencyfactor /= MoverParameters->RVentnmax;
-                    }
+                    m_powertrainsounds.rsWentylator.m_amplitudefactor /= MoverParameters->RVentnmax;
+                    m_powertrainsounds.rsWentylator.m_frequencyfactor /= MoverParameters->RVentnmax;
 				}
 
-				else if(token == "transmission:") {
+                else if( token == "radiatorfan1:" ) {
+                    // primary circuit radiator fan
+                    m_powertrainsounds.radiator_fan.deserialize( parser, sound_type::single );
+                    m_powertrainsounds.radiator_fan.owner( this );
+                }
+
+                else if( token == "radiatorfan2" ) {
+                    // auxiliary circuit radiator fan
+                    m_powertrainsounds.radiator_fan.deserialize( parser, sound_type::single );
+                    m_powertrainsounds.radiator_fan.owner( this );
+                }
+
+				else if( token == "transmission:" ) {
 					// plik z dzwiekiem, mnozniki i ofsety amp. i czest.
                     // NOTE, fixed default parameters, legacy system leftover
                     m_powertrainsounds.transmission.m_amplitudefactor = 0.029;
@@ -4620,7 +5364,24 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     rsPisk.deserialize( parser, sound_type::single, sound_parameters::range | sound_parameters::amplitude );
                     rsPisk.owner( this );
 
+                    if( rsPisk.m_amplitudefactor > 10.f ) {
+                        // HACK: convert old style activation point threshold to the new, regular amplitude adjustment system
+                        rsPisk.m_amplitudefactor = 1.f;
+                        rsPisk.m_amplitudeoffset = 0.f;
+                    }
                     rsPisk.m_amplitudeoffset *= ( 105.f - Random( 10.f ) ) / 100.f;
+                }
+
+                else if( token == "brakecylinderinc:" ) {
+                    // brake cylinder pressure increase sounds
+                    m_brakecylinderpistonadvance.deserialize( parser, sound_type::single );
+                    m_brakecylinderpistonadvance.owner( this );
+                }
+
+                else if( token == "brakecylinderdec:" ) {
+                    // brake cylinder pressure decrease sounds
+                    m_brakecylinderpistonrecede.deserialize( parser, sound_type::single );
+                    m_brakecylinderpistonrecede.owner( this );
                 }
 
 				else if( token == "brakeacc:" ) {
@@ -4643,12 +5404,6 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     rsDerailment.owner( this );
                 }
 
-				else if( token == "dieselinc:" ) {
-					// dzwiek przy wlazeniu na obroty woodwarda
-                    m_powertrainsounds.engine_revving.deserialize( parser, sound_type::single, sound_parameters::range );
-                    m_powertrainsounds.engine_revving.owner( this );
-                }
-
 				else if( token == "curve:" ) {
                     rscurve.deserialize( parser, sound_type::single, sound_parameters::range );
                     rscurve.owner( this );
@@ -4664,11 +5419,16 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 					// pliki z trabieniem wysokoton.
                     sHorn2.deserialize( parser, sound_type::multipart, sound_parameters::range );
                     sHorn2.owner( this );
-
+                    // TBD, TODO: move horn selection to ai config file
                     if( iHornWarning ) {
                         iHornWarning = 2; // numer syreny do użycia po otrzymaniu sygnału do jazdy
                     }
 				}
+
+                else if( token == "horn3:" ) {
+                    sHorn3.deserialize( parser, sound_type::multipart, sound_parameters::range );
+                    sHorn3.owner( this );
+                }
 
 				else if( token == "departuresignal:" ) {
 					// pliki z sygnalem odjazdu
@@ -4712,6 +5472,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 					// pliki z turbogeneratorem
                     m_powertrainsounds.engine_turbo.deserialize( parser, sound_type::multipart, sound_parameters::range );
                     m_powertrainsounds.engine_turbo.owner( this );
+                    m_powertrainsounds.engine_turbo.gain( 0 );
                 }
 
 				else if( token == "small-compressor:" ) {
@@ -4721,21 +5482,61 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                 }
 
 				else if( token == "dooropen:" ) {
-                    sound_source dooropen { sound_placement::general };
-                    dooropen.deserialize( parser, sound_type::single );
-                    dooropen.owner( this );
+                    sound_source soundtemplate { sound_placement::general };
+                    soundtemplate.deserialize( parser, sound_type::single );
+                    soundtemplate.owner( this );
                     for( auto &door : m_doorsounds ) {
-                        door.rsDoorOpen = dooropen;
+                        // apply configuration to all defined doors, but preserve their individual offsets
+                        auto const dooroffset { door.rsDoorOpen.offset() };
+                        door.rsDoorOpen = soundtemplate;
+                        door.rsDoorOpen.offset( dooroffset );
                     }
                 }
 
 				else if( token == "doorclose:" ) {
-                    sound_source doorclose { sound_placement::general };
-                    doorclose.deserialize( parser, sound_type::single );
-                    doorclose.owner( this );
+                    sound_source soundtemplate { sound_placement::general };
+                    soundtemplate.deserialize( parser, sound_type::single );
+                    soundtemplate.owner( this );
                     for( auto &door : m_doorsounds ) {
-                        door.rsDoorClose = doorclose;
+                        // apply configuration to all defined doors, but preserve their individual offsets
+                        auto const dooroffset { door.rsDoorClose.offset() };
+                        door.rsDoorClose = soundtemplate;
+                        door.rsDoorClose.offset( dooroffset );
                     }
+                }
+
+                else if( token == "doorstepopen:" ) {
+                    sound_source soundtemplate { sound_placement::general };
+                    soundtemplate.deserialize( parser, sound_type::single );
+                    soundtemplate.owner( this );
+                    for( auto &door : m_doorsounds ) {
+                        // apply configuration to all defined doors, but preserve their individual offsets
+                        auto const dooroffset { door.step_open.offset() };
+                        door.step_open = soundtemplate;
+                        door.step_open.offset( dooroffset );
+                    }
+                }
+
+                else if( token == "doorstepclose:" ) {
+                    sound_source soundtemplate { sound_placement::general };
+                    soundtemplate.deserialize( parser, sound_type::single );
+                    soundtemplate.owner( this );
+                    for( auto &door : m_doorsounds ) {
+                        // apply configuration to all defined doors, but preserve their individual offsets
+                        auto const dooroffset { door.step_close.offset() };
+                        door.step_close = soundtemplate;
+                        door.step_close.offset( dooroffset );
+                    }
+                }
+
+                else if( token == "unloading:" ) {
+                    m_exchangesounds.unloading.deserialize( parser, sound_type::single );
+                    m_exchangesounds.unloading.owner( this );
+                }
+
+                else if( token == "loading:" ) {
+                    m_exchangesounds.loading.deserialize( parser, sound_type::single );
+                    m_exchangesounds.loading.owner( this );
                 }
 
 				else if( token == "sand:" ) {
@@ -4751,11 +5552,27 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 
                 else if( token == "outernoise:" ) {
                     // szum podczas jazdy:
-                    rsOuterNoise.deserialize( parser, sound_type::single, sound_parameters::amplitude | sound_parameters::frequency );
-                    rsOuterNoise.owner( this );
+                    sound_source noisetemplate { sound_placement::external, EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
+                    noisetemplate.deserialize( parser, sound_type::single, sound_parameters::amplitude | sound_parameters::frequency, MoverParameters->Vmax );
+                    noisetemplate.owner( this );
 
-                    rsOuterNoise.m_amplitudefactor /= ( 1 + MoverParameters->Vmax );
-                    rsOuterNoise.m_frequencyfactor /= ( 1 + MoverParameters->Vmax );
+                    noisetemplate.m_amplitudefactor /= ( 1 + MoverParameters->Vmax );
+                    noisetemplate.m_frequencyfactor /= ( 1 + MoverParameters->Vmax );
+
+                    if( true == m_bogiesounds.empty() ) {
+                        // fallback for cases without specified noise locations, convert sound template to a single sound source
+                        m_bogiesounds.emplace_back( noisetemplate );
+                    }
+                    else {
+                        // apply configuration to all defined bogies
+                        for( auto &bogie : m_bogiesounds ) {
+                            // combine potential x- and y-axis offsets of the sound template with z-axis offsets of individual motors
+                            auto bogieoffset { noisetemplate.offset() };
+                            bogieoffset.z = bogie.offset().z;
+                            bogie = noisetemplate;
+                            bogie.offset( bogieoffset );
+                        }
+                    }
                 }
 
                 else if( token == "wheelflat:" ) {
@@ -4768,6 +5585,80 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
 				  && ( token != "endsounds" ) );
 
         } // sounds:
+
+        else if( token == "locations:" ) {
+            do {
+                token = "";
+                parser.getTokens(); parser >> token;
+
+                if( token == "doors:" ) {
+                    // a list of pairs: offset along vehicle's z-axis and sides on which the door is present; followed with "end"
+                    while( ( ( token = parser.getToken<std::string>() ) != "" )
+                        && ( token != "end" ) ) {
+                        // vehicle faces +Z in 'its' space, for door locations negative value means ahead of centre
+                        auto const offset { std::atof( token.c_str() ) * -1.f };
+                        // recognized side specifications are "right", "left" and "both"
+                        auto const sides { parser.getToken<std::string>() };
+                        // NOTE: we skip setting owner of the sounds, it'll be done during individual sound deserialization
+                        door_sounds door;
+                        // add entries to the list:
+                        if( ( sides == "both" )
+                         || ( sides == "left" ) ) {
+                            // left...
+                            auto const location { glm::vec3 { MoverParameters->Dim.W * 0.5f, MoverParameters->Dim.H * 0.5f, offset } };
+                            door.rsDoorClose.offset( location );
+                            door.rsDoorOpen.offset( location );
+                            door.step_close.offset( location );
+                            door.step_open.offset( location );
+                            m_doorsounds.emplace_back( door );
+                        }
+                        if( ( sides == "both" )
+                         || ( sides == "right" ) ) {
+                            // ...and right
+                            auto const location { glm::vec3 { MoverParameters->Dim.W * -0.5f, MoverParameters->Dim.H * 0.5f, offset } };
+                            door.rsDoorClose.offset( location );
+                            door.rsDoorOpen.offset( location );
+                            door.step_close.offset( location );
+                            door.step_open.offset( location );
+                            m_doorsounds.emplace_back( door );
+                        }
+                    }
+                }
+
+                else if( token == "tractionmotors:" ) {
+                    // a list of offsets along vehicle's z-axis; followed with "end"
+                    while( ( ( token = parser.getToken<std::string>() ) != "" )
+                        && ( token != "end" ) ) {
+                        // vehicle faces +Z in 'its' space, for motor locations negative value means ahead of centre
+                        auto const offset { std::atof( token.c_str() ) * -1.f };
+                        // NOTE: we skip setting owner of the sounds, it'll be done during individual sound deserialization
+                        sound_source motor { sound_placement::external }; // generally traction motor
+                        // add entry to the list
+                        auto const location { glm::vec3 { 0.f, 0.f, offset } };
+                        motor.offset( location );
+                        m_powertrainsounds.motors.emplace_back( motor );
+                    }
+                }
+
+                else if( token == "bogies:" ) {
+                    // a list of offsets along vehicle's z-axis; followed with "end"
+                    while( ( ( token = parser.getToken<std::string>() ) != "" )
+                        && ( token != "end" ) ) {
+                        // vehicle faces +Z in 'its' space, for bogie locations negative value means ahead of centre
+                        auto const offset { std::atof( token.c_str() ) * -1.f };
+                        // NOTE: we skip setting owner of the sounds, it'll be done during individual sound deserialization
+                        sound_source bogienoise { sound_placement::external, EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
+                        // add entry to the list
+                        auto const location { glm::vec3 { 0.f, 0.f, offset } };
+                        bogienoise.offset( location );
+                        m_bogiesounds.emplace_back( bogienoise );
+                    }
+                }
+
+            } while( ( token != "" )
+                  && ( token != "endlocations" ) );
+
+        } // locations:
 
         else if( token == "internaldata:" ) {
             // dalej nie czytaj
@@ -4792,6 +5683,9 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     // odpalanie silnika
                     m_powertrainsounds.engine_ignition.deserialize( parser, sound_type::single );
                     m_powertrainsounds.engine_ignition.owner( this );
+                } else if (token == "shutdown:") {
+                    m_powertrainsounds.engine_shutdown.deserialize(parser, sound_type::single);
+                    m_powertrainsounds.engine_shutdown.owner(this);
                 }
                 else if( token == "engageslippery:" ) {
                     // tarcie tarcz sprzegla:
@@ -4805,10 +5699,10 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     m_powertrainsounds.motor_relay.deserialize( parser, sound_type::single );
                     m_powertrainsounds.motor_relay.owner( this );
                 }
-                else if( token == "pneumaticrelay:" ) {
-                    // wylaczniki pneumatyczne:
-                    dsbPneumaticRelay.deserialize( parser, sound_type::single );
-                    dsbPneumaticRelay.owner( this );
+                else if( token == "shuntfield:" ) {
+                    // styczniki itp:
+                    m_powertrainsounds.motor_shuntfield.deserialize( parser, sound_type::single );
+                    m_powertrainsounds.motor_shuntfield.owner( this );
                 }
                 else if( token == "wejscie_na_bezoporow:" ) {
                     // hunter-111211: wydzielenie wejscia na bezoporowa i na drugi uklad do pliku
@@ -4818,6 +5712,11 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                 else if( token == "wejscie_na_drugi_uklad:" ) {
                     m_powertrainsounds.motor_parallel.deserialize( parser, sound_type::single );
                     m_powertrainsounds.motor_parallel.owner( this );
+                }
+                else if( token == "pneumaticrelay:" ) {
+                    // wylaczniki pneumatyczne:
+                    dsbPneumaticRelay.deserialize( parser, sound_type::single );
+                    dsbPneumaticRelay.owner( this );
                 }
                 // braking sounds
                 else if( token == "brakesound:" ) {
@@ -4862,6 +5761,15 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                         couplersounds.dsbCouplerStretch = couplerstretch;
                     }
                 }
+                else if( token == "couplerstretch_loud:" ) {
+                    // coupler stretching
+                    sound_source couplerstretch { sound_placement::external };
+                    couplerstretch.deserialize( parser, sound_type::single );
+                    couplerstretch.owner( this );
+                    for( auto &couplersounds : m_couplersounds ) {
+                        couplersounds.dsbCouplerStretch_loud = couplerstretch;
+                    }
+                }
                 else if( token == "bufferclamp:" ) {
                     // buffers hitting one another
                     sound_source bufferclash { sound_placement::external };
@@ -4869,6 +5777,15 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     bufferclash.owner( this );
                     for( auto &couplersounds : m_couplersounds ) {
                         couplersounds.dsbBufferClamp = bufferclash;
+                    }
+                }
+                else if( token == "bufferclamp_loud:" ) {
+                    // buffers hitting one another
+                    sound_source bufferclash { sound_placement::external };
+                    bufferclash.deserialize( parser, sound_type::single );
+                    bufferclash.owner( this );
+                    for( auto &couplersounds : m_couplersounds ) {
+                        couplersounds.dsbBufferClamp_loud = bufferclash;
                     }
                 }
 
@@ -4939,8 +5856,8 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
     if (mdLowPolyInt)
         mdLowPolyInt->Init();
 
-    Global::asCurrentTexturePath = szTexturePath; // kiedyś uproszczone wnętrze mieszało tekstury nieba
-    Global::asCurrentDynamicPath = "";
+    Global.asCurrentTexturePath = szTexturePath; // kiedyś uproszczone wnętrze mieszało tekstury nieba
+    Global.asCurrentDynamicPath = "";
 
     // position sound emitters which weren't defined in the config file
     // engine sounds, centre of the vehicle
@@ -4977,29 +5894,21 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
         // zliczanie wcześniejszych animacji
         dooranimationfirstindex += iAnimType[ i ];
     }
-    std::size_t doorindex { 0 };
-    for( auto &doorsounds : m_doorsounds ) {
-
-        auto submodel { pAnimations[ dooranimationfirstindex + doorindex ].smAnimated };
-        if( submodel == nullptr ) { continue; }
-
-        auto const dooroffset { pAnimations[ dooranimationfirstindex + doorindex ].smAnimated->offset( std::numeric_limits<float>::max() ) };
-
-        doorsounds.rsDoorClose.offset( dooroffset );
-        doorsounds.rsDoorOpen.offset( dooroffset );
-        ++doorindex;
-    }
     // couplers
     auto const frontcoupleroffset { glm::vec3{ 0.f, 1.f, MoverParameters->Dim.L * 0.5f } };
     m_couplersounds[ side::front ].dsbCouplerAttach.offset( frontcoupleroffset );
     m_couplersounds[ side::front ].dsbCouplerDetach.offset( frontcoupleroffset );
     m_couplersounds[ side::front ].dsbCouplerStretch.offset( frontcoupleroffset );
+    m_couplersounds[ side::front ].dsbCouplerStretch_loud.offset( frontcoupleroffset );
     m_couplersounds[ side::front ].dsbBufferClamp.offset( frontcoupleroffset );
-    auto const rearcoupleroffset{ glm::vec3{ 0.f, 1.f, MoverParameters->Dim.L * -0.5f } };
+    m_couplersounds[ side::front ].dsbBufferClamp_loud.offset( frontcoupleroffset );
+    auto const rearcoupleroffset { glm::vec3{ 0.f, 1.f, MoverParameters->Dim.L * -0.5f } };
     m_couplersounds[ side::rear ].dsbCouplerAttach.offset( rearcoupleroffset );
     m_couplersounds[ side::rear ].dsbCouplerDetach.offset( rearcoupleroffset );
     m_couplersounds[ side::rear ].dsbCouplerStretch.offset( rearcoupleroffset );
+    m_couplersounds[ side::rear ].dsbCouplerStretch_loud.offset( rearcoupleroffset );
     m_couplersounds[ side::rear ].dsbBufferClamp.offset( rearcoupleroffset );
+    m_couplersounds[ side::rear ].dsbBufferClamp_loud.offset( rearcoupleroffset );
 }
 
 //---------------------------------------------------------------------------
@@ -5010,13 +5919,13 @@ void TDynamicObject::RadioStop()
         if( ( MoverParameters->SecuritySystem.RadioStop )
          && ( MoverParameters->Radio ) ) {
             // jeśli pojazd ma RadioStop i jest on aktywny
-            // HAX cast until math types unification
+            // HACK cast until math types unification
 			glm::dvec3 pos = static_cast<glm::dvec3>(vPosition);
             Mechanik->PutCommand( "Emergency_brake", 1.0, 1.0, &pos, stopRadio );
             // add onscreen notification for human driver
             // TODO: do it selectively for the 'local' driver once the multiplayer is in
             if( false == Mechanik->AIControllFlag ) {
-                Global::tranTexts.AddLine( "!! RADIO-STOP !!", 0.0, 10.0, false );
+                ui::Transcripts.AddLine( "!! RADIO-STOP !!", 0.0, 10.0, false );
             }
         }
     }
@@ -5225,7 +6134,7 @@ void TDynamicObject::CoupleDist()
         // double d1=MoverParameters->Couplers[1].CoupleDist; //sprzęg z tyłu
         // samochodu można olać,
         // dopóki nie jeździ na wstecznym
-        vector3 p1, p2;
+        Math3D::vector3 p1, p2;
         double d, w; // dopuszczalny dystans w poprzek
         MoverParameters->SetCoupleDist(); // liczenie standardowe
         if (MoverParameters->Couplers[0].Connected) // jeśli cokolwiek podłączone
@@ -5374,17 +6283,6 @@ int TDynamicObject::RouteWish(TTrack *tr)
     return Mechanik ? Mechanik->CrossRoute(tr) : 0; // wg AI albo prosto
 };
 
-std::string TDynamicObject::TextureTest(std::string const &name)
-{ // Ra 2015-01: sprawdzenie dostępności tekstury o podanej nazwie
-	std::vector<std::string> extensions = { ".mat", ".dds", ".tga", ".bmp" };
-	for( auto const &extension : extensions ) {
-		if( true == FileExists( name + extension ) ) {
-			return name + extension;
-        }
-    }
-    return ""; // nie znaleziona
-};
-
 void TDynamicObject::DestinationSet(std::string to, std::string numer)
 { // ustawienie stacji docelowej oraz wymiennej tekstury 4, jeśli istnieje plik
     // w zasadzie, to każdy wagon mógłby mieć inną stację docelową
@@ -5395,25 +6293,34 @@ void TDynamicObject::DestinationSet(std::string to, std::string numer)
         // jak są 4 tekstury wymienne, to nie zmieniać rozkładem
         return;
     }
-	numer = Global::Bezogonkow(numer);
+	numer = Bezogonkow(numer);
     asDestination = to;
-    to = Global::Bezogonkow(to); // do szukania pliku obcinamy ogonki
-
+    to = Bezogonkow(to); // do szukania pliku obcinamy ogonki
+    if( true == to.empty() ) {
+        to = "nowhere";
+    }
+    // destination textures are kept in the vehicle's directory so we point the current texture path there
+    auto const currenttexturepath { Global.asCurrentTexturePath };
+    Global.asCurrentTexturePath = asBaseDir;
+    // now see if we can find any version of the texture
     std::vector<std::string> destinations = {
-        asBaseDir + numer + "@" + MoverParameters->TypeName,
-        asBaseDir + numer,
-        asBaseDir + to + "@" + MoverParameters->TypeName,
-        asBaseDir + to,
-        asBaseDir + "nowhere" };
+        numer + '@' + MoverParameters->TypeName,
+        numer,
+        to + '@' + MoverParameters->TypeName,
+        to,
+        "nowhere" + '@' + MoverParameters->TypeName,
+        "nowhere" };
 
     for( auto const &destination : destinations ) {
 
-        auto material = TextureTest( destination );
+        auto material = TextureTest( ToLower( destination ) );
         if( false == material.empty() ) {
             m_materialdata.replacable_skins[ 4 ] = GfxRenderer.Fetch_Material( material );
             break;
         }
     }
+    // whether we got anything, restore previous texture path
+    Global.asCurrentTexturePath = currenttexturepath;
 };
 
 void TDynamicObject::OverheadTrack(float o)
@@ -5483,8 +6390,9 @@ TDynamicObject::powertrain_sounds::position( glm::vec3 const Location ) {
 
     auto const nullvector { glm::vec3() };
     std::vector<sound_source *> enginesounds = {
-        &motor_relay, &dsbWejscie_na_bezoporow, &motor_parallel, &rsWentylator,
-        &engine, &engine_ignition, &engine_revving, &engine_turbo,
+        &inverter,
+        &motor_relay, &dsbWejscie_na_bezoporow, &motor_parallel, &motor_shuntfield, &rsWentylator,
+        &engine, &engine_ignition, &engine_shutdown, &engine_revving, &engine_turbo, &oil_pump, &radiator_fan, &radiator_fan_aux,
         &transmission, &rsEngageSlippery
     };
     for( auto sound : enginesounds ) {
@@ -5502,45 +6410,78 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
     double frequency { 1.0 };
     double volume { 0.0 };
 
-    // engine sounds
-    if( ( true == Vehicle.Mains )
-     && ( false == Vehicle.dizel_enginestart ) ) {
+    // oil pump
+    if( true == Vehicle.OilPump.is_active ) {
+        oil_pump
+            .pitch( oil_pump.m_frequencyoffset + oil_pump.m_frequencyfactor * 1.f )
+            .gain( oil_pump.m_amplitudeoffset + oil_pump.m_amplitudefactor * 1.f )
+            .play( sound_flags::exclusive | sound_flags::looping );
+    }
+    else {
+        oil_pump.stop();
+    }
 
-        if( ( std::fabs( Vehicle.enrot ) > 0.01 )
+    // engine sounds
+    // ignition
+    if (engine_state_last != Vehicle.Mains) {
+        if (Vehicle.Mains) {
+           // main circuit/engine activation
+           // TODO: separate engine and main circuit
+            engine_shutdown.stop();
+            engine_ignition
+                .pitch( engine_ignition.m_frequencyoffset + engine_ignition.m_frequencyfactor * 1.f )
+                .gain( engine_ignition.m_amplitudeoffset + engine_ignition.m_amplitudefactor * 1.f )
+                .play( sound_flags::exclusive );
+        } else {
+            // main circuit/engine deactivation
+            engine_ignition.stop();
+            engine_shutdown.pitch( engine_shutdown.m_frequencyoffset + engine_shutdown.m_frequencyfactor * 1.f )
+                .gain( engine_shutdown.m_amplitudeoffset + engine_shutdown.m_amplitudefactor * 1.f )
+                .play( sound_flags::exclusive );
+        }
+        engine_state_last = Vehicle.Mains;
+    }
+    // main engine sound
+    if( true == Vehicle.Mains ) {
+
+        if( ( std::abs( Vehicle.enrot ) > 0.01 )
             // McZapkie-280503: zeby dla dumb dzialal silnik na jalowych obrotach
-         || ( Vehicle.EngineType == Dumb ) ) {
+         || ( Vehicle.EngineType == TEngineType::Dumb ) ) {
 
             // frequency calculation
-            auto normalizer { 1.f };
-            if( true == engine.is_combined() ) {
-                // for combined engine sound we calculate sound point in rpm, to make .mmd files setup easier
-                // NOTE: we supply 1/100th of actual value, as the sound module converts does the opposite, converting received (typically) 0-1 values to 0-100 range
-                normalizer = 60.f * 0.01f;
-            }
+            auto const normalizer { (
+                true == engine.is_combined() ?
+                    // for combined engine sound we calculate sound point in rpm, to make .mmd files setup easier
+                    // NOTE: we supply 1/100th of actual value, as the sound module converts does the opposite, converting received (typically) 0-1 values to 0-100 range
+                    60.f * 0.01f :
+                    // for legacy single-piece sounds the standard frequency calculation is left untouched
+                    1.f ) };
             frequency =
                 engine.m_frequencyoffset
                 + engine.m_frequencyfactor * std::abs( Vehicle.enrot ) * normalizer;
 
-            if( Vehicle.EngineType == Dumb ) {
+            if( Vehicle.EngineType == TEngineType::Dumb ) {
                 frequency -= 0.2 * Vehicle.EnginePower / ( 1 + Vehicle.Power * 1000 );
             }
 
             // base volume calculation
             switch( Vehicle.EngineType ) {
                 // TODO: check calculated values
-                case DieselElectric: {
+                case TEngineType::DieselElectric: {
+
                     volume =
                         engine.m_amplitudeoffset
-                        + engine.m_amplitudefactor * ( Vehicle.EnginePower / 1000 / Vehicle.Power )
-                        + 0.2 * ( Vehicle.enrot * 60 ) / ( Vehicle.DElist[ Vehicle.MainCtrlPosNo ].RPM );
+                        + engine.m_amplitudefactor * (
+                            0.25 * ( Vehicle.EnginePower / Vehicle.Power )
+                          + 0.75 * ( Vehicle.enrot * 60 ) / ( Vehicle.DElist[ Vehicle.MainCtrlPosNo ].RPM ) );
                     break;
                 }
-                case DieselEngine: {
+                case TEngineType::DieselEngine: {
                     if( Vehicle.enrot > 0.0 ) {
                         volume = (
                             Vehicle.EnginePower > 0 ?
                                 engine.m_amplitudeoffset + engine.m_amplitudefactor * Vehicle.dizel_fill :
-                                engine.m_amplitudeoffset * 0.9f + engine.m_amplitudefactor * std::fabs( Vehicle.enrot / Vehicle.dizel_nmax ) );
+                                engine.m_amplitudeoffset + engine.m_amplitudefactor * std::fabs( Vehicle.enrot / Vehicle.dizel_nmax ) );
                     }
                     break;
                 }
@@ -5553,21 +6494,17 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
             }
 
             if( engine_volume >= 0.05 ) {
-                engine
-                    .pitch( frequency )
-                    .gain( engine_volume )
-                    .play( sound_flags::exclusive | sound_flags::looping );
 
-                if( ( Vehicle.EngineType == DieselElectric )
-                 || ( Vehicle.EngineType == DieselEngine ) ) {
-                    // diesel engine revolutions increase
-                    float enginerevvolume { 0 };
+                auto enginerevvolume { 0.f };
+                if( ( Vehicle.EngineType == TEngineType::DieselElectric )
+                 || ( Vehicle.EngineType == TEngineType::DieselEngine ) ) {
+                    // diesel engine revolutions increase; it can potentially decrease volume of base engine sound
                     if( engine_revs_last != -1.f ) {
                         // calculate potential recent increase of engine revolutions
                         auto const revolutionsperminute { Vehicle.enrot * 60 };
                         auto const revolutionsdifference { revolutionsperminute - engine_revs_last };
                         auto const idlerevolutionsthreshold { 1.01 * (
-                            Vehicle.EngineType == DieselElectric ?
+                            Vehicle.EngineType == TEngineType::DieselElectric ?
                                 Vehicle.DElist[ 0 ].RPM :
                                 Vehicle.dizel_nmin * 60 ) };
 
@@ -5576,19 +6513,36 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
                          && ( revolutionsdifference > 1.0 * Deltatime ) ) {
                             engine_revs_change = clamp( engine_revs_change + 5.0 * Deltatime, 0.0, 1.25 );
                         }
-                        enginerevvolume = engine_revs_change;
+                        enginerevvolume = 0.8 * engine_revs_change;
                     }
                     engine_revs_last = Vehicle.enrot * 60;
 
+                    auto const enginerevfrequency { (
+                        true == engine_revving.is_combined() ?
+                            // if the sound contains multiple samples we reuse rpm-based calculation from the engine
+                            frequency :
+                            engine_revving.m_frequencyoffset + 1.f * engine_revving.m_frequencyfactor ) };
+
                     if( enginerevvolume > 0.02 ) {
                         engine_revving
+                            .pitch( enginerevfrequency )
                             .gain( enginerevvolume )
-                            .play( sound_flags::exclusive | sound_flags::looping );
+                            .play( sound_flags::exclusive );
                     }
                     else {
                         engine_revving.stop();
                     }
-                }
+                } // diesel engines
+
+                // multi-part revving sound pieces replace base engine sound, single revving simply gets mixed with the base
+                auto const enginevolume { (
+                    ( ( enginerevvolume > 0.02 ) && ( true == engine_revving.is_combined() ) ) ?
+                        std::max( 0.0, engine_volume - enginerevvolume ) :
+                        engine_volume ) };
+                engine
+                    .pitch( frequency )
+                    .gain( enginevolume )
+                    .play( sound_flags::exclusive | sound_flags::looping );
             } // enginevolume > 0.05
         }
         else {
@@ -5600,57 +6554,38 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
         engine.stop();
     }
 
-
     // youBy - przenioslem, bo diesel tez moze miec turbo
     if( Vehicle.TurboTest > 0 ) {
         // udawanie turbo:
         auto const goalpitch { std::max( 0.025, ( engine_volume + engine_turbo.m_frequencyoffset ) * engine_turbo.m_frequencyfactor ) };
-        auto const goalvolume { std::max( 0.0, ( engine_turbo_pitch + engine_turbo.m_amplitudeoffset ) * engine_turbo.m_amplitudefactor ) };
+        auto const goalvolume { (
+            ( ( Vehicle.MainCtrlPos >= Vehicle.TurboTest ) && ( Vehicle.enrot > 0.1 ) ) ?
+                std::max( 0.0, ( engine_turbo_pitch + engine_turbo.m_amplitudeoffset ) * engine_turbo.m_amplitudefactor ) :
+                0.0 ) };
         auto const currentvolume { engine_turbo.gain() };
         auto const changerate { 0.4 * Deltatime };
 
-        if( ( Vehicle.MainCtrlPos >= Vehicle.TurboTest )
-         && ( Vehicle.enrot > 0.1 ) ) {
+        engine_turbo_pitch = (
+            engine_turbo_pitch > goalpitch ?
+                std::max( goalpitch, engine_turbo_pitch - changerate * 0.5 ) :
+                std::min( goalpitch, engine_turbo_pitch + changerate ) );
 
-            engine_turbo_pitch = (
-                engine_turbo_pitch > goalpitch ?
-                    std::max( goalpitch, engine_turbo_pitch - changerate * 0.5 ) :
-                    std::min( goalpitch, engine_turbo_pitch + changerate ) );
+        volume = (
+            currentvolume > goalvolume ?
+                std::max( goalvolume, currentvolume - changerate ) :
+                std::min( goalvolume, currentvolume + changerate ) );
 
-            volume = (
-                currentvolume > goalvolume ?
-                    std::max( goalvolume, currentvolume - changerate ) :
-                    std::min( goalvolume, currentvolume + changerate ) );
+        engine_turbo
+            .pitch( 0.4 + engine_turbo_pitch * 0.4 )
+            .gain( volume );
 
-            engine_turbo
-                .pitch( 0.4 + engine_turbo_pitch * 0.4 )
-                .gain( volume )
-                .play( sound_flags::exclusive | sound_flags::looping );
+        if( volume > 0.05 ) {
+            engine_turbo.play( sound_flags::exclusive | sound_flags::looping );
         }
         else {
-            engine_turbo_pitch = std::max( goalpitch, engine_turbo_pitch - changerate * 0.5 );
-            volume = std::max( 0.0, engine_turbo.gain() - 2.0 * Deltatime );
-            if( volume > 0.05 ) {
-                engine_turbo
-                    .pitch( 0.4 + engine_turbo_pitch * 0.4 )
-                    .gain( volume );
-            }
-            else {
-                engine_turbo.stop();
-                engine_turbo_pitch = goalpitch;
-            }
+            engine_turbo.stop();
         }
     }
-
-    // diesel startup
-    if( ( Vehicle.EngineType == DieselEngine )
-     || ( Vehicle.EngineType == DieselElectric ) ) {
-
-        if( true == Vehicle.dizel_enginestart ) {
-            engine_ignition.play( sound_flags::exclusive );
-        }
-    }
-
 
     if( Vehicle.dizel_engage > 0.1 ) {
         if( std::abs( Vehicle.dizel_engagedeltaomega ) > 0.2 ) {
@@ -5677,10 +6612,11 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
     // motor sounds
     volume = 0.0;
     if( ( true == Vehicle.Mains )
-     && ( false == Vehicle.dizel_enginestart ) ) {
+     && ( false == motors.empty() ) ) {
 
-        if( std::fabs( Vehicle.enrot ) > 0.01 ) {
+        if( std::abs( Vehicle.enrot ) > 0.01 ) {
 
+            auto const &motor { motors.front() };
             // frequency calculation
             auto normalizer { 1.f };
             if( true == motor.is_combined() ) {
@@ -5695,13 +6631,13 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
 
             // base volume calculation
             switch( Vehicle.EngineType ) {
-                case ElectricInductionMotor: {
+                case TEngineType::ElectricInductionMotor: {
                     volume =
                         motor.m_amplitudeoffset
                         + motor.m_amplitudefactor * ( Vehicle.EnginePower + motorrevolutions * 2 );
                     break;
                 }
-                case ElectricSeriesMotor: {
+                case TEngineType::ElectricSeriesMotor: {
                     volume =
                         motor.m_amplitudeoffset
                         + motor.m_amplitudefactor * ( Vehicle.EnginePower / 1000 + motorrevolutions * 60.0 );
@@ -5715,7 +6651,7 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
                 }
             }
 
-            if( Vehicle.EngineType == ElectricSeriesMotor ) {
+            if( Vehicle.EngineType == TEngineType::ElectricSeriesMotor ) {
                 // volume variation
                 if( ( volume < 1.0 )
                  && ( Vehicle.EnginePower < 100 ) ) {
@@ -5742,53 +6678,138 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
             volume *= std::max( 0.25f, motor_momentum );
 
             if( motor_volume >= 0.05 ) {
-                motor
-                    .pitch( frequency )
-                    .gain( motor_volume )
-                    .play( sound_flags::exclusive | sound_flags::looping );
+                // apply calculated parameters to all motor instances
+                for( auto &motor : motors ) {
+                    motor
+                        .pitch( frequency )
+                        .gain( motor_volume )
+                        .play( sound_flags::exclusive | sound_flags::looping );
+                }
             }
         }
         else {
-            motor.stop();
+            // stop all motor instances
+            for( auto &motor : motors ) {
+                motor.stop();
+            }
         }
     }
     motor_volume = interpolate( motor_volume, volume, 0.25 );
     if( motor_volume < 0.05 ) {
-        motor.stop();
+        // stop all motor instances
+        for( auto &motor : motors ) {
+            motor.stop();
+        }
     }
+    // inverter sounds
+    if( Vehicle.EngineType == TEngineType::ElectricInductionMotor ) {
+        if( Vehicle.InverterFrequency > 0.1 ) {
 
-    if( ( Vehicle.EngineType == ElectricSeriesMotor )
-     || ( Vehicle.EngineType == ElectricInductionMotor ) ) {
+            volume = inverter.m_amplitudeoffset + inverter.m_amplitudefactor * std::sqrt( std::abs( Vehicle.dizel_fill ) );
 
-        if( Vehicle.RventRot > 0.1 ) {
-            // play ventilator sound if the ventilators are rotating fast enough...
-            volume = (
-                Vehicle.EngineType == ElectricInductionMotor ?
-                    rsWentylator.m_amplitudefactor * std::sqrt( std::fabs( Vehicle.dizel_fill ) ) + rsWentylator.m_amplitudeoffset :
-                    rsWentylator.m_amplitudefactor * Vehicle.RventRot + rsWentylator.m_amplitudeoffset );
-
-            rsWentylator
-                .pitch( rsWentylator.m_frequencyfactor * Vehicle.RventRot + rsWentylator.m_frequencyoffset )
+            inverter
+                .pitch( inverter.m_frequencyoffset + inverter.m_frequencyfactor * Vehicle.InverterFrequency )
                 .gain( volume )
                 .play( sound_flags::exclusive | sound_flags::looping );
         }
         else {
-            // ...otherwise shut down the sound
-            rsWentylator.stop();
+            inverter.stop();
         }
     }
+    // ventillator sounds
+    if( Vehicle.RventRot > 0.1 ) {
 
+        rsWentylator
+            .pitch( rsWentylator.m_frequencyoffset + rsWentylator.m_frequencyfactor * Vehicle.RventRot )
+            .gain( rsWentylator.m_amplitudeoffset + rsWentylator.m_amplitudefactor * Vehicle.RventRot )
+            .play( sound_flags::exclusive | sound_flags::looping );
+    }
+    else {
+        // ...otherwise shut down the sound
+        rsWentylator.stop();
+    }
+    // radiator fan sounds
+    if( ( Vehicle.EngineType == TEngineType::DieselEngine )
+     || ( Vehicle.EngineType == TEngineType::DieselElectric ) ) {
 
-    if( Vehicle.TrainType == dt_ET40 ) {
-        if( Vehicle.Vel > 0.1 ) {
-            transmission
-                .pitch( transmission.m_frequencyfactor * ( Vehicle.Vel ) + transmission.m_frequencyoffset  )
-                .gain( transmission.m_amplitudefactor * ( Vehicle.Vel ) + transmission.m_amplitudeoffset )
+        if( Vehicle.dizel_heat.rpmw > 0.1 ) {
+            // NOTE: fan speed tends to max out at ~100 rpm; by default we try to get pitch range of 0.5-1.5 and volume range of 0.5-1.0
+            radiator_fan
+                .pitch( 0.5 + radiator_fan.m_frequencyoffset + radiator_fan.m_frequencyfactor * Vehicle.dizel_heat.rpmw * 0.01 )
+                .gain( 0.5 + radiator_fan.m_amplitudeoffset + 0.5 * radiator_fan.m_amplitudefactor * Vehicle.dizel_heat.rpmw * 0.01 )
                 .play( sound_flags::exclusive | sound_flags::looping );
         }
         else {
-            transmission.stop();
+            // ...otherwise shut down the sound
+            radiator_fan.stop();
         }
+
+        if( Vehicle.dizel_heat.rpmw2 > 0.1 ) {
+            // NOTE: fan speed tends to max out at ~100 rpm; by default we try to get pitch range of 0.5-1.5 and volume range of 0.5-1.0
+            radiator_fan_aux
+                .pitch( 0.5 + radiator_fan_aux.m_frequencyoffset + radiator_fan_aux.m_frequencyfactor * Vehicle.dizel_heat.rpmw2 * 0.01 )
+                .gain( 0.5 + radiator_fan_aux.m_amplitudeoffset + 0.5 * radiator_fan_aux.m_amplitudefactor * Vehicle.dizel_heat.rpmw2 * 0.01 )
+                .play( sound_flags::exclusive | sound_flags::looping );
+        }
+        else {
+            // ...otherwise shut down the sound
+            radiator_fan_aux.stop();
+        }
+    }
+
+    // relay sounds
+    auto const soundflags { Vehicle.SoundFlag };
+    if( TestFlag( soundflags, sound::relay ) ) {
+        // przekaznik - gdy bezpiecznik, automatyczny rozruch itp
+        if( true == TestFlag( soundflags, sound::shuntfield ) ) {
+            // shunt field
+            motor_shuntfield
+                .pitch(
+                    true == motor_shuntfield.is_combined() ?
+                        Vehicle.ScndCtrlActualPos * 0.01f :
+                        motor_shuntfield.m_frequencyoffset + motor_shuntfield.m_frequencyfactor * 1.f )
+                .gain(
+                    motor_shuntfield.m_amplitudeoffset + (
+                        true == TestFlag( soundflags, sound::loud ) ?
+                            1.0f :
+                            0.8f )
+                        * motor_shuntfield.m_amplitudefactor )
+                .play();
+        }
+        else if( true == TestFlag( soundflags, sound::parallel ) ) {
+            // parallel mode
+            if( TestFlag( soundflags, sound::loud ) ) {
+                dsbWejscie_na_bezoporow.play();
+            }
+            else {
+                motor_parallel.play();
+            }
+        }
+        else {
+            // series mode
+            motor_relay
+                .pitch(
+                    true == motor_relay.is_combined() ?
+                        Vehicle.MainCtrlActualPos * 0.01f :
+                        motor_relay.m_frequencyoffset + motor_relay.m_frequencyfactor * 1.f )
+                .gain(
+                    motor_relay.m_amplitudeoffset + (
+                        true == TestFlag( soundflags, sound::loud ) ?
+                            1.0f :
+                            0.8f )
+                        * motor_relay.m_amplitudefactor )
+                .play();
+        }
+    }
+
+    if( Vehicle.Vel > 0.1 ) {
+        transmission
+            .pitch( transmission.m_frequencyoffset + transmission.m_frequencyfactor * Vehicle.Vel )
+            .gain( transmission.m_amplitudeoffset + transmission.m_amplitudefactor * Vehicle.Vel )
+            .play( sound_flags::exclusive | sound_flags::looping );
+    }
+    else {
+        transmission.stop();
     }
 }
 
@@ -5803,7 +6824,7 @@ vehicle_table::update( double Deltatime, int Iterationcount ) {
     for( auto *vehicle : m_items ) {
         if( false == vehicle->bEnabled ) { continue; }
         // Ra: zmienić warunek na sprawdzanie pantografów w jednej zmiennej: czy pantografy i czy podniesione
-        if( vehicle->MoverParameters->EnginePowerSource.SourceType == CurrentCollector ) {
+        if( vehicle->MoverParameters->EnginePowerSource.SourceType == TPowerSource::CurrentCollector ) {
             update_traction( vehicle );
         }
         vehicle->MoverParameters->ComputeConstans();
@@ -5830,19 +6851,9 @@ vehicle_table::update( double Deltatime, int Iterationcount ) {
         // Ra 2015-01: tylko tu przelicza sieć trakcyjną
         vehicle->Update( Deltatime, totaltime );
     }
-/*
-    // TODO: re-implement
-    if (TDynamicObject::bDynamicRemove)
-    { // jeśli jest coś do usunięcia z listy, to trzeba na końcu
-        for (TGroundNode *Current = nRootDynamic; Current; Current = Current->nNext)
-            if ( false == Current->DynamicObject->bEnabled)
-            {
-                DynamicRemove(Current->DynamicObject); // usunięcie tego i podłączonych
-                Current = nRootDynamic; // sprawdzanie listy od początku
-            }
-        TDynamicObject::bDynamicRemove = false; // na razie koniec
-    }
-*/
+
+    // jeśli jest coś do usunięcia z listy, to trzeba na końcu
+    erase_disabled();
 }
 
 // legacy method, checks for presence and height of traction wire for specified vehicle
@@ -5927,7 +6938,7 @@ vehicle_table::update_traction( TDynamicObject *Vehicle ) {
             }
 
             if( ( pantograph->hvPowerWire == nullptr )
-             && ( false == Global::bLiveTraction ) ) {
+             && ( false == Global.bLiveTraction ) ) {
                 // jeśli drut nie znaleziony ale można oszukiwać to dajemy coś tam dla picu
                 Vehicle->pants[ pantographindex ].fParamPants->PantTraction = 1.4;
             }
@@ -5952,4 +6963,63 @@ vehicle_table::DynamicList( bool const Onlycontrolled ) const {
     }
     // informacja o końcu listy
     multiplayer::WyslijString( "none", 6 );
+}
+
+// maintenance; removes from tracks consists with vehicles marked as disabled
+bool
+vehicle_table::erase_disabled() {
+
+    if( false == TDynamicObject::bDynamicRemove ) { return false; }
+
+    // go through the list and retrieve vehicles scheduled for removal...
+    type_sequence disabledvehicles;
+    for( auto *vehicle : m_items ) {
+        if( false == vehicle->bEnabled ) {
+            disabledvehicles.emplace_back( vehicle );
+        }
+    }
+    // ...now propagate removal flag through affected consists...
+    for( auto *vehicle : disabledvehicles ) {
+        TDynamicObject *coupledvehicle { vehicle };
+        while( ( coupledvehicle = coupledvehicle->Next() ) != nullptr ) {
+            coupledvehicle->bEnabled = false;
+        }
+        // (try to) run propagation in both directions, it's simpler than branching based on direction etc
+        coupledvehicle = vehicle;
+        while( ( coupledvehicle = coupledvehicle->Prev() ) != nullptr ) {
+            coupledvehicle->bEnabled = false;
+        }
+    }
+    // ...then actually remove all disabled vehicles...
+    auto vehicleiter = std::begin( m_items );
+    while( vehicleiter != std::end( m_items ) ) {
+
+        auto *vehicle { *vehicleiter };
+
+        if( true == vehicle->bEnabled ) {
+            ++vehicleiter;
+        }
+        else {
+            if( ( vehicle->MyTrack != nullptr )
+             && ( true == vehicle->MyTrack->RemoveDynamicObject( vehicle ) ) ) {
+                vehicle->MyTrack = nullptr;
+            }
+            // clear potential train binding
+            Global.pWorld->TrainDelete( vehicle );
+            // remove potential entries in the light array
+            simulation::Lights.remove( vehicle );
+/*
+            // finally get rid of the vehicle and its record themselves
+            // BUG: deleting the vehicle leaves dangling pointers in event->Activator and potentially elsewhere
+            // TBD, TODO: either mark 'dead' vehicles with additional flag, or delete the references as well
+            SafeDelete( vehicle );
+            vehicleiter = m_items.erase( vehicleiter );
+*/
+            ++vehicleiter; // NOTE: instead of the erase in the disabled section
+        }
+    }
+    // ...and call it a day
+    TDynamicObject::bDynamicRemove = false;
+
+    return true;
 }

@@ -13,6 +13,7 @@ http://mozilla.org/MPL/2.0/.
 #include "Classes.h"
 #include "Names.h"
 
+float const EU07_SOUND_GLOBALRANGE { -1.f };
 float const EU07_SOUND_CABCONTROLSCUTOFFRANGE { 7.5f };
 float const EU07_SOUND_BRAKINGCUTOFFRANGE { 100.f };
 float const EU07_SOUND_RUNNINGNOISECUTOFFRANGE { 200.f };
@@ -29,8 +30,9 @@ enum sound_parameters {
 };
 
 enum sound_flags {
-    looping = 0x1, // the main sample will be looping; implied for multi-sounds
-    exclusive = 0x2 // the source won't dispatch more than one active instance of the sound; implied for multi-sounds
+    looping = 0x1, // the main sample will be looping
+    exclusive = 0x2, // the source won't dispatch more than one active instance of the sound
+    event = 0x80 // sound was activated by an event; we should keep note of the activation state for the update() calls it may receive
 };
 
 enum class sound_placement {
@@ -55,15 +57,21 @@ public:
 // methods
     // restores state of the class from provided data stream
     sound_source &
-        deserialize( cParser &Input, sound_type const Legacytype, int const Legacyparameters = 0 );
+        deserialize( cParser &Input, sound_type const Legacytype, int const Legacyparameters = 0, int const Chunkrange = 100 );
     sound_source &
         deserialize( std::string const &Input, sound_type const Legacytype, int const Legacyparameters = 0 );
+    // sends content of the class in legacy (text) format to provided stream
+    void
+        export_as_text( std::ostream &Output ) const;
     // copies list of sounds from provided source
     sound_source &
         copy_sounds( sound_source const &Source );
     // issues contextual play commands for the audio renderer
     void
         play( int const Flags = 0 );
+    // maintains playback of sounds started by event
+    void
+        play_event();
     // stops currently active play commands controlled by this emitter
     void
         stop( bool const Skipend = false );
@@ -106,6 +114,9 @@ public:
     // returns location of the sound source in simulation region space
     glm::dvec3 const
         location() const;
+    // returns defined range of the sound
+    float const
+        range() const;
 
 // members
     float m_amplitudefactor { 1.f }; // helper, value potentially used by gain calculation
@@ -174,15 +185,15 @@ private:
     template <class Iterator_>
     void
         insert( Iterator_ First, Iterator_ Last ) {
-            uint32_sequence sounds;
+            update_counter( *First, 1 );
             std::vector<audio::buffer_handle> buffers;
+            uint32_sequence sounds;
             std::for_each(
                 First, Last,
                 [&]( sound_handle const &soundhandle ) {
-                    sounds.emplace_back( soundhandle );
-                    buffers.emplace_back( sound( soundhandle ).buffer ); } );
-            audio::renderer.insert( std::begin( buffers ), std::end( buffers ), this, sounds );
-            update_counter( *First, 1 ); }
+                    buffers.emplace_back( sound( soundhandle ).buffer );
+                    sounds.emplace_back( soundhandle ); } );
+            audio::renderer.insert( std::begin( buffers ), std::end( buffers ), this, sounds ); }
     sound_data &
         sound( sound_handle const Sound );
     sound_data const &
@@ -194,15 +205,18 @@ private:
     sound_placement m_placement;
     float m_range { 50.f }; // audible range of the emitted sounds
     std::string m_name;
-    int m_flags { 0 }; // requested playback parameters
+    int m_flags {}; // requested playback parameters
     sound_properties m_properties; // current properties of the emitted sounds
-    float m_pitchvariation { 0.f }; // emitter-specific shift in base pitch
+    float m_pitchvariation {}; // emitter-specific shift in base pitch
     bool m_stop { false }; // indicates active sample instances should be terminated
+/*
+    bool m_stopend { false }; // indicates active instances of optional ending sound should be terminated
+*/
     bool m_playbeginning { true }; // indicates started sounds should be preceeded by opening bookend if there's one
     std::array<sound_data, 3> m_sounds { {} }; // basic sounds emitted by the source, main and optional bookends
     std::vector<soundchunk_pair> m_soundchunks; // table of samples activated when associated variable is within certain range
     bool m_soundchunksempty { true }; // helper, cached check whether sample table is linked with any actual samples
-    int m_crossfaderange {}; // range of transition from one chunk to another 
+    int m_crossfaderange {}; // range of transition from one chunk to another
 };
 
 // owner setter/getter

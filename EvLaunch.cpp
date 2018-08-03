@@ -15,6 +15,7 @@ http://mozilla.org/MPL/2.0/.
 
 #include "stdafx.h"
 #include "EvLaunch.h"
+
 #include "Globals.h"
 #include "Logs.h"
 #include "Event.h"
@@ -22,6 +23,9 @@ http://mozilla.org/MPL/2.0/.
 #include "Timer.h"
 #include "parser.h"
 #include "Console.h"
+#include "World.h"
+#include "simulationtime.h"
+#include "utilities.h"
 
 //---------------------------------------------------------------------------
 
@@ -29,7 +33,7 @@ http://mozilla.org/MPL/2.0/.
 // and the high byte holds modifiers: 0x1 = shift, 0x2 = ctrl, 0x4 = alt
 int vk_to_glfw_key( int const Keycode ) {
 
-#ifdef _WINDOWS
+#ifdef _WIN32
     auto const code = VkKeyScan( Keycode );
 #else
 	auto const code = (short int)Keycode;
@@ -71,8 +75,17 @@ bool TEventLauncher::Load(cParser *parser)
         iMinute = int(DeltaTime) % 100; // minuty są najmłodszymi cyframi dziesietnymi
         iHour = int(DeltaTime - iMinute) / 100; // godzina to setki
         DeltaTime = 0; // bez powtórzeń
-        WriteLog("EventLauncher at " + std::to_string(iHour) + ":" +
-                 std::to_string(iMinute)); // wyświetlenie czasu
+        // potentially shift the provided time by requested offset
+        auto const timeoffset { static_cast<int>( Global.ScenarioTimeOffset * 60 ) };
+        if( timeoffset != 0 ) {
+            auto const adjustedtime { clamp_circular( iHour * 60 + iMinute + timeoffset, 24 * 60 ) };
+            iHour = ( adjustedtime / 60 ) % 24;
+            iMinute = adjustedtime % 60;
+        }
+        WriteLog(
+            "EventLauncher at "
+            + std::to_string( iHour ) + ":"
+            + ( iMinute < 10 ? "0" : "" ) + to_string( iMinute ) ); // wyświetlenie czasu
     }
     parser->getTokens();
     *parser >> token;
@@ -125,55 +138,62 @@ bool TEventLauncher::Load(cParser *parser)
     return true;
 }
 
-bool TEventLauncher::check_conditions()
-{ //"renderowanie" wyzwalacza
-    bool bCond = false;
-    if (iKey != 0)
-    {
-	    // tylko jeśli okno jest aktywne
+bool TEventLauncher::check_activation() {
+
+    auto bCond { false };
+
+    if( iKey != 0 ) {
         if( iKey > 255 ) {
             // key and modifier
             auto const modifier = ( iKey & 0xff00 ) >> 8;
             bCond = ( Console::Pressed( iKey & 0xff ) )
-                && ( ( modifier & 1 ) ? Global::shiftState : true )
-                && ( ( modifier & 2 ) ? Global::ctrlState : true );
+                 && ( ( modifier & 1 ) ? Global.shiftState : true )
+                 && ( ( modifier & 2 ) ? Global.ctrlState : true );
         }
         else {
             // just key
             bCond = ( Console::Pressed( iKey & 0xff ) ); // czy klawisz wciśnięty
         }
     }
-    if (DeltaTime > 0)
-    {
-        if (UpdatedTime > DeltaTime)
-        {
+    if( DeltaTime > 0 ) {
+        if( UpdatedTime > DeltaTime ) {
             UpdatedTime = 0; // naliczanie od nowa
             bCond = true;
         }
-        else
-            UpdatedTime += Timer::GetDeltaTime(); // aktualizacja naliczania czasu
+        else {
+            // aktualizacja naliczania czasu
+            UpdatedTime += Timer::GetDeltaTime();
+        }
     }
-    else
-    { // jeśli nie cykliczny, to sprawdzić czas
-        if (simulation::Time.data().wHour == iHour)
-        {
-            if (simulation::Time.data().wMinute == iMinute)
-            { // zgodność czasu uruchomienia
-                if (UpdatedTime < 10)
-                {
+    else {
+        // jeśli nie cykliczny, to sprawdzić czas
+        if( simulation::Time.data().wHour == iHour ) {
+            if( simulation::Time.data().wMinute == iMinute ) {
+                // zgodność czasu uruchomienia
+                if( UpdatedTime < 10 ) {
                     UpdatedTime = 20; // czas do kolejnego wyzwolenia?
                     bCond = true;
                 }
             }
         }
-        else
+        else {
             UpdatedTime = 1;
+        }
     }
-    if (bCond) // jeśli spełniony został warunek
-    {
-        if ((iCheckMask != 0) && MemCell) // sprawdzanie warunku na komórce pamięci
-            bCond = MemCell->Compare(szText, fVal1, fVal2, iCheckMask);
+
+    return bCond;
+}
+
+bool TEventLauncher::check_conditions() {
+
+    auto bCond { true };
+
+    if( ( iCheckMask != 0 )
+     && ( MemCell != nullptr ) ) {
+        // sprawdzanie warunku na komórce pamięci
+        bCond = MemCell->Compare( szText, fVal1, fVal2, iCheckMask );
     }
+
     return bCond; // sprawdzanie dRadius w Ground.cpp
 }
 
@@ -186,11 +206,90 @@ bool TEventLauncher::IsGlobal() const {
           && ( dRadius < 0.0 ) ); // bez ograniczenia zasięgu
 }
 
-// calculates node's bounding radius
-void
+// radius() subclass details, calculates node's bounding radius
+float
 TEventLauncher::radius_() {
 
-    m_area.radius = std::sqrt( dRadius );
+    return std::sqrt( dRadius );
+}
+
+// serialize() subclass details, sends content of the subclass to provided stream
+void
+TEventLauncher::serialize_( std::ostream &Output ) const {
+
+    // TODO: implement
+}
+// deserialize() subclass details, restores content of the subclass from provided stream
+void
+TEventLauncher::deserialize_( std::istream &Input ) {
+
+    // TODO: implement
+}
+
+// export() subclass details, sends basic content of the class in legacy (text) format to provided stream
+void
+TEventLauncher::export_as_text_( std::ostream &Output ) const {
+    // header
+    Output << "eventlauncher ";
+    // location
+    Output
+        << location().x << ' '
+        << location().y << ' '
+        << location().z << ' ';
+    // activation radius
+    Output
+        << ( dRadius > 0 ? std::sqrt( dRadius ) : dRadius ) << ' ';
+    // activation key
+    if( iKey != 0 ) {
+        auto const key { iKey & 0xff };
+        auto const modifier { ( iKey & 0xff00 ) >> 8 };
+        if( ( key >= GLFW_KEY_A ) && ( key <= GLFW_KEY_Z ) ) {
+            Output << static_cast<char>(( 'A' + key - GLFW_KEY_A + ( ( modifier & 1 ) == 0 ? 32 : 0 ) )) << ' ';
+        }
+        else if( ( key >= GLFW_KEY_0 ) && ( key <= GLFW_KEY_9 ) ) {
+            Output << static_cast<char>(( '0' + key - GLFW_KEY_0 )) << ' ';
+        }
+    }
+    else {
+        Output << "none ";
+    }
+    // activation interval or hour
+    if( DeltaTime != 0 ) {
+        // cyclical launcher
+        Output << -DeltaTime << ' ';
+    }
+    else {
+        // single activation at specified time
+        if( ( iHour < 0 )
+         && ( iMinute < 0 ) ) {
+            Output << DeltaTime << ' ';
+        }
+        else {
+        // NOTE: activation hour might be affected by user-requested time offset
+            auto const timeoffset{ static_cast<int>( Global.ScenarioTimeOffset * 60 ) };
+            auto const adjustedtime{ clamp_circular( iHour * 60 + iMinute - timeoffset, 24 * 60 ) };
+            Output
+                << ( adjustedtime / 60 ) % 24
+                << ( adjustedtime % 60 )
+                << ' ';
+        }
+    }
+    // associated event(s)
+    Output << ( asEvent1Name.empty() ? "none" : asEvent1Name ) << ' ';
+    Output << ( asEvent2Name.empty() ? "none" : asEvent2Name ) << ' ';
+    if( false == asMemCellName.empty() ) {
+        // conditional event
+        Output
+            << "condition "
+            << asMemCellName << ' '
+            << szText << ' '
+            << ( ( iCheckMask & conditional_memval1 ) != 0 ? to_string( fVal1 ) : "*" ) << ' '
+            << ( ( iCheckMask & conditional_memval2 ) != 0 ? to_string( fVal2 ) : "*" ) << ' ';
+    }
+    // footer
+    Output
+        << "end"
+        << "\n";
 }
 
 //---------------------------------------------------------------------------

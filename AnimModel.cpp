@@ -15,11 +15,14 @@ http://mozilla.org/MPL/2.0/.
 #include "stdafx.h"
 #include "AnimModel.h"
 
+#include "renderer.h"
 #include "MdlMngr.h"
 #include "simulation.h"
+#include "simulationtime.h"
 #include "Globals.h"
 #include "Timer.h"
 #include "Logs.h"
+#include "renderer.h"
 
 TAnimContainer *TAnimModel::acAnimList = NULL;
 
@@ -71,11 +74,11 @@ int TAnimAdvanced::SortByBone()
 TAnimContainer::TAnimContainer()
 {
     pNext = NULL;
-    vRotateAngles = vector3(0.0f, 0.0f, 0.0f); // aktualne kąty obrotu
-    vDesiredAngles = vector3(0.0f, 0.0f, 0.0f); // docelowe kąty obrotu
+    vRotateAngles = Math3D::vector3(0.0f, 0.0f, 0.0f); // aktualne kąty obrotu
+    vDesiredAngles = Math3D::vector3(0.0f, 0.0f, 0.0f); // docelowe kąty obrotu
     fRotateSpeed = 0.0;
-    vTranslation = vector3(0.0f, 0.0f, 0.0f); // aktualne przesunięcie
-    vTranslateTo = vector3(0.0f, 0.0f, 0.0f); // docelowe przesunięcie
+    vTranslation = Math3D::vector3(0.0f, 0.0f, 0.0f); // aktualne przesunięcie
+    vTranslateTo = Math3D::vector3(0.0f, 0.0f, 0.0f); // docelowe przesunięcie
     fTranslateSpeed = 0.0;
     fAngleSpeed = 0.0;
     pSubModel = NULL;
@@ -99,7 +102,7 @@ bool TAnimContainer::Init(TSubModel *pNewSubModel)
     return (pSubModel != NULL);
 }
 
-void TAnimContainer::SetRotateAnim(vector3 vNewRotateAngles, double fNewRotateSpeed)
+void TAnimContainer::SetRotateAnim( Math3D::vector3 vNewRotateAngles, double fNewRotateSpeed)
 {
     if (!this)
         return; // wywoływane z eventu, gdy brak modelu
@@ -122,7 +125,7 @@ void TAnimContainer::SetRotateAnim(vector3 vNewRotateAngles, double fNewRotateSp
     }
 }
 
-void TAnimContainer::SetTranslateAnim(vector3 vNewTranslate, double fNewSpeed)
+void TAnimContainer::SetTranslateAnim( Math3D::vector3 vNewTranslate, double fNewSpeed)
 {
     if (!this)
         return; // wywoływane z eventu, gdy brak modelu
@@ -153,8 +156,11 @@ void TAnimContainer::AnimSetVMD(double fNewSpeed)
     // X-w lewo, Y-w górę, Z-do tyłu
     // minimalna wysokość to -7.66, a nadal musi być ponad podłogą
     // if (pMovementData->iFrame>0) return; //tylko pierwsza ramka
-    vTranslateTo = vector3(0.1 * pMovementData->f3Vector.x, 0.1 * pMovementData->f3Vector.z,
-                           0.1 * pMovementData->f3Vector.y);
+    vTranslateTo =
+        Math3D::vector3(
+            0.1 * pMovementData->f3Vector.x,
+            0.1 * pMovementData->f3Vector.z,
+            0.1 * pMovementData->f3Vector.y);
     if (LengthSquared3(vTranslateTo) > 0.0 ? true : LengthSquared3(vTranslation) > 0.0)
     { // jeśli ma być przesunięte albo jest przesunięcie
         iAnim |= 2; // wyłączy się samo
@@ -209,11 +215,11 @@ void TAnimContainer::UpdateModel() {
     {
         if (fTranslateSpeed != 0.0)
         {
-            vector3 dif = vTranslateTo - vTranslation; // wektor w kierunku docelowym
+            auto dif = vTranslateTo - vTranslation; // wektor w kierunku docelowym
             double l = LengthSquared3(dif); // długość wektora potrzebnego przemieszczenia
             if (l >= 0.0001)
             { // jeśli do przemieszczenia jest ponad 1cm
-                vector3 s = SafeNormalize(dif); // jednostkowy wektor kierunku
+                auto s = Math3D::SafeNormalize(dif); // jednostkowy wektor kierunku
                 s = s *
                     (fTranslateSpeed *
                      Timer::GetDeltaTime()); // przemieszczenie w podanym czasie z daną prędkością
@@ -252,7 +258,7 @@ void TAnimContainer::UpdateModel() {
             */
 
             bool anim = false;
-            vector3 dif = vDesiredAngles - vRotateAngles;
+            auto dif = vDesiredAngles - vRotateAngles;
             double s;
             s = fRotateSpeed * sign(dif.x) * Timer::GetDeltaTime();
             if (fabs(s) >= fabs(dif.x))
@@ -356,13 +362,14 @@ void TAnimContainer::UpdateModelIK()
 { // odwrotna kinematyka wyliczana dopiero po ustawieniu macierzy w submodelach
     if (pSubModel) // pozbyć się tego - sprawdzać wcześniej
     {
-        if (pSubModel->b_Anim & at_IK)
+        if ((pSubModel->b_Anim == TAnimType::at_IK)
+          ||(pSubModel->b_Anim == TAnimType::at_IK22))
         { // odwrotna kinematyka
             float3 d, k;
             TSubModel *ch = pSubModel->ChildGet();
             switch (pSubModel->b_Anim)
             {
-            case at_IK11: // stopa: ustawić w kierunku czubka (pierwszy potomny)
+            case TAnimType::at_IK11: // stopa: ustawić w kierunku czubka (pierwszy potomny)
                 d = ch->Translation1Get(); // wektor względem aktualnego układu (nie uwzględnia
                 // obrotu)
                 k = float3(RadToDeg(atan2(d.z, hypot(d.x, d.y))), 0.0,
@@ -372,7 +379,7 @@ void TAnimContainer::UpdateModelIK()
                 // WriteLog("--> "+AnsiString(k.x)+" "+AnsiString(k.y)+" "+AnsiString(k.z));
                 // Ra: to już jest dobrze, może być inna ćwiartka i znak
                 break;
-            case at_IK22: // udo: ustawić w kierunku pierwszej potomnej pierwszej potomnej (kostki)
+            case TAnimType::at_IK22: // udo: ustawić w kierunku pierwszej potomnej pierwszej potomnej (kostki)
                 // pozycję kostki należy określić względem kości centralnej (+biodro może być
                 // pochylone)
                 // potem wyliczyć ewentualne odchylenie w tej i następnej
@@ -415,16 +422,8 @@ TAnimModel::TAnimModel( scene::node_data const &Nodedata ) : basic_node( Nodedat
 
 TAnimModel::~TAnimModel()
 {
-    delete pAdvanced; // nie ma zaawansowanej animacji
+    SafeDelete(pAdvanced); // nie ma zaawansowanej animacji
     SafeDelete(pRoot);
-}
-
-bool TAnimModel::Init(TModel3d *pNewModel)
-{
-    fBlinkTimer = double(Random(1000 * fOffTime)) / (1000 * fOffTime);
-    ;
-    pModel = pNewModel;
-    return (pModel != NULL);
 }
 
 bool TAnimModel::Init(std::string const &asName, std::string const &asReplacableTexture)
@@ -442,17 +441,21 @@ bool TAnimModel::Init(std::string const &asName, std::string const &asReplacable
         m_materialdata.textures_alpha = 0x31310031;
     }
     else{
-        // tekstura nieprzezroczysta - nie renderować w cyklu
+        // tekstura nieprzezroczysta - nie renderować w cyklu przezroczystych
         m_materialdata.textures_alpha = 0x30300030;
     }
-    // przezroczystych
-    return (Init(TModelsManager::GetModel(asName)));
+    
+    fBlinkTimer = double( Random( 1000 * fOffTime ) ) / ( 1000 * fOffTime );
+
+    pModel = TModelsManager::GetModel( asName );
+    return ( pModel != nullptr );
 }
 
 bool TAnimModel::Load(cParser *parser, bool ter)
 { // rozpoznanie wpisu modelu i ustawienie świateł
 	std::string name = parser->getToken<std::string>();
-    std::string texture = parser->getToken<std::string>(false); // tekstura (zmienia na małe)
+    std::string texture = parser->getToken<std::string>(); // tekstura (zmienia na małe)
+    replace_slashes( name );
     if (!Init( name, texture ))
     {
         if (name != "notload")
@@ -463,7 +466,7 @@ bool TAnimModel::Load(cParser *parser, bool ter)
 					name[ name.length() - 3 ] = 'e';
 				}
 #ifdef EU07_USE_OLD_TERRAINCODE
-                Global::asTerrainModel = name;
+                Global.asTerrainModel = name;
                 WriteLog("Terrain model \"" + name + "\" will be created.");
 #endif
             }
@@ -501,7 +504,7 @@ bool TAnimModel::Load(cParser *parser, bool ter)
 		while( ( token != "" )
 			&& ( token != "endmodel" ) ) {
 
-			LightSet( i, std::stod( token ) ); // stan światła jest liczbą z ułamkiem
+			LightSet( i, std::stof( token ) ); // stan światła jest liczbą z ułamkiem
             ++i;
 
 			token = "";
@@ -550,7 +553,7 @@ void TAnimModel::RaAnimate( unsigned int const Framestamp ) {
 
     // Ra 2F1I: to by można pomijać dla modeli bez animacji, których jest większość
     TAnimContainer *pCurrent;
-    for (pCurrent = pRoot; pCurrent != NULL; pCurrent = pCurrent->pNext)
+    for (pCurrent = pRoot; pCurrent != nullptr; pCurrent = pCurrent->pNext)
         if (!pCurrent->evDone) // jeśli jest bez eventu
             pCurrent->UpdateModel(); // przeliczenie animacji każdego submodelu
     // if () //tylko dla modeli z IK !!!!
@@ -560,31 +563,48 @@ void TAnimModel::RaAnimate( unsigned int const Framestamp ) {
     m_framestamp = Framestamp;
 };
 
-// calculates piece's bounding radius
-void
-TAnimModel::radius_() {
-
-    if( pModel != nullptr ) {
-        m_area.radius = pModel->bounding_radius();
-    }
-}
-
 void TAnimModel::RaPrepare()
 { // ustawia światła i animacje we wzorcu modelu przed renderowaniem egzemplarza
     bool state; // stan światła
     for (int i = 0; i < iNumLights; ++i)
     {
         auto const lightmode { static_cast<int>( lsLights[ i ] ) };
-        switch (lightmode)
-        {
-        case ls_Blink: // migotanie
-            state = fBlinkTimer < fOnTime;
-            break;
-        case ls_Dark: // zapalone, gdy ciemno
-            state = Global::fLuminance <= ( lsLights[i] - 3.0 );
-            break;
-        default: // zapalony albo zgaszony
-            state = (lightmode == ls_On);
+        switch( lightmode ) {
+            case ls_On:
+            case ls_Off: {
+                // zapalony albo zgaszony
+                state = ( lightmode == ls_On );
+                break;
+            }
+            case ls_Blink: {
+                // migotanie
+                state = ( fBlinkTimer < fOnTime );
+                break;
+            }
+            case ls_Dark: {
+                // zapalone, gdy ciemno
+                state = (
+                    Global.fLuminance <= (
+                        lsLights[ i ] == static_cast<float>( ls_Dark ) ?
+                            DefaultDarkThresholdLevel :
+                            ( lsLights[ i ] - static_cast<float>( ls_Dark ) ) ) );
+                break;
+            }
+            case ls_Home: {
+                // like ls_dark but off late at night
+                auto const simulationhour { simulation::Time.data().wHour };
+                state = (
+                    Global.fLuminance <= (
+                        lsLights[ i ] == static_cast<float>( ls_Home ) ?
+                            DefaultDarkThresholdLevel :
+                            ( lsLights[ i ] - static_cast<float>( ls_Home ) ) ) );
+                // force the lights off between 1-5am
+                state = state && (( simulationhour < 1 ) || ( simulationhour >= 5 ));
+                break;
+            }
+            default: {
+                break;
+            }
         }
         if (LightsOn[i])
             LightsOn[i]->iVisible = state;
@@ -613,10 +633,6 @@ int TAnimModel::Flags()
 
 //---------------------------------------------------------------------------
 
-bool TAnimModel::TerrainLoaded()
-{ // zliczanie kwadratów kilometrowych (główna linia po Next) do tworznia tablicy
-    return (this ? pModel != NULL : false);
-};
 int TAnimModel::TerrainCount()
 { // zliczanie kwadratów kilometrowych (główna linia po Next) do tworznia tablicy
     return pModel ? pModel->TerrainCount() : 0;
@@ -684,7 +700,7 @@ void TAnimModel::AnimationVND(void *pData, double a, double b, double c, double 
           if (0) //jeśli włączone sortowanie plików VMD (trochę się przeciąga)
            if (pAdvanced->SortByBone()) //próba posortowania
            {//zapisać posortowany plik, jeśli dokonano zmian
-            TFileStream *fs=new TFileStream("models\\1.vmd",fmCreate);
+            TFileStream *fs=new TFileStream("models/1.vmd",fmCreate);
             fs->Write(pData,2198342); //2948728);
             delete fs;
            }
@@ -761,31 +777,8 @@ void TAnimModel::LightSet(int const n, float const v)
     if (n >= iMaxNumLights)
         return; // przekroczony zakres
     lsLights[ n ] = v;
-    switch( static_cast<int>( lsLights[ n ] ) ) {
-        // interpretacja ułamka zależnie od typu
-        case ls_Off: {
-            // ustalenie czasu migotania, t<1s (f>1Hz), np. 0.1 => t=0.1 (f=10Hz)
-            break;
-        }
-        case ls_On: {
-            // ustalenie wypełnienia ułamkiem, np. 1.25 => zapalony przez 1/4 okresu
-            break;
-        }
-        case ls_Blink: {
-            // ustalenie częstotliwości migotania, f<1Hz (t>1s), np. 2.2 => f=0.2Hz (t=5s)
-            break;
-        }
-        case ls_Dark: {
-            // zapalenie świateł zależne od oświetlenia scenerii
-            if( v == 3.0 ) {
-                // standardowy próg zaplania
-                lsLights[ n ] = 3.0 + DefaultDarkThresholdLevel;
-            } 
-            break;
-        }
-    }
 };
-//---------------------------------------------------------------------------
+
 void TAnimModel::AnimUpdate(double dt)
 { // wykonanie zakolejkowanych animacji, nawet gdy modele nie są aktualnie wyświetlane
     TAnimContainer *p = TAnimModel::acAnimList;
@@ -795,4 +788,72 @@ void TAnimModel::AnimUpdate(double dt)
         p = p->acAnimNext; // na razie bez usuwania z listy, bo głównie obrotnica na nią wchodzi
     }
 };
+
+// radius() subclass details, calculates node's bounding radius
+float
+TAnimModel::radius_() {
+
+    return (
+        pModel ?
+            pModel->bounding_radius() :
+            0.f );
+}
+
+// serialize() subclass details, sends content of the subclass to provided stream
+void
+TAnimModel::serialize_( std::ostream &Output ) const {
+    
+    // TODO: implement
+}
+// deserialize() subclass details, restores content of the subclass from provided stream
+void
+TAnimModel::deserialize_( std::istream &Input ) {
+
+    // TODO: implement
+}
+
+// export() subclass details, sends basic content of the class in legacy (text) format to provided stream
+void
+TAnimModel::export_as_text_( std::ostream &Output ) const {
+    // header
+    Output << "model ";
+    // location and rotation
+    Output
+        << location().x << ' '
+        << location().y << ' '
+        << location().z << ' '
+        << vAngle.y << ' ';
+    // 3d shape
+    auto modelfile { (
+        pModel ?
+            pModel->NameGet() + ".t3d" : // rainsted requires model file names to include an extension
+            "none" ) };
+    if( modelfile.find( szModelPath ) == 0 ) {
+        // don't include 'models/' in the path
+        modelfile.erase( 0, std::string{ szModelPath }.size() );
+    }
+    Output << modelfile << ' ';
+    // texture
+    auto texturefile { (
+        m_materialdata.replacable_skins[ 1 ] != null_handle ?
+            GfxRenderer.Material( m_materialdata.replacable_skins[ 1 ] ).name :
+            "none" ) };
+    if( texturefile.find( szTexturePath ) == 0 ) {
+        // don't include 'textures/' in the path
+        texturefile.erase( 0, std::string{ szTexturePath }.size() );
+    }
+    Output << texturefile << ' ';
+    // light submodels activation configuration
+    if( iNumLights > 0 ) {
+        Output << "lights ";
+        for( int lightidx = 0; lightidx < iNumLights; ++lightidx ) {
+            Output << lsLights[ lightidx ] << ' ';
+        }
+    }
+    // footer
+    Output
+        << "endmodel"
+        << "\n";
+}
+
 //---------------------------------------------------------------------------

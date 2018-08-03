@@ -16,8 +16,10 @@ http://mozilla.org/MPL/2.0/.
 #include "stdafx.h"
 #include "MdlMngr.h"
 
+#include "Model3d.h"
 #include "Globals.h"
-#include "McZapkie/mctools.h"
+#include "Logs.h"
+#include "utilities.h"
 
 // wczytanie modelu do kontenerka
 TModel3d *
@@ -35,7 +37,7 @@ TMdlContainer::LoadModel(std::string const &Name, bool const Dynamic) {
     }
 };
 
-TModelsManager::modelcontainer_sequence TModelsManager::m_models;
+TModelsManager::modelcontainer_sequence TModelsManager::m_models { 1, TMdlContainer{} };
 TModelsManager::stringmodelcontainerindex_map TModelsManager::m_modelsmap;
 
 // wczytanie modelu do tablicy
@@ -46,12 +48,12 @@ TModelsManager::LoadModel(std::string const &Name, bool dynamic) {
     auto model = m_models.back().LoadModel( Name, dynamic );
     if( model != nullptr ) {
         m_modelsmap.emplace( Name, m_models.size() - 1 );
-        return model;
     }
     else {
         m_models.pop_back();
-        return nullptr;
+        m_modelsmap.emplace( Name, null_handle );
     }
+    return model;
 }
 
 TModel3d *
@@ -77,42 +79,75 @@ TModelsManager::GetModel(std::string const &Name, bool const Dynamic)
     // - wczytanie uproszczonego wnętrza, ścieżka dokładna, tekstury z katalogu modelu
     // - niebo animowane, ścieżka brana ze wpisu, tekstury nieokreślone
     // - wczytanie modelu animowanego - Init() - sprawdzić
-	std::string buf;
-    std::string const buftp = Global::asCurrentTexturePath; // zapamiętanie aktualnej ścieżki do tekstur,
-    if( Name.find('\\') == std::string::npos )
-    {
-        buf = "models\\" + Name; // Ra: było by lepiej katalog dodać w parserze
-        if( Name.find( '/') != std::string::npos)
-        {
-            Global::asCurrentTexturePath = Global::asCurrentTexturePath + Name;
-            Global::asCurrentTexturePath.erase(Global::asCurrentTexturePath.find("/") + 1,
-                                                Global::asCurrentTexturePath.length());
-        }
+    std::string const buftp { Global.asCurrentTexturePath }; // zapamiętanie aktualnej ścieżki do tekstur,
+    std::string filename { Name };
+    if( Name.find( '/' ) != std::string::npos && !Dynamic ) {
+        // pobieranie tekstur z katalogu, w którym jest model
+        // when loading vehicles the path is set by the calling routine, so we can skip it here
+        Global.asCurrentTexturePath += Name;
+        Global.asCurrentTexturePath.erase( Global.asCurrentTexturePath.rfind( '/' ) + 1 );
     }
-    else
-    {
-		buf = Name;
-        if( Dynamic ) {
-            // na razie tak, bo nie wiadomo, jaki może mieć wpływ na pozostałe modele
-            if( Name.find( '/' ) != std::string::npos ) { // pobieranie tekstur z katalogu, w którym jest model
-                Global::asCurrentTexturePath = Global::asCurrentTexturePath + Name;
-                Global::asCurrentTexturePath.erase(
-                    Global::asCurrentTexturePath.find( "/" ) + 1,
-                    Global::asCurrentTexturePath.length() - 1 );
-            }
-        }
-    }
-	buf = ToLower( buf );
+    erase_extension( filename );
+    filename = ToLower( filename );
 
-    auto const lookup = m_modelsmap.find( buf );
-    if( lookup != m_modelsmap.end() ) {
-        Global::asCurrentTexturePath = buftp;
-        return ( m_models[ lookup->second ].Model.get() );
+    // see if we have it in the databank
+    auto banklookup { find_in_databank( filename ) };
+    TModel3d *model { banklookup.second };
+    if( true == banklookup.first ) {
+        Global.asCurrentTexturePath = buftp;
+        return model;
     }
 
-    auto model = LoadModel(buf, Dynamic); // model nie znaleziony, to wczytać
-    Global::asCurrentTexturePath = buftp; // odtworzenie ścieżki do tekstur
+    // first load attempt, check if it's on disk
+    std::string disklookup { find_on_disk( filename ) };
+
+    if( false == disklookup.empty() ) {
+        model = LoadModel( disklookup, Dynamic ); // model nie znaleziony, to wczytać
+    }
+    else {
+        // there's nothing matching in the databank nor on the disk, report failure...
+        ErrorLog( "Bad file: failed do locate 3d model file \"" + filename + "\"", logtype::file );
+        // ...and link it with the error model slot
+        m_modelsmap.emplace( filename, null_handle );
+    }
+    Global.asCurrentTexturePath = buftp; // odtworzenie ścieżki do tekstur
     return model; // NULL jeśli błąd
 };
+
+std::pair<bool, TModel3d *>
+TModelsManager::find_in_databank( std::string const &Name ) {
+
+    std::vector<std::string> filenames {
+        Name,
+        szModelPath + Name };
+
+    for( auto const &filename : filenames ) {
+        auto const lookup { m_modelsmap.find( filename ) };
+        if( lookup != m_modelsmap.end() ) {
+            return { true, m_models[ lookup->second ].Model.get() };
+        }
+    }
+
+    return { false, nullptr };
+}
+
+// checks whether specified file exists. returns name of the located file, or empty string.
+std::string
+TModelsManager::find_on_disk( std::string const &Name ) {
+
+    std::vector<std::string> extensions { { ".e3d" }, { ".t3d" } };
+    for( auto const &extension : extensions ) {
+
+        auto lookup = (
+            FileExists( Name + extension ) ? Name :
+            FileExists( szModelPath + Name + extension ) ? szModelPath + Name :
+            "" );
+        if( false == lookup.empty() ) {
+            return lookup;
+        }
+    }
+
+    return {};
+}
 
 //---------------------------------------------------------------------------

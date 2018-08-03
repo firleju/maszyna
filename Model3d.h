@@ -9,14 +9,11 @@ http://mozilla.org/MPL/2.0/.
 
 #pragma once
 
-#include "GL/glew.h"
-#include "parser.h"
+#include "Classes.h"
 #include "dumb3d.h"
 #include "Float3d.h"
 #include "openglgeometrybank.h"
 #include "material.h"
-
-using namespace Math3D;
 
 // Ra: specjalne typy submodeli, poza tym GL_TRIANGLES itp.
 const int TP_ROTATOR = 256;
@@ -24,7 +21,7 @@ const int TP_FREESPOTLIGHT = 257;
 const int TP_STARS = 258;
 const int TP_TEXT = 259;
 
-enum TAnimType // rodzaj animacji
+enum class TAnimType // rodzaj animacji
 {
 	at_None, // brak
 	at_Rotate, // obrót względem wektora o kąt
@@ -41,13 +38,13 @@ enum TAnimType // rodzaj animacji
 	at_Billboard, // obrót w pionie do kamery
 	at_Wind, // ruch pod wpływem wiatru
 	at_Sky, // animacja nieba
-	at_IK = 0x100, // odwrotna kinematyka - submodel sterujący (np. staw skokowy)
-	at_IK11 = 0x101, // odwrotna kinematyka - submodel nadrzędny do sterowango (np. stopa)
-	at_IK21 = 0x102, // odwrotna kinematyka - submodel nadrzędny do sterowango (np. podudzie)
-	at_IK22 = 0x103, // odwrotna kinematyka - submodel nadrzędny do nadrzędnego sterowango (np. udo)
-	at_Digital = 0x200, // dziesięciocyfrowy licznik mechaniczny (z cylindrami)
-	at_DigiClk = 0x201, // zegar cyfrowy jako licznik na dziesięciościanach
-	at_Undefined = 0x800000FF // animacja chwilowo nieokreślona
+	at_IK, // odwrotna kinematyka - submodel sterujący (np. staw skokowy)
+	at_IK11, // odwrotna kinematyka - submodel nadrzędny do sterowango (np. stopa)
+	at_IK21, // odwrotna kinematyka - submodel nadrzędny do sterowango (np. podudzie)
+	at_IK22, // odwrotna kinematyka - submodel nadrzędny do nadrzędnego sterowango (np. udo)
+	at_Digital, // dziesięciocyfrowy licznik mechaniczny (z cylindrami)
+	at_DigiClk, // zegar cyfrowy jako licznik na dziesięciościanach
+	at_Undefined // animacja chwilowo nieokreślona
 };
 
 namespace scene {
@@ -58,10 +55,12 @@ class TModel3d;
 
 class TSubModel
 { // klasa submodelu - pojedyncza siatka, punkt świetlny albo grupa punktów
-    friend class opengl_renderer;
-    friend class TModel3d; // temporary workaround. TODO: clean up class content/hierarchy
-    friend class TDynamicObject; // temporary etc
-    friend class scene::shape_node; // temporary etc
+    //m7todo: zrobić normalną serializację
+
+    friend opengl_renderer;
+    friend TModel3d; // temporary workaround. TODO: clean up class content/hierarchy
+    friend TDynamicObject; // temporary etc
+    friend scene::shape_node; // temporary etc
 
 public:
     enum normalization {
@@ -76,10 +75,10 @@ private:
     int eType{ TP_ROTATOR }; // Ra: modele binarne dają więcej możliwości niż mesh złożony z trójkątów
     int iName{ -1 }; // numer łańcucha z nazwą submodelu, albo -1 gdy anonimowy
 public: // chwilowo
-    TAnimType b_Anim{ at_None };
+    TAnimType b_Anim{ TAnimType::at_None };
 
 private:
-    int iFlags{ 0x0200 }; // bit 9=1: submodel został utworzony a nie ustawiony na wczytany plik
+    uint32_t iFlags{ 0x0200 }; // bit 9=1: submodel został utworzony a nie ustawiony na wczytany plik
                 // flagi informacyjne:
 				// bit  0: =1 faza rysowania zależy od wymiennej tekstury 0
 				// bit  1: =1 faza rysowania zależy od wymiennej tekstury 1
@@ -139,7 +138,7 @@ public: // chwilowo
     gfx::vertex_array Vertices;
     float m_boundingradius { 0 };
     size_t iAnimOwner{ 0 }; // roboczy numer egzemplarza, który ustawił animację
-    TAnimType b_aAnim{ at_None }; // kody animacji oddzielnie, bo zerowane
+    TAnimType b_aAnim{ TAnimType::at_None }; // kody animacji oddzielnie, bo zerowane
     float4x4 *mAnimMatrix{ nullptr }; // macierz do animacji kwaternionowych (należy do AnimContainer)
     TSubModel **smLetter{ nullptr }; // wskaźnik na tablicę submdeli do generoania tekstu (docelowo zapisać do E3D)
     TSubModel *Parent{ nullptr }; // nadrzędny, np. do wymnażania macierzy
@@ -158,17 +157,20 @@ public:
 	static float fSquareDist;
 	static TModel3d *pRoot;
 	static std::string *pasText; // tekst dla wyświetlacza (!!!! do przemyślenia)
+    TSubModel() = default;
 	~TSubModel();
 	int Load(cParser &Parser, TModel3d *Model, /*int Pos,*/ bool dynamic);
 	void ChildAdd(TSubModel *SubModel);
 	void NextAdd(TSubModel *SubModel);
 	TSubModel * NextGet() { return Next; };
 	TSubModel * ChildGet() { return Child; };
+    int count_siblings();
+    int count_children();
 	int TriangleAdd(TModel3d *m, material_handle tex, int tri);
 	void SetRotate(float3 vNewRotateAxis, float fNewAngle);
-	void SetRotateXYZ(vector3 vNewAngles);
+	void SetRotateXYZ( Math3D::vector3 vNewAngles);
 	void SetRotateXYZ(float3 vNewAngles);
-	void SetTranslate(vector3 vNewTransVector);
+	void SetTranslate( Math3D::vector3 vNewTransVector);
 	void SetTranslate(float3 vNewTransVector);
 	void SetRotateIK1(float3 vNewAngles);
 	TSubModel * GetFromName( std::string const &search, bool i = true );
@@ -179,7 +181,7 @@ public:
     inline void Hide() { iVisible = 0; };
 
     void create_geometry( std::size_t &Dataoffset, gfx::geometrybank_handle const &Bank );
-	int FlagsCheck();
+	uint32_t FlagsCheck();
 	void WillBeAnimated()
 	{
 		if (this)
@@ -193,7 +195,7 @@ public:
 	void Name_Material( std::string const &Name );
 	void Name( std::string const &Name );
 	// Ra: funkcje do budowania terenu z E3D
-	int Flags() const { return iFlags; };
+	uint32_t Flags() const { return iFlags; };
 	void UnFlagNext() { iFlags &= 0x00FFFFFF; };
 	void ColorsSet( glm::vec3 const &Ambient, glm::vec3 const &Diffuse, glm::vec3 const &Specular );
     // sets light level (alpha component of illumination color) to specified value
@@ -219,11 +221,11 @@ public:
 
 class TModel3d
 {
-    friend class opengl_renderer;
+    friend opengl_renderer;
 
 private:
 	TSubModel *Root; // drzewo submodeli
-	int iFlags; // Ra: czy submodele mają przezroczyste tekstury
+	uint32_t iFlags; // Ra: czy submodele mają przezroczyste tekstury
 public: // Ra: tymczasowo
     int iNumVerts; // ilość wierzchołków (gdy nie ma VBO, to m_nVertexCount=0)
     gfx::geometrybank_handle m_geometrybank;
@@ -252,7 +254,7 @@ public:
 	void LoadFromBinFile(std::string const &FileName, bool dynamic);
 	bool LoadFromFile(std::string const &FileName, bool dynamic);
 	void SaveToBinFile(std::string const &FileName);
-	int Flags() const { return iFlags; };
+	uint32_t Flags() const { return iFlags; };
 	void Init();
 	std::string NameGet() const { return m_filename; };
 	int TerrainCount() const;

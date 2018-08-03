@@ -10,17 +10,19 @@ http://mozilla.org/MPL/2.0/.
 
 #pragma once
 
-#include "Model3d.h"
+#include "Classes.h"
 
 class TSky {
 
-    friend class opengl_renderer;
+    friend opengl_renderer;
+
+public:
+    TSky() = default;
+
+    void Init();
 
 private:
     TModel3d *mdCloud { nullptr };
-
-public:
-    void Init();
 };
 
 //---------------------------------------------------------------------------

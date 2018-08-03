@@ -18,54 +18,27 @@ http://mozilla.org/MPL/2.0/.
 #include "World.h"
 #include "MemCell.h"
 #include "scene.h"
+#include "light.h"
 
 #define EU07_USE_PICKING_FRAMEBUFFER
 //#define EU07_USE_DEBUG_SHADOWMAP
 //#define EU07_USE_DEBUG_CABSHADOWMAP
 //#define EU07_USE_DEBUG_CAMERA
+//#define EU07_USE_DEBUG_SOUNDEMITTERS
 
-struct opengl_light {
+struct opengl_light : public basic_light {
 
-    GLuint id{ (GLuint)-1 };
-    glm::vec3 direction;
-    glm::vec4
-        position { 0.f, 0.f, 0.f, 1.f }, // 4th parameter specifies directional(0) or omni-directional(1) light source
-        ambient { 0.f, 0.f, 0.f, 1.f },
-        diffuse { 1.f, 1.f, 1.f, 1.f },
-        specular { 1.f, 1.f, 1.f, 1.f };
+    GLuint id { (GLuint)-1 };
 
-    inline
-    void apply_intensity( float const Factor = 1.0f ) {
+    void
+        apply_intensity( float const Factor = 1.0f );
+    void
+        apply_angle();
 
-        if( Factor == 1.0 ) {
-
-            glLightfv( id, GL_AMBIENT, glm::value_ptr(ambient) );
-            glLightfv( id, GL_DIFFUSE, glm::value_ptr(diffuse) );
-            glLightfv( id, GL_SPECULAR, glm::value_ptr(specular) );
-        }
-        else {
-            // temporary light scaling mechanics (ultimately this work will be left to the shaders
-            glm::vec4 scaledambient( ambient.r * Factor, ambient.g * Factor, ambient.b * Factor, ambient.a );
-            glm::vec4 scaleddiffuse( diffuse.r * Factor, diffuse.g * Factor, diffuse.b * Factor, diffuse.a );
-            glm::vec4 scaledspecular( specular.r * Factor, specular.g * Factor, specular.b * Factor, specular.a );
-            glLightfv( id, GL_AMBIENT, glm::value_ptr(scaledambient) );
-            glLightfv( id, GL_DIFFUSE, glm::value_ptr(scaleddiffuse) );
-            glLightfv( id, GL_SPECULAR, glm::value_ptr(scaledspecular) );
-        }
-    }
-    inline
-    void apply_angle() {
-
-        glLightfv( id, GL_POSITION, glm::value_ptr(position) );
-        if( position.w == 1.f ) {
-            glLightfv( id, GL_SPOT_DIRECTION, glm::value_ptr(direction) );
-        }
-    }
-    inline
-    void set_position( glm::vec3 const &Position ) {
-
-        position = glm::vec4( Position, position.w );
-    }
+    opengl_light &
+        operator=( basic_light const &Right ) {
+            basic_light::operator=( Right );
+            return *this; }
 };
 
 // encapsulates basic rendering setup.
@@ -79,6 +52,8 @@ struct opengl_technique {
 class opengl_camera {
 
 public:
+// constructors
+    opengl_camera() = default;
 // methods:
     inline
     void
@@ -140,10 +115,10 @@ class opengl_renderer {
 
 public:
 // types
-
+// constructors
+    opengl_renderer() = default;
 // destructor
     ~opengl_renderer() { gluDeleteQuadric( m_quadric ); }
-
 // methods
     bool
         Init( GLFWwindow *Window );
@@ -190,15 +165,19 @@ public:
     // utility methods
     TSubModel const *
         Pick_Control() const { return m_pickcontrolitem; }
-    editor::basic_node const *
+    scene::basic_node const *
         Pick_Node() const { return m_picksceneryitem; }
+    glm::dvec3
+        Mouse_Position() const { return m_worldmousecoordinates; }
     // maintenance methods
     void
         Update( double const Deltatime );
-    TSubModel const *
+    TSubModel *
         Update_Pick_Control();
-    editor::basic_node const *
+    scene::basic_node *
         Update_Pick_Node();
+    glm::dvec3
+        Update_Mouse_Position();
     // debug methods
     std::string const &
         info_times() const;
@@ -275,6 +254,8 @@ private:
     void
         setup_shadow_color( glm::vec4 const &Shadowcolor );
     void
+        setup_environment_light( TEnvironmentType const Environment = e_flat );
+    void
         switch_units( bool const Diffuse, bool const Shadows, bool const Reflections );
     // helper, texture manager method; activates specified texture unit
     void
@@ -300,7 +281,7 @@ private:
     bool
         Render( TDynamicObject *Dynamic );
     bool
-        Render( TModel3d *Model, material_data const *Material, float const Squaredistance, Math3D::vector3 const &Position, Math3D::vector3 const &Angle );
+        Render( TModel3d *Model, material_data const *Material, float const Squaredistance, Math3D::vector3 const &Position, glm::vec3 const &Angle );
     bool
         Render( TModel3d *Model, material_data const *Material, float const Squaredistance );
     void
@@ -326,7 +307,7 @@ private:
     bool
         Render_Alpha( TDynamicObject *Dynamic );
     bool
-        Render_Alpha( TModel3d *Model, material_data const *Material, float const Squaredistance, Math3D::vector3 const &Position, Math3D::vector3 const &Angle );
+        Render_Alpha( TModel3d *Model, material_data const *Material, float const Squaredistance, Math3D::vector3 const &Position, glm::vec3 const &Angle );
     bool
         Render_Alpha( TModel3d *Model, material_data const *Material, float const Squaredistance );
     void
@@ -343,8 +324,11 @@ private:
     gfx::geometrybank_manager m_geometry;
     material_manager m_materials;
     texture_manager m_textures;
+    opengl_light m_sunlight;
     opengllight_array m_lights;
-
+/*
+    float m_sunandviewangle; // cached dot product of sunlight and camera vectors
+*/
     gfx::geometry_handle m_billboardgeometry { 0, 0 };
     texture_handle m_glaretexture { -1 };
     texture_handle m_suntexture { -1 };
@@ -397,7 +381,8 @@ private:
     std::string m_debugstatstext;
 
     glm::vec4 m_baseambient { 0.0f, 0.0f, 0.0f, 1.0f };
-    glm::vec4 m_shadowcolor { 0.65f, 0.65f, 0.65f, 1.f };
+    glm::vec4 m_shadowcolor { colors::shadow };
+//    TEnvironmentType m_environment { e_flat };
     float m_specularopaquescalefactor { 1.f };
     float m_speculartranslucentscalefactor { 1.f };
     bool m_renderspecular{ false }; // controls whether to include specular component in the calculations
@@ -405,15 +390,19 @@ private:
     renderpass_config m_renderpass; // parameters for current render pass
     section_sequence m_sectionqueue; // list of sections in current render pass
     cell_sequence m_cellqueue;
+    renderpass_config m_colorpass; // parametrs of most recent color pass
     renderpass_config m_shadowpass; // parametrs of most recent shadowmap pass
     renderpass_config m_cabshadowpass; // parameters of most recent cab shadowmap pass
-    std::vector<TSubModel const *> m_pickcontrolsitems;
-    TSubModel const *m_pickcontrolitem { nullptr };
-    std::vector<editor::basic_node const *> m_picksceneryitems;
-    editor::basic_node const *m_picksceneryitem { nullptr };
+    std::vector<TSubModel *> m_pickcontrolsitems;
+    TSubModel *m_pickcontrolitem { nullptr };
+    std::vector<scene::basic_node *> m_picksceneryitems;
+    scene::basic_node *m_picksceneryitem { nullptr };
+    glm::vec3 m_worldmousecoordinates { 0.f };
 #ifdef EU07_USE_DEBUG_CAMERA
     renderpass_config m_worldcamera; // debug item
 #endif
+	GLuint m_gltimequery = 0;
+	GLuint64 m_gllasttime = 0;
 };
 
 extern opengl_renderer GfxRenderer;

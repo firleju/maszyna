@@ -84,10 +84,7 @@ extern int ConversionError;
 const double Steel2Steel_friction = 0.15;      //tarcie statyczne
 const double g = 9.81;                     //przyspieszenie ziemskie
 const double SandSpeed = 0.1;              //ile kg/s}
-const double RVentSpeed = 0.4;             //rozpedzanie sie wentylatora obr/s^2}
-const double RVentMinI = 50.0;             //przy jakim pradzie sie wylaczaja}
 const double Pirazy2 = 6.2831853071794f;
-#define PI 3.1415926535897f
 
 //-- var, const, procedure ---------------------------------------------------
 static bool const Go = true;
@@ -155,18 +152,21 @@ enum coupling {
     gangway = 0x10,
     mainhose = 0x20,
     heating = 0x40,
-    permanent = 0x80
+    permanent = 0x80,
+    uic = 0x100
 };
 // possible effect ranges for control commands; exclusive
-enum range {
+enum class range_t {
     local,
     unit,
     consist
 };
 // start method for devices; exclusive
-enum start {
+enum class start_t {
     manual,
-    automatic
+    automatic,
+    manualwithautofallback,
+    battery
 };
 // recognized vehicle light locations and types; can be combined
 enum light {
@@ -177,6 +177,15 @@ enum light {
     headlight_right = 0x10,
     redmarker_right = 0x20,
     rearendsignals = 0x40
+};
+
+// door operation methods; exclusive
+enum control_t {
+    passenger, // local, opened/closed for duration of loading
+    driver, // remote, operated by the driver
+    autonomous, // local, closed when vehicle moves and/or after timeout
+    conductor, // remote, operated by the conductor
+    mixed // primary manual but answers also to remote control
 };
 											/*typ hamulca elektrodynamicznego*/
 static int const dbrake_none = 0;
@@ -204,11 +213,13 @@ enum sound {
     bufferclash = 0x4,
     relay = 0x10,
     parallel = 0x20,
-    pneumatic = 0x40
+    shuntfield = 0x40,
+    pneumatic = 0x80
 };
 
 //szczególne typy pojazdów (inna obsługa) dla zmiennej TrainType
 //zamienione na flagi bitowe, aby szybko wybierać grupę (np. EZT+SZT)
+// TODO: convert to enums, they're used as specific checks anyway
 static int const dt_Default = 0;
 static int const dt_EZT = 1;
 static int const dt_ET41 = 2;
@@ -219,6 +230,7 @@ static int const dt_SN61 = 0x20; //nie używane w warunkach, ale ustawiane z CHK
 static int const dt_EP05 = 0x40;
 static int const dt_ET40 = 0x80;
 static int const dt_181 = 0x100;
+static int const dt_DMU = 0x200;
 
 //stałe dla asynchronów
 static int const eimc_s_dfic = 0;
@@ -306,7 +318,7 @@ struct TCommand
 	std::string Command; /*komenda*/
 	double Value1 = 0.0; /*argumenty komendy*/
 	double Value2 = 0.0;
-    int Coupling{ ctrain_controll }; // coupler flag used to determine command propagation
+    int Coupling { coupling::control }; // coupler flag used to determine command propagation
     TLocation Location;
 };
 
@@ -339,13 +351,13 @@ struct TTractionParam
 /*powyzsze parametry zwiazane sa z torem po ktorym aktualnie pojazd jedzie*/
 
 /*typy hamulcow zespolonych*/
-enum TBrakeSystem { Individual, Pneumatic, ElectroPneumatic };
+enum class TBrakeSystem { Individual, Pneumatic, ElectroPneumatic };
 /*podtypy hamulcow zespolonych*/
-enum TBrakeSubSystem { ss_None, ss_W, ss_K, ss_KK, ss_Hik, ss_ESt, ss_KE, ss_LSt, ss_MT, ss_Dako };
-enum TBrakeValve { NoValve, W, W_Lu_VI, W_Lu_L, W_Lu_XR, K, Kg, Kp, Kss, Kkg, Kkp, Kks, Hikg1, Hikss, Hikp1, KE, SW, EStED, NESt3, ESt3, LSt, ESt4, ESt3AL2, EP1, EP2, M483, CV1_L_TR, CV1, CV1_R, Other };
-enum TBrakeHandle { NoHandle, West, FV4a, M394, M254, FVel1, FVel6, D2, Knorr, FD1, BS2, testH, St113, MHZ_P, MHZ_T, MHZ_EN57 };
+enum class TBrakeSubSystem { ss_None, ss_W, ss_K, ss_KK, ss_Hik, ss_ESt, ss_KE, ss_LSt, ss_MT, ss_Dako };
+enum class TBrakeValve { NoValve, W, W_Lu_VI, W_Lu_L, W_Lu_XR, K, Kg, Kp, Kss, Kkg, Kkp, Kks, Hikg1, Hikss, Hikp1, KE, SW, EStED, NESt3, ESt3, LSt, ESt4, ESt3AL2, EP1, EP2, M483, CV1_L_TR, CV1, CV1_R, Other };
+enum class TBrakeHandle { NoHandle, West, FV4a, M394, M254, FVel1, FVel6, D2, Knorr, FD1, BS2, testH, St113, MHZ_P, MHZ_T, MHZ_EN57, MHZ_K5P };
 /*typy hamulcow indywidualnych*/
-enum TLocalBrake { NoBrake, ManualBrake, PneumaticBrake, HydraulicBrake };
+enum class TLocalBrake { NoBrake, ManualBrake, PneumaticBrake, HydraulicBrake };
 /*dla osob/towar: opoznienie hamowania/odhamowania*/
 typedef double TBrakeDelayTable[4];
 
@@ -354,17 +366,17 @@ struct TBrakePressure
 	double PipePressureVal = 0.0;
 	double BrakePressureVal = 0.0;
 	double FlowSpeedVal = 0.0;
-	TBrakeSystem BrakeType = Pneumatic;
+	TBrakeSystem BrakeType = TBrakeSystem::Pneumatic;
 };
 
 typedef std::map<int,TBrakePressure> TBrakePressureTable;
 
 /*typy napedow*/
-enum TEngineTypes { None, Dumb, WheelsDriven, ElectricSeriesMotor, ElectricInductionMotor, DieselEngine, SteamEngine, DieselElectric };
+enum class TEngineType { None, Dumb, WheelsDriven, ElectricSeriesMotor, ElectricInductionMotor, DieselEngine, SteamEngine, DieselElectric };
 /*postac dostarczanej energii*/
-enum TPowerType { NoPower, BioPower, MechPower, ElectricPower, SteamPower };
+enum class TPowerType { NoPower, BioPower, MechPower, ElectricPower, SteamPower };
 /*rodzaj paliwa*/
-enum TFuelType { Undefined, Coal, Oil };
+enum class TFuelType { Undefined, Coal, Oil };
 /*rodzaj rusztu*/
 struct TGrateType {
 	TFuelType FuelType;
@@ -413,7 +425,7 @@ struct TCurrentCollector {
     //}
 };
 /*typy źródeł mocy*/
-enum TPowerSource { NotDefined, InternalSource, Transducer, Generator, Accumulator, CurrentCollector, PowerCable, Heater };
+enum class TPowerSource { NotDefined, InternalSource, Transducer, Generator, Accumulator, CurrentCollector, PowerCable, Heater };
 
 
 struct _mover__1
@@ -469,7 +481,7 @@ struct TPowerParameters
 		};
 		struct
 		{
-			TEngineTypes GeneratorEngine;
+			TEngineType GeneratorEngine;
 		};
 		struct
 		{
@@ -486,9 +498,9 @@ struct TPowerParameters
         MaxVoltage = 0.0;
         MaxCurrent = 0.0;
         IntR = 0.001;
-        SourceType = NotDefined;
-        PowerType = NoPower;
-        RPowerCable.PowerTrans = NoPower;
+        SourceType = TPowerSource::NotDefined;
+        PowerType = TPowerType::NoPower;
+        RPowerCable.PowerTrans = TPowerType::NoPower;
     }
 };
 
@@ -572,7 +584,7 @@ struct TTransmision
 	double Ratio = 1.0;
 };
 
-enum TCouplerType { NoCoupler, Articulated, Bare, Chain, Screw, Automatic };
+enum class TCouplerType { NoCoupler, Articulated, Bare, Chain, Screw, Automatic };
 
 struct power_coupling {
     double current{ 0.0 };
@@ -589,7 +601,7 @@ struct TCoupling {
     double FmaxB = 1000.0;
     double DmaxC = 0.1;
     double FmaxC = 1000.0;
-	TCouplerType CouplerType = NoCoupler;     /*typ sprzegu*/
+	TCouplerType CouplerType = TCouplerType::NoCoupler;     /*typ sprzegu*/
 								  /*zmienne*/
 	int CouplingFlag = 0; /*0 - wirtualnie, 1 - sprzegi, 2 - pneumatycznie, 4 - sterowanie, 8 - kabel mocy*/
 	int AllowedFlag = 3;       //Ra: znaczenie jak wyżej, maska dostępnych
@@ -607,6 +619,102 @@ struct TCoupling {
     int sounds { 0 }; // sounds emitted by the coupling devices
 };
 
+// basic approximation of a fuel pump
+// TODO: fuel consumption, optional automatic engine start after activation
+struct fuel_pump {
+
+    bool is_enabled { false }; // device is allowed/requested to operate
+    bool is_active { false }; // device is working
+    start_t start_type { start_t::manual };
+};
+
+// basic approximation of a fuel pump
+// TODO: fuel consumption, optional automatic engine start after activation
+struct oil_pump {
+
+    bool is_enabled { false }; // device is allowed/requested to operate
+    bool is_active { false }; // device is working
+    start_t start_type { start_t::manual };
+    float resource_amount { 1.f };
+    float pressure_minimum { 0.f }; // lowest acceptable working pressure
+    float pressure_maximum { 0.65f }; // oil pressure at maximum engine revolutions
+    float pressure_target { 0.f };
+    float pressure_present { 0.f };
+};
+
+struct water_pump {
+
+    bool breaker { true }; // device is allowed to operate
+    bool is_enabled { false }; // device is requested to operate
+    bool is_active { false }; // device is working
+    start_t start_type { start_t::manual };
+};
+
+struct water_heater {
+
+    bool breaker { true }; // device is allowed to operate
+    bool is_enabled { false }; // device is requested to operate
+    bool is_active { false }; // device is working
+    bool is_damaged { false }; // device is damaged
+
+    struct heater_config_t {
+        float temp_min { -1 }; // lowest accepted temperature
+        float temp_max { -1 }; // highest accepted temperature
+    } config;
+};
+
+struct heat_data {
+    // input, state of relevant devices
+    bool cooling { false }; // TODO: user controlled device, implement
+//    bool okienko { true }; // window in the engine compartment
+    // system configuration
+    bool auxiliary_water_circuit { false }; // cooling system has an extra water circuit
+    double fan_speed { 0.075 }; // cooling fan rpm; either fraction of engine rpm, or absolute value if negative
+    // heat exchange factors
+    double kw { 0.35 };
+    double kv { 0.6 };
+    double kfe { 1.0 };
+    double kfs { 80.0 };
+    double kfo { 25.0 };
+    double kfo2 { 25.0 };
+    // system parts
+    struct fluid_circuit_t {
+
+        struct circuit_config_t {
+            float temp_min { -1 }; // lowest accepted temperature
+            float temp_max { -1 }; // highest accepted temperature
+            float temp_cooling { -1 }; // active cooling activation point
+            float temp_flow { -1 }; // fluid flow activation point
+            bool shutters { false }; // the radiator has shutters to assist the cooling
+        } config;
+        bool is_cold { false }; // fluid is too cold
+        bool is_warm { false }; // fluid is too hot
+        bool is_hot { false }; // fluid temperature crossed cooling threshold
+        bool is_flowing { false }; // fluid is being pushed through the circuit
+    }   water,
+        water_aux,
+        oil;
+    // output, state of affected devices
+    bool PA { false }; // malfunction flag
+    float rpmw { 0.0 }; // current main circuit fan revolutions
+    float rpmwz { 0.0 }; // desired main circuit fan revolutions
+    bool zaluzje1 { false };
+    float rpmw2 { 0.0 }; // current auxiliary circuit fan revolutions
+    float rpmwz2 { 0.0 }; // desired auxiliary circuit fan revolutions
+    bool zaluzje2 { false };
+    // output, temperatures
+    float Te { 15.0 }; // ambient temperature TODO: get it from environment data
+    // NOTE: by default the engine is initialized in warm, startup-ready state
+    float Ts { 50.0 }; // engine temperature
+    float To { 45.0 }; // oil temperature
+    float Tsr { 50.0 }; // main circuit radiator temperature (?)
+    float Twy { 50.0 }; // main circuit water temperature
+    float Tsr2 { 40.0 }; // secondary circuit radiator temperature (?)
+    float Twy2 { 40.0 }; // secondary circuit water temperature
+    float temperatura1 { 50.0 };
+    float temperatura2 { 40.0 };
+};
+
 class TMoverParameters
 { // Ra: wrapper na kod pascalowy, przejmujący jego funkcje  Q: 20160824 - juz nie wrapper a klasa bazowa :)
 public:
@@ -620,7 +728,7 @@ public:
 	std::string TypeName;         /*nazwa serii/typu*/
 								  //TrainType: string;       {typ: EZT/elektrowoz - Winger 040304}
 	int TrainType = 0; /*Ra: powinno być szybciej niż string*/
-	TEngineTypes EngineType = None;               /*typ napedu*/
+	TEngineType EngineType = TEngineType::None;               /*typ napedu*/
 	TPowerParameters EnginePowerSource;    /*zrodlo mocy dla silnikow*/
 	TPowerParameters SystemPowerSource;    /*zrodlo mocy dla systemow sterowania/przetwornic/sprezarek*/
 	TPowerParameters HeatingPowerSource;   /*zrodlo mocy dla ogrzewania*/
@@ -633,6 +741,7 @@ public:
 	double Mred = 0.0;    /*Ra: zredukowane masy wirujące; potrzebne do obliczeń hamowania*/
 	double TotalMass = 0.0; /*wyliczane przez ComputeMass*/
 	double HeatingPower = 0.0;
+    double EngineHeatingRPM { 0.0 }; // guaranteed engine revolutions with heating enabled
     double LightPower = 0.0; /*moc pobierana na ogrzewanie/oswietlenie*/
 	double BatteryVoltage = 0.0;        /*Winger - baterie w elektrykach*/
 	bool Battery = false; /*Czy sa zalavzone baterie*/
@@ -657,11 +766,11 @@ public:
 									  /*hamulce:*/
 	int NBpA = 0;              /*ilosc el. ciernych na os: 0 1 2 lub 4*/
 	int SandCapacity = 0;    /*zasobnik piasku [kg]*/
-	TBrakeSystem BrakeSystem = Individual;/*rodzaj hamulca zespolonego*/
-	TBrakeSubSystem BrakeSubsystem = ss_None ;
-	TBrakeValve BrakeValve = NoValve;
-	TBrakeHandle BrakeHandle = NoHandle;
-	TBrakeHandle BrakeLocHandle = NoHandle;
+	TBrakeSystem BrakeSystem = TBrakeSystem::Individual;/*rodzaj hamulca zespolonego*/
+	TBrakeSubSystem BrakeSubsystem = TBrakeSubSystem::ss_None ;
+	TBrakeValve BrakeValve = TBrakeValve::NoValve;
+	TBrakeHandle BrakeHandle = TBrakeHandle::NoHandle;
+	TBrakeHandle BrakeLocHandle = TBrakeHandle::NoHandle;
 	double MBPM = 1.0; /*masa najwiekszego cisnienia*/
 
 	std::shared_ptr<TBrake> Hamulec;
@@ -670,7 +779,7 @@ public:
 	std::shared_ptr<TReservoir> Pipe;
 	std::shared_ptr<TReservoir> Pipe2;
 
-	TLocalBrake LocalBrake = NoBrake;  /*rodzaj hamulca indywidualnego*/
+	TLocalBrake LocalBrake = TLocalBrake::NoBrake;  /*rodzaj hamulca indywidualnego*/
 	TBrakePressureTable BrakePressureTable; /*wyszczegolnienie cisnien w rurze*/
 	TBrakePressure BrakePressureActual; //wartości ważone dla aktualnej pozycji kranu
 	int ASBType = 0;            /*0: brak hamulca przeciwposlizgowego, 1: reczny, 2: automat*/
@@ -700,6 +809,7 @@ public:
 	double BrakeSlckAdj = 0.0; /*opor nastawiacza skoku tloka, kN*/
 	double BrakeRigEff = 0.0; /*sprawnosc przekladni dzwigniowej*/
 	double RapidMult = 1.0; /*przelozenie rapidu*/
+	double RapidVel = 55.0; /*szybkosc przelaczania rapidu*/
 	int BrakeValveSize = 0;
 	std::string BrakeValveParams;
 	double Spg = 0.0;
@@ -738,7 +848,8 @@ public:
 	double u = 0.0; //wspolczynnik tarcia yB wywalic!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	double CircuitRes = 0.0;      /*rezystancje silnika i obwodu*/
 	int IminLo = 0; int IminHi = 0; /*prady przelacznika automatycznego rozruchu, uzywane tez przez ai_driver*/
-	int ImaxLo = 0; int ImaxHi = 0; /*maksymalny prad niskiego i wysokiego rozruchu*/
+	int ImaxLo = 0; // maksymalny prad niskiego rozruchu
+    int ImaxHi = 0; // maksymalny prad wysokiego rozruchu
 	double nmax = 0.0;             /*maksymalna dop. ilosc obrotow /s*/
 	double InitialCtrlDelay = 0.0; double CtrlDelay = 0.0;        /* -//-  -//- miedzy kolejnymi poz.*/
 	double CtrlDownDelay = 0.0;    /* -//-  -//- przy schodzeniu z poz.*/ /*hunter-101012*/
@@ -751,7 +862,9 @@ public:
 	int RVentType = 0;        /*0 - brak, 1 - jest, 2 - automatycznie wlaczany*/
 	double RVentnmax = 1.0;      /*maks. obroty wentylatorow oporow rozruchowych*/
 	double RVentCutOff = 0.0;      /*rezystancja wylaczania wentylatorow dla RVentType=2*/
-	int CompressorPower = 1; /*0: bezp. z obwodow silnika, 1: z przetwornicy, reczne, 2: w przetwornicy, stale, 5: z silnikowego*/
+    double RVentSpeed { 0.5 }; //rozpedzanie sie wentylatora obr/s^2}
+    double RVentMinI { 50.0 }; //przy jakim pradzie sie wylaczaja}
+	int CompressorPower = 1; // 0: main circuit, 1: z przetwornicy, reczne, 2: w przetwornicy, stale, 3: diesel engine, 4: converter of unit in front, 5: converter of unit behind
 	int SmallCompressorPower = 0; /*Winger ZROBIC*/
 	bool Trafo = false;      /*pojazd wyposażony w transformator*/
 
@@ -769,6 +882,31 @@ public:
 	double dizel_minVelfullengage = 0.0; /*najmniejsza predkosc przy jezdzie ze sprzeglem bez poslizgu*/
 	double dizel_AIM = 1.0; /*moment bezwladnosci walu itp*/
 	double dizel_engageDia = 0.5; double dizel_engageMaxForce = 6000.0; double dizel_engagefriction = 0.5; /*parametry sprzegla*/
+	double engagedownspeed = 0.9;
+	double engageupspeed = 0.5;
+	/*parametry przetwornika momentu*/
+	bool hydro_TC = false; /*obecnosc hydraulicznego przetwornika momentu*/
+	double hydro_TC_TMMax = 2.0; /*maksymalne wzmocnienie momentu*/
+	double hydro_TC_CouplingPoint = 0.85; /*wzgledna predkosc zasprzeglenia*/
+	double hydro_TC_LockupTorque = 3000.0; /*moment graniczny sprzegla blokujacego*/
+	double hydro_TC_LockupRate = 1.0; /*szybkosc zalaczania sprzegla blokujacego*/
+	double hydro_TC_UnlockRate = 1.0; /*szybkosc rozlaczania sprzegla blokujacego*/
+	double hydro_TC_FillRateInc = 1.0; /*szybkosc napelniania sprzegla*/
+	double hydro_TC_FillRateDec = 1.0; /*szybkosc oprozniania sprzegla*/
+	double hydro_TC_TorqueInIn = 4.5; /*stala momentu proporcjonalnego do kwadratu obrotow wejsciowych*/
+	double hydro_TC_TorqueInOut = 0.0; /*stala momentu proporcjonalnego do roznica obrotow wejsciowych i wyjsciowych*/
+	double hydro_TC_TorqueOutOut = 0.0; /*stala momentu proporcjonalnego do kwadratu obrotow wyjsciowych*/
+	double hydro_TC_LockupSpeed = 1.0; /*prog predkosci zalaczania sprzegla blokujacego*/
+	double hydro_TC_UnlockSpeed = 1.0; /*prog predkosci rozlaczania sprzegla blokujacego*/
+	/*parametry retardera*/
+	bool hydro_R = false; /*obecnosc retardera*/
+	int hydro_R_Placement = 0; /*umiejscowienie retardera: 0 - za skrzynia biegow, 1 - miedzy przetwornikiem a biegami, 2 - przed skrzynia biegow */
+	double hydro_R_TorqueInIn = 1.0; /*stala momentu proporcjonalnego do kwadratu obrotow wejsciowych*/
+	double hydro_R_MaxTorque = 1.0; /*maksymalny moment retardera*/
+	double hydro_R_MaxPower = 1.0; /*maksymalna moc retardera - ogranicza moment*/
+	double hydro_R_FillRateInc = 1.0; /*szybkosc napelniania sprzegla*/
+	double hydro_R_FillRateDec = 1.0; /*szybkosc oprozniania sprzegla*/
+	double hydro_R_MinVel = 1.0; /*minimalna predkosc, przy ktorej retarder dziala*/
     /*- dla lokomotyw spalinowo-elektrycznych -*/
 	double AnPos = 0.0; // pozycja sterowania dokladnego (analogowego)
 	bool AnalogCtrl = false; //
@@ -788,23 +926,34 @@ public:
 	double Ftmax = 0.0;
 	/*- dla lokomotyw z silnikami indukcyjnymi -*/
 	double eimc[26];
-	bool EIMCLogForce; // 
+	bool EIMCLogForce = false; // 
     static std::vector<std::string> const eimc_labels;
+    double InverterFrequency { 0.0 }; // current frequency of power inverters
+	/* -dla pojazdów z blendingiem EP/ED (MED) */
+	double MED_Vmax = 0; // predkosc maksymalna dla obliczen chwilowej sily hamowania EP w MED
+	double MED_Vmin = 0; // predkosc minimalna dla obliczen chwilowej sily hamowania EP w MED
+	double MED_Vref = 0; // predkosc referencyjna dla obliczen dostepnej sily hamowania EP w MED
+	double MED_amax = 9.81; // maksymalne opoznienie hamowania sluzbowego MED
+	bool MED_EPVC = 0; // czy korekcja sily hamowania EP, gdy nie ma dostepnego ED
+	bool MED_Ncor = 0; // czy korekcja sily hamowania z uwzglednieniem nacisku
 	/*-dla wagonow*/
-    double MaxLoad = 0.0;           /*masa w T lub ilosc w sztukach - ladownosc*/
+    float MaxLoad = 0.f;           /*masa w T lub ilosc w sztukach - ladownosc*/
 	std::string LoadAccepted; std::string LoadQuantity; /*co moze byc zaladowane, jednostki miary*/
 	double OverLoadFactor = 0.0;       /*ile razy moze byc przekroczona ladownosc*/
-	double LoadSpeed = 0.0; double UnLoadSpeed = 0.0;/*szybkosc na- i rozladunku jednostki/s*/
+	float LoadSpeed = 0.f; float UnLoadSpeed = 0.f;/*szybkosc na- i rozladunku jednostki/s*/
 	int DoorOpenCtrl = 0; int DoorCloseCtrl = 0; /*0: przez pasazera, 1: przez maszyniste, 2: samoczynne (zamykanie)*/
 	double DoorStayOpen = 0.0;               /*jak dlugo otwarte w przypadku DoorCloseCtrl=2*/
 	bool DoorClosureWarning = false;      /*czy jest ostrzeganie przed zamknieciem*/
 	double DoorOpenSpeed = 1.0; double DoorCloseSpeed = 1.0;      /*predkosc otwierania i zamykania w j.u. */
 	double DoorMaxShiftL = 0.5; double DoorMaxShiftR = 0.5; double DoorMaxPlugShift = 0.1;/*szerokosc otwarcia lub kat*/
 	int DoorOpenMethod = 2;             /*sposob otwarcia - 1: przesuwne, 2: obrotowe, 3: trójelementowe*/
-	double PlatformSpeed = 0.25;   /*szybkosc stopnia*/
-	double PlatformMaxShift = 0.5; /*wysuniecie stopnia*/
-	int PlatformOpenMethod = 1; /*sposob animacji stopnia*/
+    float DoorCloseDelay { 0.f }; // delay (in seconds) before the door begin closing, once conditions to close are met
+	double PlatformSpeed = 0.5;   /*szybkosc stopnia*/
+    double PlatformMaxShift { 0.0 }; /*wysuniecie stopnia*/
+    int PlatformOpenMethod { 2 }; /*sposob animacji stopnia*/
+    double MirrorMaxShift { 90.0 };
 	bool ScndS = false; /*Czy jest bocznikowanie na szeregowej*/
+	double SpeedCtrlDelay = 2; /*opoznienie dzialania tempomatu z wybieralna predkoscia*/
     /*--sekcja zmiennych*/
     /*--opis konkretnego egzemplarza taboru*/
 	TLocation Loc; //pozycja pojazdów do wyznaczenia odległości pomiędzy sprzęgami
@@ -824,10 +973,12 @@ public:
 	double V = 0.0;    //predkosc w [m/s] względem sprzęgów (dodania gdy jedzie w stronę 0)
 	double Vel = 0.0;  //moduł prędkości w [km/h], używany przez AI
 	double AccS = 0.0; //efektywne przyspieszenie styczne w [m/s^2] (wszystkie siły)
-	double AccN = 0.0; //przyspieszenie normalne w [m/s^2]
-	double AccV = 0.0;
+    double AccSVBased {}; // tangential acceleration calculated from velocity change
+	double AccN = 0.0; // przyspieszenie normalne w [m/s^2]
+	double AccVert = 0.0; // vertical acceleration
 	double nrot = 0.0;
 	double WheelFlat = 0.0;
+    bool TruckHunting { true }; // enable/disable truck hunting calculation
 	/*! rotacja kol [obr/s]*/
 	double EnginePower = 0.0;                  /*! chwilowa moc silnikow*/
 	double dL = 0.0; double Fb = 0.0; double Ff = 0.0;                  /*przesuniecie, sila hamowania i tarcia*/
@@ -855,20 +1006,27 @@ public:
 	bool CompressorAllow = false;            /*! zezwolenie na uruchomienie sprezarki  NBMX*/
     bool CompressorAllowLocal{ true }; // local device state override (most units don't have this fitted so it's set to true not to intefere)
     bool CompressorGovernorLock{ false }; // indicates whether compressor pressure switch was activated due to reaching cut-out pressure
+    start_t CompressorStart{ start_t::manual }; // whether the compressor is started manually, or another way
     // TODO converter parameters, for when we start cleaning up mover parameters
-    start ConverterStart{ manual }; // whether converter is started manually, or by other means
+    start_t ConverterStart{ start_t::manual }; // whether converter is started manually, or by other means
     float ConverterStartDelay{ 0.0f }; // delay (in seconds) before the converter is started, once its activation conditions are met
     double ConverterStartDelayTimer{ 0.0 }; // helper, for tracking whether converter start delay passed
 	bool ConverterAllow = false;             /*zezwolenie na prace przetwornicy NBMX*/
     bool ConverterAllowLocal{ true }; // local device state override (most units don't have this fitted so it's set to true not to intefere)
     bool ConverterFlag = false;              /*!  czy wlaczona przetwornica NBMX*/
+    fuel_pump FuelPump;
+    oil_pump OilPump;
+    water_pump WaterPump;
+    water_heater WaterHeater;
+    bool WaterCircuitsLink { false }; // optional connection between water circuits
+    heat_data dizel_heat;
 
     int BrakeCtrlPos = -2;               /*nastawa hamulca zespolonego*/
 	double BrakeCtrlPosR = 0.0;                 /*nastawa hamulca zespolonego - plynna dla FV4a*/
 	double BrakeCtrlPos2 = 0.0;                 /*nastawa hamulca zespolonego - kapturek dla FV4a*/
-	int LocalBrakePos = 0;                 /*nastawa hamulca indywidualnego*/
 	int ManualBrakePos = 0;                 /*nastawa hamulca recznego*/
-	double LocalBrakePosA = 0.0;
+	double LocalBrakePosA = 0.0;   /*nastawa hamulca pomocniczego*/
+	double LocalBrakePosAEIM = 0.0;  /*pozycja hamulca pomocniczego ep dla asynchronicznych ezt*/
 /*
 	int BrakeStatus = b_off; //0 - odham, 1 - ham., 2 - uszk., 4 - odluzniacz, 8 - antyposlizg, 16 - uzyte EP, 32 - pozycja R, 64 - powrot z R
 */
@@ -912,22 +1070,26 @@ public:
 	int DirAbsolute = 0; //zadany kierunek jazdy względem sprzęgów (1=w strone 0,-1=w stronę 1)
 	int ActiveCab = 0; //numer kabiny, w ktorej jest obsada (zwykle jedna na skład)
 	double LastSwitchingTime = 0.0; /*czas ostatniego przelaczania czegos*/
-							  //WarningSignal: byte;     {0: nie trabi, 1,2: trabi}
+    int WarningSignal = 0; // 0: nie trabi, 1,2,4: trabi
 	bool DepartureSignal = false; /*sygnal odjazdu*/
 	bool InsideConsist = false;
 	/*-zmienne dla lokomotywy elektrycznej*/
 	TTractionParam RunningTraction;/*parametry sieci trakcyjnej najblizej lokomotywy*/
-	double enrot = 0.0;
-    double Im = 0.0;
-    double Itot = 0.0;
+	double enrot = 0.0; // ilosc obrotow silnika
+    double Im = 0.0; // prad silnika
+/*
+    // currently not used
     double IHeating = 0.0;
     double ITraction = 0.0;
+*/
+    double Itot = 0.0; // prad calkowity
     double TotalCurrent = 0.0;
+    // momenty
     double Mm = 0.0;
     double Mw = 0.0;
+    // sily napedne
     double Fw = 0.0;
     double Ft = 0.0;
-	/*ilosc obrotow, prad silnika i calkowity, momenty, sily napedne*/
 	//Ra: Im jest ujemny, jeśli lok jedzie w stronę sprzęgu 1
 	//a ujemne powinien być przy odwróconej polaryzacji sieci...
 	//w wielu miejscach jest używane abs(Im)
@@ -955,12 +1117,33 @@ public:
 	double dizel_engagestate = 0.0; /*sprzeglo skrzyni biegow: 0 - luz, 1 - wlaczone, 0.5 - wlaczone 50% (z poslizgiem)*/
 	double dizel_engage = 0.0; /*sprzeglo skrzyni biegow: aktualny docisk*/
 	double dizel_automaticgearstatus = 0.0; /*0 - bez zmiany, -1 zmiana na nizszy +1 zmiana na wyzszy*/
-	bool dizel_enginestart = false;      /*czy trwa rozruch silnika*/
+    bool dizel_startup { false }; // engine startup procedure request indicator
+	bool dizel_ignition = false; // engine ignition request indicator
 	double dizel_engagedeltaomega = 0.0;    /*roznica predkosci katowych tarcz sprzegla*/
+	double dizel_n_old = 0.0; /*poredkosc na potrzeby obliczen sprzegiel*/
+	double dizel_Torque = 0.0; /*poredkosc na potrzeby obliczen sprzegiel*/
+
+	/* - zmienne dla przetowrnika momentu */
+	double hydro_TC_Fill = 0.0; /*napelnienie*/
+	bool hydro_TC_Lockup = false; /*zapiecie sprzegla*/
+	double hydro_TC_TorqueIn = 0.0; /*moment*/
+	double hydro_TC_TorqueOut = 0.0; /*moment*/
+	double hydro_TC_TMRatio = 1.0; /*aktualne przelozenie momentu*/
+	double hydro_TC_Request = 0.0; /*zadanie sily*/
+	double hydro_TC_nIn = 0.0; /*predkosc obrotowa walu wejsciowego*/
+	double hydro_TC_nOut = 0.0; /*predkosc obrotowa walu wyjsciowego*/
+
+	/* - zmienne dla przetowrnika momentu */
+	double hydro_R_Fill = 0.0; /*napelnienie*/
+	double hydro_R_Torque = 0.0; /*moment*/
+	double hydro_R_Request = 0.0; /*zadanie sily hamowania*/
+	double hydro_R_n = 0.0; /*predkosc obrotowa retardera*/
 
     /*- zmienne dla lokomotyw z silnikami indukcyjnymi -*/
 	double eimv[21];
     static std::vector<std::string> const eimv_labels;
+	double SpeedCtrlTimer = 0; /*zegar dzialania tempomatu z wybieralna predkoscia*/
+	double NewSpeed = 0; /*nowa predkosc do zadania*/
 
 	/*-zmienne dla drezyny*/
 	double PulseForce = 0.0;        /*przylozona sila*/
@@ -968,18 +1151,20 @@ public:
 	int PulseForceCount = 0;
 
 	/*dla drezyny, silnika spalinowego i parowego*/
-	double eAngle = 1.5;
+	double eAngle = M_PI * 0.5;
 
 	/*-dla wagonow*/
-    double Load = 0.0;      /*masa w T lub ilosc w sztukach - zaladowane*/
+    float Load = 0.f;      /*masa w T lub ilosc w sztukach - zaladowane*/
 	std::string LoadType;   /*co jest zaladowane*/
 	int LoadStatus = 0; //+1=trwa rozladunek,+2=trwa zaladunek,+4=zakończono,0=zaktualizowany model
 	double LastLoadChangeTime = 0.0; //raz (roz)ładowania
 
 	bool DoorBlocked = false;    //Czy jest blokada drzwi
 	bool DoorLeftOpened = false;  //stan drzwi
+    double DoorLeftOpenTimer { -1.0 }; // left door closing timer for automatic door type
 	bool DoorRightOpened = false;
-	bool PantFrontUp = false;  //stan patykow 'Winger 160204
+    double DoorRightOpenTimer{ -1.0 }; // right door closing timer for automatic door type
+    bool PantFrontUp = false;  //stan patykow 'Winger 160204
 	bool PantRearUp = false;
 	bool PantFrontSP = true;  //dzwiek patykow 'Winger 010304
     bool PantRearSP = true;
@@ -1004,9 +1189,6 @@ public:
 	double TotalMassxg = 0.0; /*TotalMass*g*/
 
 	Math3D::vector3 vCoulpler[2]; // powtórzenie współrzędnych sprzęgów z DynObj :/
-	Math3D::vector3 DimHalf; // połowy rozmiarów do obliczeń geometrycznych
-					 // int WarningSignal; //0: nie trabi, 1,2: trabi syreną o podanym numerze
-	int WarningSignal = 0; // tymczasowo 8bit, ze względu na funkcje w MTools
 	double fBrakeCtrlPos = -2.0; // płynna nastawa hamulca zespolonego
 	bool bPantKurek3 = true; // kurek trójdrogowy (pantografu): true=połączenie z ZG, false=połączenie z małą sprężarką // domyślnie zbiornik pantografu połączony jest ze zbiornikiem głównym
 	int iProblem = 0; // flagi problemów z taborem, aby AI nie musiało porównywać; 0=może jechać
@@ -1034,6 +1216,7 @@ public:
 	void UpdateBatteryVoltage(double dt);
 	double ComputeMovement(double dt, double dt1, const TTrackShape &Shape, TTrackParam &Track, TTractionParam &ElectricTraction, const TLocation &NewLoc, TRotation &NewRot); //oblicza przesuniecie pojazdu
 	double FastComputeMovement(double dt, const TTrackShape &Shape, TTrackParam &Track, const TLocation &NewLoc, TRotation &NewRot); //oblicza przesuniecie pojazdu - wersja zoptymalizowana
+    void compute_movement_( double const Deltatime );
 	double ShowEngineRotation(int VehN);
 
 	// Q *******************************************************************************************
@@ -1067,7 +1250,7 @@ public:
 
 	bool AddPulseForce(int Multipler);/*dla drezyny*/
 
-    bool Sandbox( bool const State, int const Notify = range::consist );/*wlacza/wylacza sypanie piasku*/
+    bool Sandbox( bool const State, range_t const Notify = range_t::consist );/*wlacza/wylacza sypanie piasku*/
 
 						  /*! zbijanie czuwaka/SHP*/
 	void SSReset(void);
@@ -1080,11 +1263,9 @@ public:
 	/*! stopnie hamowania - hamulec zasadniczy*/
 	bool IncBrakeLevelOld(void);
 	bool DecBrakeLevelOld(void);
-	bool IncLocalBrakeLevel(int CtrlSpeed);
-	bool DecLocalBrakeLevel(int CtrlSpeed);
+	bool IncLocalBrakeLevel(float const CtrlSpeed);
+	bool DecLocalBrakeLevel(float const CtrlSpeed);
 	/*! ABu 010205: - skrajne polozenia ham. pomocniczego*/
-	bool IncLocalBrakeLevelFAST(void);
-	bool DecLocalBrakeLevelFAST(void);
 	bool IncManualBrakeLevel(int CtrlSpeed);
 	bool DecManualBrakeLevel(int CtrlSpeed);
 	bool DynamicBrakeSwitch(bool Switch);
@@ -1099,7 +1280,7 @@ public:
 	bool IncBrakePress(double &brake, double PressLimit, double dp);
 	bool DecBrakePress(double &brake, double PressLimit, double dp);
 	bool BrakeDelaySwitch(int BDS);/*! przelaczanie nastawy opoznienia*/
-	bool IncBrakeMult(void);/*przelaczanie prozny/ladowny*/
+    bool IncBrakeMult(void);/*przelaczanie prozny/ladowny*/
 	bool DecBrakeMult(void);
 	/*pomocnicze funkcje dla ukladow pneumatycznych*/
 	void UpdateBrakePressure(double dt);
@@ -1126,13 +1307,24 @@ public:
 
 	/*--funkcje dla lokomotyw*/
 	bool DirectionBackward(void);/*! kierunek ruchu*/
-    bool MainSwitch( bool const State, int const Notify = range::consist );/*! wylacznik glowny*/
-    bool ConverterSwitch( bool State, int const Notify = range::consist );/*! wl/wyl przetwornicy*/
-    bool CompressorSwitch( bool State, int const Notify = range::consist );/*! wl/wyl sprezarki*/
+    bool WaterPumpBreakerSwitch( bool State, range_t const Notify = range_t::consist ); // water pump breaker state toggle
+    bool WaterPumpSwitch( bool State, range_t const Notify = range_t::consist ); // water pump state toggle
+    bool WaterHeaterBreakerSwitch( bool State, range_t const Notify = range_t::consist ); // water heater breaker state toggle
+    bool WaterHeaterSwitch( bool State, range_t const Notify = range_t::consist ); // water heater state toggle
+    bool WaterCircuitsLinkSwitch( bool State, range_t const Notify = range_t::consist ); // water circuits link state toggle
+    bool FuelPumpSwitch( bool State, range_t const Notify = range_t::consist ); // fuel pump state toggle
+    bool OilPumpSwitch( bool State, range_t const Notify = range_t::consist ); // oil pump state toggle
+    bool MainSwitch( bool const State, range_t const Notify = range_t::consist );/*! wylacznik glowny*/
+    bool ConverterSwitch( bool State, range_t const Notify = range_t::consist );/*! wl/wyl przetwornicy*/
+    bool CompressorSwitch( bool State, range_t const Notify = range_t::consist );/*! wl/wyl sprezarki*/
 
 									  /*-funkcje typowe dla lokomotywy elektrycznej*/
 	void ConverterCheck( double const Timestep ); // przetwornica
-	bool FuseOn(void); //bezpiecznik nadamiary
+    void WaterPumpCheck( double const Timestep );
+    void WaterHeaterCheck( double const Timestep );
+    void FuelPumpCheck( double const Timestep );
+    void OilPumpCheck( double const Timestep );
+    bool FuseOn(void); //bezpiecznik nadamiary
 	bool FuseFlagCheck(void); // sprawdzanie flagi nadmiarowego
 	void FuseOff(void); // wylaczenie nadmiarowego
     double ShowCurrent( int AmpN ); //pokazuje bezwgl. wartosc pradu na wybranym amperomierzu
@@ -1154,8 +1346,8 @@ public:
 	bool AutoRelayCheck(void);//symulacja automatycznego rozruchu
 
 	bool ResistorsFlagCheck(void); //sprawdzenie kontrolki oporow rozruchowych NBMX
-    bool PantFront( bool const State, int const Notify = range::consist ); //obsluga pantografou przedniego
-    bool PantRear( bool const State, int const Notify = range::consist ); //obsluga pantografu tylnego
+    bool PantFront( bool const State, range_t const Notify = range_t::consist ); //obsluga pantografou przedniego
+    bool PantRear( bool const State, range_t const Notify = range_t::consist ); //obsluga pantografu tylnego
 
 							   /*-funkcje typowe dla lokomotywy spalinowej z przekladnia mechaniczna*/
 	bool dizel_EngageSwitch(double state);
@@ -1163,16 +1355,20 @@ public:
 	bool dizel_AutoGearCheck(void);
 	double dizel_fillcheck(int mcp);
 	double dizel_Momentum(double dizel_fill, double n, double dt);
-	bool dizel_Update(double dt);
+    void dizel_HeatSet( float const Value );
+    void dizel_Heat( double const dt );
+    bool dizel_StartupCheck();
+    bool dizel_Update(double dt);
 
 	/* funckje dla wagonow*/
 	bool LoadingDone(double LSpeed, std::string LoadInit);
-	bool DoorLeft(bool State); //obsluga drzwi lewych
-	bool DoorRight(bool State); //obsluga drzwi prawych
+	bool DoorLeft(bool State, range_t const Notify = range_t::consist ); //obsluga drzwi lewych
+	bool DoorRight(bool State, range_t const Notify = range_t::consist ); //obsluga drzwi prawych
 	bool DoorBlockedFlag(void); //sprawdzenie blokady drzwi
-    bool signal_departure( bool const State, int const Notify = range::consist ); // toggles departure warning
+    bool signal_departure( bool const State, range_t const Notify = range_t::consist ); // toggles departure warning
+    void update_autonomous_doors( double const Deltatime ); // automatic door controller update
 
-								/* funkcje dla samochodow*/
+    /* funkcje dla samochodow*/
 	bool ChangeOffsetH(double DeltaOffset);
 
 	/*funkcje ladujace pliki opisujace pojazd*/
@@ -1189,6 +1385,7 @@ private:
     void LoadFIZ_BuffCoupl( std::string const &line, int const Index );
     void LoadFIZ_TurboPos( std::string const &line );
     void LoadFIZ_Cntrl( std::string const &line );
+	void LoadFIZ_Blending(std::string const &line);
     void LoadFIZ_Light( std::string const &line );
     void LoadFIZ_Security( std::string const &line );
     void LoadFIZ_Clima( std::string const &line );
@@ -1204,7 +1401,7 @@ private:
     void LoadFIZ_PowerParamsDecode( TPowerParameters &Powerparameters, std::string const Prefix, std::string const &Input );
     TPowerType LoadFIZ_PowerDecode( std::string const &Power );
     TPowerSource LoadFIZ_SourceDecode( std::string const &Source );
-    TEngineTypes LoadFIZ_EngineDecode( std::string const &Engine );
+    TEngineType LoadFIZ_EngineDecode( std::string const &Engine );
     bool readMPT0( std::string const &line );
     bool readMPT( std::string const &line );                                             //Q 20160717
     bool readMPTElectricSeries( std::string const &line );

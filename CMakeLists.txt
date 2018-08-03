@@ -35,7 +35,6 @@ set(SOURCES
 "Logs.cpp"
 "McZapkie/friction.cpp"
 "McZapkie/hamulce.cpp"
-"McZapkie/mctools.cpp"
 "McZapkie/Mover.cpp"
 "McZapkie/Oerlikon_ESt.cpp"
 "MdlMngr.cpp"
@@ -77,6 +76,15 @@ set(SOURCES
 "vertex.cpp"
 "audio.cpp"
 "audiorenderer.cpp"
+"motiontelemetry.cpp"
+"utilities.cpp"
+"light.cpp"
+"uitranscripts.cpp"
+"station.cpp"
+"application.cpp"
+"simulationtime.cpp"
+"sceneeditor.cpp"
+"screenshot.cpp"
 )
 
 set (PREFIX "")
@@ -114,8 +122,7 @@ if (WIN32)
 	set(LIBSNDFILE_LIBRARY ${LIBSNDFILE_LIBRARY} "${DEPS_DIR}/libsndfile/lib/${ARCH}/libsndfile-1.lib")
 	set(LUAJIT_LIBRARIES ${LUAJIT_LIBRARIES} "${DEPS_DIR}/luajit/lib/${ARCH}/lua51.lib")
 	set(PYTHON_LIBRARY ${PYTHON_LIBRARY} "${DEPS_DIR}/python/lib/${ARCH}/python27.lib")	
-	set(libserialport_LIBRARY ${LIBSERIALPORT_LIBRARY} "${DEPS_DIR}/libserialport/lib/${ARCH}/libserialport-0.lib")	
-	
+	set(libserialport_LIBRARY ${LIBSERIALPORT_LIBRARY} "${DEPS_DIR}/libserialport/lib/${ARCH}/libserialport-0.lib")
 endif()
 
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL MSVC)
@@ -145,6 +152,7 @@ set_target_properties( ${PROJECT_NAME}
 	DEBUG_POSTFIX "_d"
 )
 
+cmake_policy(SET CMP0072 NEW)
 find_package(OpenGL REQUIRED)
 include_directories(${OPENGL_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} ${OPENGL_LIBRARIES})
@@ -191,3 +199,7 @@ target_link_libraries(${PROJECT_NAME} ${LUAJIT_LIBRARIES})
 find_package(libserialport REQUIRED)
 include_directories(${libserialport_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} ${libserialport_LIBRARY})
+
+if (WIN32)
+	target_link_libraries(${PROJECT_NAME} ws2_32)
+endif()

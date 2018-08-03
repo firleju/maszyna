@@ -21,9 +21,10 @@
 #endif  // _DEBUG
 #endif
 // operating system
-#ifdef _WINDOWS
+#ifdef _WIN32
 #include "targetver.h"
 #define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shlobj.h>
 #undef NOMINMAX
@@ -53,7 +54,6 @@
 #include <tuple>
 #include <cctype>
 #include <locale>
-#include <codecvt>
 #include <iterator>
 #include <random>
 #include <algorithm>
@@ -70,17 +70,27 @@
 #ifdef EU07_BUILD_STATIC
 #define GLEW_STATIC
 #else
-#ifdef _WINDOWS
+#ifdef _WIN32
 #define GLFW_DLL
 #endif // _windows
 #endif // build_static
+#ifndef __ANDROID__
 #include "GL/glew.h"
-#ifdef _WINDOWS
+#else
+#include <GL/gl.h>
+#include <GL/glu.h>
+#endif
+#ifdef _WIN32
 #include "GL/wglew.h"
 #endif
 #define GLFW_INCLUDE_GLU
 
+#ifndef __ANDROID__
 #include <GLFW/glfw3.h>
+#endif
+
+#define GLM_ENABLE_EXPERIMENTAL
+#define GLM_FORCE_CTOR_INIT
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/matrix_access.hpp>

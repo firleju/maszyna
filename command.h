@@ -15,28 +15,39 @@ http://mozilla.org/MPL/2.0/.
 
 enum class user_command {
 
+    aidriverenable,
+    aidriverdisable,
     mastercontrollerincrease,
     mastercontrollerincreasefast,
     mastercontrollerdecrease,
     mastercontrollerdecreasefast,
+    mastercontrollerset,
     secondcontrollerincrease,
     secondcontrollerincreasefast,
     secondcontrollerdecrease,
     secondcontrollerdecreasefast,
+    secondcontrollerset,
     mucurrentindicatorothersourceactivate,
     independentbrakeincrease,
     independentbrakeincreasefast,
     independentbrakedecrease,
     independentbrakedecreasefast,
+    independentbrakeset,
     independentbrakebailoff,
     trainbrakeincrease,
     trainbrakedecrease,
+    trainbrakeset,
     trainbrakecharging,
     trainbrakerelease,
     trainbrakefirstservice,
     trainbrakeservice,
     trainbrakefullservice,
+    trainbrakehandleoff,
     trainbrakeemergency,
+    trainbrakebasepressureincrease,
+    trainbrakebasepressuredecrease,
+    trainbrakebasepressurereset,
+    trainbrakeoperationtoggle,
     manualbrakeincrease,
     manualbrakedecrease,
     alarmchaintoggle,
@@ -44,50 +55,85 @@ enum class user_command {
     sandboxactivate,
     reverserincrease,
     reverserdecrease,
+    reverserforwardhigh,
+    reverserforward,
+    reverserneutral,
+    reverserbackward,
+    waterpumpbreakertoggle,
+    waterpumpbreakerclose,
+    waterpumpbreakeropen,
+    waterpumptoggle,
+    waterpumpenable,
+    waterpumpdisable,
+    waterheaterbreakertoggle,
+    waterheaterbreakerclose,
+    waterheaterbreakeropen,
+    waterheatertoggle,
+    waterheaterenable,
+    waterheaterdisable,
+    watercircuitslinktoggle,
+    watercircuitslinkenable,
+    watercircuitslinkdisable,
+    fuelpumptoggle,
+    fuelpumpenable,
+    fuelpumpdisable,
+    oilpumptoggle,
+    oilpumpenable,
+    oilpumpdisable,
     linebreakertoggle,
+    linebreakeropen,
+    linebreakerclose,
     convertertoggle,
+    converterenable,
+    converterdisable,
     convertertogglelocal,
     converteroverloadrelayreset,
     compressortoggle,
+    compressorenable,
+    compressordisable,
     compressortogglelocal,
     motoroverloadrelaythresholdtoggle,
+    motoroverloadrelaythresholdsetlow,
+    motoroverloadrelaythresholdsethigh,
     motoroverloadrelayreset,
     notchingrelaytoggle,
     epbrakecontroltoggle,
+	trainbrakeoperationmodeincrease,
+	trainbrakeoperationmodedecrease,
     brakeactingspeedincrease,
     brakeactingspeeddecrease,
+    brakeactingspeedsetcargo,
+    brakeactingspeedsetpassenger,
+    brakeactingspeedsetrapid,
+    brakeloadcompensationincrease,
+    brakeloadcompensationdecrease,
     mubrakingindicatortoggle,
     alerteracknowledge,
     hornlowactivate,
     hornhighactivate,
+    whistleactivate,
     radiotoggle,
+    radiochannelincrease,
+    radiochanneldecrease,
+    radiostopsend,
     radiostoptest,
-/*
-const int k_FailedEngineCutOff = 35;
-*/
+    cabchangeforward,
+    cabchangebackward,
+
     viewturn,
-    movevector,
+    movehorizontal,
+    movehorizontalfast,
+    movevertical,
+    moveverticalfast,
     moveleft,
     moveright,
     moveforward,
     moveback,
     moveup,
     movedown,
-    moveleftfast,
-    moverightfast,
-    moveforwardfast,
-    movebackfast,
-    moveupfast,
-    movedownfast,
-/*
-const int k_CabForward = 42;
-const int k_CabBackward = 43;
-const int k_Couple = 44;
-const int k_DeCouple = 45;
-const int k_ProgramQuit = 46;
-// const int k_ProgramPause= 47;
-const int k_ProgramHelp = 48;
-*/
+
+    carcouplingincrease,
+    carcouplingdisconnect,
     doortoggleleft,
     doortoggleright,
     departureannounce,
@@ -96,33 +142,53 @@ const int k_ProgramHelp = 48;
     pantographcompressoractivate,
     pantographtogglefront,
     pantographtogglerear,
+    pantographraisefront,
+    pantographraiserear,
+    pantographlowerfront,
+    pantographlowerrear,
     pantographlowerall,
     heatingtoggle,
-/*
-// const int k_FreeFlyMode= 59;
-*/
+    heatingenable,
+    heatingdisable,
     lightspresetactivatenext,
     lightspresetactivateprevious,
     headlighttoggleleft,
+    headlightenableleft,
+    headlightdisableleft,
     headlighttoggleright,
+    headlightenableright,
+    headlightdisableright,
     headlighttoggleupper,
+    headlightenableupper,
+    headlightdisableupper,
     redmarkertoggleleft,
+    redmarkerenableleft,
+    redmarkerdisableleft,
     redmarkertoggleright,
+    redmarkerenableright,
+    redmarkerdisableright,
     headlighttogglerearleft,
     headlighttogglerearright,
     headlighttogglerearupper,
     redmarkertogglerearleft,
     redmarkertogglerearright,
+    redmarkerstoggle,
+    endsignalstoggle,
     headlightsdimtoggle,
+    headlightsdimenable,
+    headlightsdimdisable,
     motorconnectorsopen,
+    motorconnectorsclose,
     motordisconnect,
     interiorlighttoggle,
+    interiorlightenable,
+    interiorlightdisable,
     interiorlightdimtoggle,
+    interiorlightdimenable,
+    interiorlightdimdisable,
     instrumentlighttoggle,
-/*
-const int k_EndSign = 70;
-const int k_Active = 71;
-*/
+    instrumentlightenable,
+    instrumentlightdisable,
     generictoggle0,
     generictoggle1,
     generictoggle2,
@@ -134,9 +200,9 @@ const int k_Active = 71;
     generictoggle8,
     generictoggle9,
     batterytoggle,
-/*
-const int k_WalkMode = 73;
-*/
+    batteryenable,
+    batterydisable,
+
     none = -1
 };
 
@@ -171,15 +237,8 @@ struct command_data {
 
     user_command command;
     int action; // press, repeat or release
-    std::uint64_t param1;
-    std::uint64_t param2;
-    enum desired_state_t
-    {
-        TOGGLE,
-        OFF,
-        ON
-    };
-    desired_state_t desired_state;
+    double param1;
+    double param2;
     double time_delta;
 };
 
@@ -233,9 +292,8 @@ public:
     // posts specified command for the specified recipient
     // TODO: replace uint16_t with recipient handle, based on item id
     void
-        post( user_command const Command, std::uint64_t const Param1, std::uint64_t const Param2,
-              int const Action, std::uint16_t const Recipient,
-              command_data::desired_state_t state = command_data::TOGGLE ) const;
+        post( user_command const Command, double const Param1, double const Param2,
+            int const Action, std::uint16_t const Recipient ) const;
 private:
 // types
 // members

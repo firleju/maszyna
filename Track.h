@@ -13,6 +13,7 @@ http://mozilla.org/MPL/2.0/.
 #include <vector>
 #include <deque>
 
+#include "Classes.h"
 #include "Segment.h"
 #include "material.h"
 #include "scenenode.h"
@@ -123,9 +124,11 @@ private:
 };
 
 // trajektoria ruchu - opakowanie
-class TTrack : public editor::basic_node {
+class TTrack : public scene::basic_node {
 
-    friend class opengl_renderer;
+    friend opengl_renderer;
+    // NOTE: temporary arrangement
+    friend ui_layer;
 
 private:
     TIsolated * pIsolated = nullptr; // obwód izolowany obsługujący zajęcia/zwolnienia grupy torów
@@ -141,32 +144,33 @@ private:
     float fTexRatio1 = 1.0f; // proporcja boków tekstury nawierzchni (żeby zaoszczędzić na rozmiarach tekstur...)
     float fTexRatio2 = 1.0f; // proporcja boków tekstury chodnika (żeby zaoszczędzić na rozmiarach tekstur...)
     float fTexHeight1 = 0.6f; // wysokość brzegu względem trajektorii
+    float fTexHeightOffset = 0.f; // potential adjustment to account for the path roll
     float fTexWidth = 0.9f; // szerokość boku
     float fTexSlope = 0.9f;
 
     glm::dvec3 m_origin;
     material_handle m_material1 = 0; // tekstura szyn albo nawierzchni
     material_handle m_material2 = 0; // tekstura automatycznej podsypki albo pobocza
-    typedef std::vector<gfx::geometry_handle> geometryhandle_sequence;
+    using geometryhandle_sequence = std::vector<gfx::geometry_handle>;
     geometryhandle_sequence Geometry1; // geometry chunks textured with texture 1
     geometryhandle_sequence Geometry2; // geometry chunks textured with texture 2
 
+    std::vector<segment_data> m_paths; // source data for owned paths
+
 public:
-    typedef std::deque<TDynamicObject *> dynamics_sequence;
+    using dynamics_sequence = std::deque<TDynamicObject *>;
+    using event_sequence = std::vector<std::pair<std::string, TEvent *> >;
+
     dynamics_sequence Dynamics;
-    int iEvents = 0; // Ra: flaga informująca o obecności eventów
-    TEvent *evEventall0 = nullptr; // McZapkie-140302: wyzwalany gdy pojazd stoi
-    TEvent *evEventall1 = nullptr;
-    TEvent *evEventall2 = nullptr;
-    TEvent *evEvent0 = nullptr; // McZapkie-280503: wyzwalany tylko gdy headdriver
-    TEvent *evEvent1 = nullptr;
-    TEvent *evEvent2 = nullptr;
-    std::string asEventall0Name; // nazwy eventów
-	std::string asEventall1Name;
-	std::string asEventall2Name;
-	std::string asEvent0Name;
-	std::string asEvent1Name;
-	std::string asEvent2Name;
+    event_sequence
+        m_events0all,
+        m_events1all,
+        m_events2all,
+        m_events0,
+        m_events1,
+        m_events2;
+    bool m_events { false }; // Ra: flaga informująca o obecności eventów
+
     int iNextDirection = 0; // 0:Point1, 1:Point2, 3:do odchylonego na zwrotnicy
     int iPrevDirection = 0; // domyślnie wirtualne odcinki dołączamy stroną od Point1
     TTrackType eType = tt_Normal; // domyślnie zwykły
@@ -184,7 +188,7 @@ private:
     double fVelocity = -1.0; // ograniczenie prędkości // prędkość dla AI (powyżej rośnie prawdopowobieństwo wykolejenia)
 public:
     // McZapkie-100502:
-    double fTrackLength = 100.0; // długość z wpisu, nigdzie nie używana
+//    double fTrackLength = 100.0; // długość z wpisu, nigdzie nie używana
     double fRadius = 0.0; // promień, dla zwrotnicy kopiowany z tabeli
     bool ScannedFlag = false; // McZapkie: do zaznaczania kolorem torów skanowanych przez AI
     TGroundNode *nFouling[ 2 ] = { nullptr, nullptr }; // współrzędne ukresu albo oporu kozła
@@ -229,10 +233,11 @@ public:
             SwitchExtension != nullptr ?
                 SwitchExtension->iRoads - 1 :
                 1 ); }
-    void Load(cParser *parser, Math3D::vector3 pOrigin);
-    bool AssignEvents(TEvent *NewEvent0, TEvent *NewEvent1, TEvent *NewEvent2);
-    bool AssignallEvents(TEvent *NewEvent0, TEvent *NewEvent1, TEvent *NewEvent2);
+    void Load(cParser *parser, glm::dvec3 const &pOrigin);
+    bool AssignEvents();
     bool AssignForcedEvents(TEvent *NewEventPlus, TEvent *NewEventMinus);
+    void QueueEvents( event_sequence const &Events, TDynamicObject const *Owner );
+    void QueueEvents( event_sequence const &Events, TDynamicObject const *Owner, double const Delaylimit );
     bool CheckDynamicObject(TDynamicObject *Dynamic);
     bool AddDynamicObject(TDynamicObject *Dynamic);
     bool RemoveDynamicObject(TDynamicObject *Dynamic);
@@ -269,14 +274,16 @@ public:
     double VelocityGet();
     void ConnectionsLog();
 
-protected:
-    // calculates path's bounding radius
-    void
-        radius_();
-
 private:
-    void EnvironmentSet();
-    void EnvironmentReset();
+    // radius() subclass details, calculates node's bounding radius
+    float radius_();
+    // serialize() subclass details, sends content of the subclass to provided stream
+    void serialize_( std::ostream &Output ) const;
+    // deserialize() subclass details, restores content of the subclass from provided stream
+    void deserialize_( std::istream &Input );
+    // export() subclass details, sends basic content of the class in legacy (text) format to provided stream
+    void export_as_text_( std::ostream &Output ) const;
+
 };
 
 

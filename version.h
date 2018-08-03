@@ -1,5 +1,1 @@
-#pragma once
-
-#define VERSION_MAJOR 17
-#define VERSION_MINOR 1231
-#define VERSION_REVISION 0
+#define VERSION_INFO "M7 22.07.2018, based on tmj 460bf6d"

@@ -10,6 +10,7 @@ http://mozilla.org/MPL/2.0/.
 #include "stdafx.h"
 #include "Timer.h"
 #include "Globals.h"
+#include "winheaders.h"
 
 namespace Timer {
 
@@ -55,7 +56,7 @@ double GetFPS()
 
 void ResetTimers()
 {
-    UpdateTimers( Global::iPause != 0 );
+    UpdateTimers( Global.iPause != 0 );
     DeltaTime = 0.1;
     DeltaRenderTime = 0.0;
     fSoundTimer = 0.0;
@@ -77,7 +78,7 @@ void UpdateTimers(bool pause)
     DeltaRenderTime = double(count - oldCount) / double(fr);
     if (!pause)
     {
-        DeltaTime = Global::fTimeSpeed * DeltaRenderTime;
+        DeltaTime = Global.fTimeSpeed * DeltaRenderTime;
         fSoundTimer += DeltaTime;
         if (fSoundTimer > 0.1)
             fSoundTimer = 0.0;

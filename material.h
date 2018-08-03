@@ -9,8 +9,8 @@ http://mozilla.org/MPL/2.0/.
 
 #pragma once
 
+#include "Classes.h"
 #include "Texture.h"
-#include "parser.h"
 
 typedef int material_handle;
 
@@ -24,13 +24,23 @@ struct opengl_material {
 
     bool has_alpha { false }; // alpha state, calculated from presence of alpha in texture1
     std::string name;
-// methods:
+
+// constructors
+    opengl_material() = default;
+
+// methods
     bool
         deserialize( cParser &Input, bool const Loadnow );
+
 private:
+// methods
     // imports member data pair from the config file, overriding existing parameter values of lower priority
     bool
         deserialize_mapping( cParser &Input, int const Priority, bool const Loadnow );
+
+// members
+    int priority1 { -1 }; // priority of last loaded primary texture
+    int priority2 { -1 }; // priority of last loaded secondary texture
 };
 
 class material_manager {
@@ -52,7 +62,7 @@ private:
     material_handle
         find_in_databank( std::string const &Materialname ) const;
     // checks whether specified file exists. returns name of the located file, or empty string.
-    std::string
+    std::pair<std::string, std::string>
         find_on_disk( std::string const &Materialname ) const;
 // members:
     material_sequence m_materials;

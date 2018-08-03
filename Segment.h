@@ -9,20 +9,38 @@ http://mozilla.org/MPL/2.0/.
 
 #pragma once
 
-#include "openglgeometrybank.h"
-#include "dumb3d.h"
 #include "Classes.h"
-#include "usefull.h"
+#include "dumb3d.h"
+#include "openglgeometrybank.h"
+#include "utilities.h"
+
+struct segment_data {
+// types
+    enum point {
+        start = 0,
+        control1,
+        control2,
+        end
+    };
+// members
+    std::array<glm::dvec3, 4> points {};
+    std::array<float, 2> rolls {};
+    float radius {};
+// constructors
+    segment_data() = default;
+// methods
+    void deserialize( cParser &Input, glm::dvec3 const &Offset );
+};
 
 class TSegment
 { // aproksymacja toru (zwrotnica ma dwa takie, jeden z nich jest aktywny)
   private:
     Math3D::vector3 Point1, CPointOut, CPointIn, Point2;
     float
-        fRoll1{ 0.f },
-        fRoll2{ 0.f }; // przechyłka na końcach
-    double fLength = 0.0; // długość policzona
-    double *fTsBuffer = nullptr; // wartości parametru krzywej dla równych odcinków
+        fRoll1 { 0.f },
+        fRoll2 { 0.f }; // przechyłka na końcach
+    double fLength { -1.0 }; // długość policzona
+    std::vector<double> fTsBuffer; // wartości parametru krzywej dla równych odcinków
     double fStep = 0.0;
     int iSegCount = 0; // ilość odcinków do rysowania krzywej
     double fDirection = 0.0; // Ra: kąt prostego w planie; dla łuku kąt od Point1
@@ -45,7 +63,6 @@ public:
     bool bCurve = false;
 
     TSegment(TTrack *owner);
-    ~TSegment();
     bool
         Init( Math3D::vector3 NewPoint1, Math3D::vector3 NewPoint2, double fNewStep, double fNewRoll1 = 0, double fNewRoll2 = 0);
     bool
@@ -107,7 +124,7 @@ public:
     inline
     int
         RaSegCount() const {
-            return fTsBuffer ? iSegCount : 1; };
+            return ( fTsBuffer.empty() ? 1 : iSegCount ); };
 };
 
 //---------------------------------------------------------------------------

@@ -15,10 +15,25 @@ http://mozilla.org/MPL/2.0/.
 #include "Timer.h"
 #include "Logs.h"
 #include "sn_utils.h"
+#include "renderer.h"
 
 namespace scene {
 
 std::string const EU07_FILEEXTENSION_REGION { ".sbt" };
+std::uint32_t const EU07_FILEVERSION_REGION { MAKE_ID4( 'S', 'B', 'T', 1 ) };
+
+// potentially activates event handler with the same name as provided node, and within handler activation range
+void
+basic_cell::on_click( TAnimModel const *Instance ) {
+
+    for( auto *launcher : m_eventlaunchers ) {
+        if( ( launcher->name() == Instance->name() )
+         && ( glm::length2( launcher->location() - Instance->location() ) < launcher->dRadius )
+         && ( true == launcher->check_conditions() ) ) {
+            launch_event( launcher );
+        }
+    }
+}
 
 // legacy method, finds and assigns traction piece to specified pantograph of provided vehicle
 void
@@ -54,7 +69,7 @@ basic_cell::update_traction( TDynamicObject *Vehicle, int const Pantographindex 
             // jeśli ponad pantografem (bo może łapać druty spod wiaduktu)
             auto const fHorizontal = std::abs( glm::dot( vGdzie, vLeft ) ) - pantograph->fWidth;
 
-            if( ( Global::bEnableTraction )
+            if( ( Global.bEnableTraction )
              && ( fVertical < pantograph->PantWys - 0.15 ) ) {
                 // jeśli drut jest niżej niż 15cm pod ślizgiem przełączamy w tryb połamania, o ile jedzie;
                 // (bEnableTraction) aby dało się jeździć na koślawych sceneriach
@@ -103,17 +118,10 @@ basic_cell::update_events() {
 
     // event launchers
     for( auto *launcher : m_eventlaunchers ) {
-        if( ( true == launcher->check_conditions() )
-         && ( SquareMagnitude( launcher->location() - Global::pCameraPosition ) < launcher->dRadius ) ) {
+        if( ( true == ( launcher->check_activation() && launcher->check_conditions() ) )
+         && ( SquareMagnitude( launcher->location() - Global.pCameraPosition ) < launcher->dRadius ) ) {
 
-            WriteLog( "Eventlauncher " + launcher->name() );
-            if( ( true == Global::shiftState )
-             && ( launcher->Event2 != nullptr ) ) {
-                simulation::Events.AddToQuery( launcher->Event2, nullptr );
-            }
-            else if( launcher->Event1 ) {
-                simulation::Events.AddToQuery( launcher->Event1, nullptr );
-            }
+            launch_event( launcher );
         }
     }
 }
@@ -121,6 +129,10 @@ basic_cell::update_events() {
 // legacy method, updates sounds and polls event launchers within radius around specified point
 void
 basic_cell::update_sounds() {
+
+    for( auto *sound : m_sounds ) {
+        sound->play_event();
+    }
     // TBD, TODO: move to sound renderer
     for( auto *path : m_paths ) {
         // dźwięki pojazdów, również niewidocznych
@@ -219,6 +231,17 @@ basic_cell::deserialize( std::istream &Input ) {
         ( false == m_shapesopaque.empty() )
      || ( false == m_shapestranslucent.empty() )
      || ( false == m_lines.empty() ) );
+}
+
+// sends content of the class in legacy (text) format to provided stream
+void
+basic_cell::export_as_text( std::ostream &Output ) const {
+
+    // text format export dumps only relevant basic objects
+    // sounds
+    for( auto const *sound : m_sounds ) {
+        sound->export_as_text( Output );
+    }
 }
 
 // adds provided shape to the cell
@@ -343,6 +366,7 @@ basic_cell::insert( sound_source *Sound ) {
     m_active = true;
 
     m_sounds.emplace_back( Sound );
+    // NOTE: sound sources are virtual 'points' hence they don't ever expand cell range
 }
 
 // adds provided sound instance to the cell
@@ -354,6 +378,60 @@ basic_cell::insert( TEventLauncher *Launcher ) {
     m_eventlaunchers.emplace_back( Launcher );
     // re-calculate cell bounding area, in case launcher range extends outside the cell's boundaries
     enclose_area( Launcher );
+}
+
+// adds provided memory cell to the cell
+void
+basic_cell::insert( TMemCell *Memorycell ) {
+
+    m_active = true;
+
+    m_memorycells.emplace_back( Memorycell );
+    // NOTE: memory cells are virtual 'points' hence they don't ever expand cell range
+}
+
+// removes provided model instance from the cell
+void
+basic_cell::erase( TAnimModel *Instance ) {
+
+    auto const flags = Instance->Flags();
+    auto alpha =
+        ( Instance->Material() != nullptr ?
+            Instance->Material()->textures_alpha :
+            0x30300030 );
+
+    if( alpha & flags & 0x2F2F002F ) {
+        // instance has translucent pieces
+        m_instancetranslucent.erase(
+            std::remove_if(
+                std::begin( m_instancetranslucent ), std::end( m_instancetranslucent ),
+                [=]( TAnimModel *instance ) {
+                    return instance == Instance; } ),
+            std::end( m_instancetranslucent ) );
+    }
+    alpha ^= 0x0F0F000F; // odwrócenie flag tekstur, aby wyłapać nieprzezroczyste
+    if( alpha & flags & 0x1F1F001F ) {
+        // instance has opaque pieces
+        m_instancesopaque.erase(
+            std::remove_if(
+                std::begin( m_instancesopaque ), std::end( m_instancesopaque ),
+                [=]( TAnimModel *instance ) {
+                    return instance == Instance; } ),
+            std::end( m_instancesopaque ) );
+    }
+    // TODO: update cell bounding area
+}
+
+// removes provided memory cell from the cell
+void
+basic_cell::erase( TMemCell *Memorycell ) {
+
+    m_memorycells.erase(
+        std::remove_if(
+            std::begin( m_memorycells ), std::end( m_memorycells ),
+            [=]( TMemCell *memorycell ) {
+                return memorycell == Memorycell; } ),
+        std::end( m_memorycells ) );
 }
 
 // registers provided path in the lookup directory of the cell
@@ -414,7 +492,7 @@ basic_cell::find( glm::dvec3 const &Point, float const Radius, bool const Onlyco
             std::tie( vehiclenearest, leastdistance ) = std::tie( vehicle, distance );
         }
     }
-    return std::tie( vehiclenearest, leastdistance );
+    return { vehiclenearest, leastdistance };
 }
 
 // finds a path with one of its ends located in specified point. returns: located path and id of the matching endpoint
@@ -431,7 +509,7 @@ basic_cell::find( glm::dvec3 const &Point, TTrack const *Exclude ) const {
         endpointid = path->TestPoint( &point );
         if( endpointid >= 0 ) {
 
-            return std::tie( path, endpointid );
+            return { path, endpointid };
         }
     }
     return { nullptr, -1 };
@@ -450,7 +528,7 @@ basic_cell::find( glm::dvec3 const &Point, TTraction const *Exclude ) const {
         endpointid = traction->TestPoint( Point );
         if( endpointid >= 0 ) {
 
-            return std::tie( traction, endpointid );
+            return { traction, endpointid };
         }
     }
     return { nullptr, -1 };
@@ -521,9 +599,23 @@ basic_cell::create_geometry( gfx::geometrybank_handle const &Bank ) {
     m_geometrycreated = true; // helper for legacy animation code, get rid of it after refactoring
 }
 
+// executes event assigned to specified launcher
+void
+basic_cell::launch_event( TEventLauncher *Launcher ) {
+
+    WriteLog( "Eventlauncher " + Launcher->name() );
+    if( ( true == Global.shiftState )
+     && ( Launcher->Event2 != nullptr ) ) {
+        simulation::Events.AddToQuery( Launcher->Event2, nullptr );
+    }
+    else if( Launcher->Event1 ) {
+        simulation::Events.AddToQuery( Launcher->Event1, nullptr );
+    }
+}
+
 // adjusts cell bounding area to enclose specified node
 void
-basic_cell::enclose_area( editor::basic_node *Node ) {
+basic_cell::enclose_area( scene::basic_node *Node ) {
 
     m_area.radius = std::max(
         m_area.radius,
@@ -531,6 +623,13 @@ basic_cell::enclose_area( editor::basic_node *Node ) {
 }
 
 
+
+// potentially activates event handler with the same name as provided node, and within handler activation range
+void
+basic_section::on_click( TAnimModel const *Instance ) {
+
+    cell( Instance->location() ).on_click( Instance );
+}
 
 // legacy method, finds and assigns traction piece(s) to pantographs of provided vehicle
 void
@@ -638,11 +737,27 @@ basic_section::deserialize( std::istream &Input ) {
     }
 }
 
+// sends content of the class in legacy (text) format to provided stream
+void
+basic_section::export_as_text( std::ostream &Output ) const {
+
+    // text format export dumps only relevant basic objects from non-empty cells
+    for( auto const &cell : m_cells ) {
+        cell.export_as_text( Output );
+    }
+}
+
 // adds provided shape to the section
 void
 basic_section::insert( shape_node Shape ) {
 
     auto const &shapedata = Shape.data();
+
+    // re-calculate section radius, in case shape geometry extends outside the section's boundaries
+    m_area.radius = std::max<float>(
+        m_area.radius,
+        static_cast<float>( glm::length( m_area.center - shapedata.area.center ) + shapedata.area.radius ) );
+
     if( ( true == shapedata.translucent )
      || ( shapedata.rangesquared_max <= 90000.0 )
      || ( shapedata.rangesquared_min > 0.0 ) ) {
@@ -651,11 +766,6 @@ basic_section::insert( shape_node Shape ) {
     }
     else {
         // large, opaque shapes are placed on section level
-        // re-calculate section radius, in case shape geometry extends outside the section's boundaries
-        m_area.radius = std::max<float>(
-            m_area.radius,
-            static_cast<float>( glm::length( m_area.center - Shape.data().area.center ) + Shape.data().area.radius ) );
-
         for( auto &shape : m_shapes ) {
             // check first if the shape can't be merged with one of the shapes already present in the section
             if( true == shape.merge( Shape ) ) {
@@ -700,7 +810,7 @@ basic_section::find( glm::dvec3 const &Point, float const Radius, bool const Onl
             std::tie( vehiclenearest, distancenearest ) = std::tie( vehiclefound, distancefound );
         }
     }
-    return std::tie( vehiclenearest, distancenearest );
+    return { vehiclenearest, distancenearest };
 }
 
 // finds a path with one of its ends located in specified point. returns: located path and id of the matching endpoint
@@ -817,14 +927,27 @@ basic_region::~basic_region() {
     for( auto *section : m_sections ) { if( section != nullptr ) { delete section; } }
 }
 
+// potentially activates event handler with the same name as provided node, and within handler activation range
+void
+basic_region::on_click( TAnimModel const *Instance ) {
+
+    if( Instance->name().empty() || ( Instance->name() == "none" ) ) { return; }
+
+    auto const location { Instance->location() };
+
+    if( point_inside( location ) ) {
+        section( location ).on_click( Instance );
+    }
+}
+
 // legacy method, polls event launchers around camera
 void
 basic_region::update_events() {
     // render events and sounds from sectors near enough to the viewer
     auto const range = EU07_SECTIONSIZE; // arbitrary range
-    auto const &sectionlist = sections( Global::pCameraPosition, range );
+    auto const &sectionlist = sections( Global.pCameraPosition, range );
     for( auto *section : sectionlist ) {
-        section->update_events( Global::pCameraPosition, range );
+        section->update_events( Global.pCameraPosition, range );
     }
 }
 
@@ -833,9 +956,9 @@ void
 basic_region::update_sounds() {
     // render events and sounds from sectors near enough to the viewer
     auto const range = 2750.f; // audible range of 100 db sound
-    auto const &sectionlist = sections( Global::pCameraPosition, range );
+    auto const &sectionlist = sections( Global.pCameraPosition, range );
     for( auto *section : sectionlist ) {
-        section->update_sounds( Global::pCameraPosition, range );
+        section->update_sounds( Global.pCameraPosition, range );
     }
 }
 
@@ -867,12 +990,8 @@ basic_region::serialize( std::string const &Scenariofile ) const {
         // trim leading $ char rainsted utility may add to the base name for modified .scn files
         filename.erase( 0, 1 );
     }
-    filename = Global::asCurrentSceneryPath + filename;
-    if( ( filename.rfind( '.' ) != std::string::npos )
-     && ( filename.rfind( '.' ) != filename.rfind( ".." ) + 1 ) ) {
-        // trim extension, it's typically going to be for different file type
-        filename.erase( filename.rfind( '.' ) );
-    }
+    erase_extension( filename );
+    filename = Global.asCurrentSceneryPath + filename;
     filename += EU07_FILEEXTENSION_REGION;
 
     std::ofstream output { filename, std::ios::binary };
@@ -880,7 +999,7 @@ basic_region::serialize( std::string const &Scenariofile ) const {
     // region file version 1
     // header: EU07SBT + version (0-255)
     sn_utils::ls_uint32( output, MAKE_ID4( 'E', 'U', '0', '7' ) );
-    sn_utils::ls_uint32( output, MAKE_ID4( 'S', 'B', 'T', 1 ) );
+    sn_utils::ls_uint32( output, EU07_FILEVERSION_REGION );
     // sections
     // TBD, TODO: build table of sections and file offsets, if we postpone section loading until they're within range
     std::uint32_t sectioncount { 0 };
@@ -910,12 +1029,8 @@ basic_region::deserialize( std::string const &Scenariofile ) {
         // trim leading $ char rainsted utility may add to the base name for modified .scn files
         filename.erase( 0, 1 );
     }
-    filename = Global::asCurrentSceneryPath + filename;
-    if( ( filename.rfind( '.' ) != std::string::npos )
-     && ( filename.rfind( '.' ) != filename.rfind( ".." ) + 1 ) ) {
-        // trim extension, it's typically going to be for different file type
-        filename.erase( filename.rfind( '.' ) );
-    }
+    erase_extension( filename );
+    filename = Global.asCurrentSceneryPath + filename;
     filename += EU07_FILEEXTENSION_REGION;
 
     if( false == FileExists( filename ) ) {
@@ -929,7 +1044,7 @@ basic_region::deserialize( std::string const &Scenariofile ) {
     uint32_t headertype { sn_utils::ld_uint32( input ) };
 
     if( ( headermain != MAKE_ID4( 'E', 'U', '0', '7' )
-     || ( headertype != MAKE_ID4( 'S', 'B', 'T', 1 ) ) ) ) {
+     || ( headertype != EU07_FILEVERSION_REGION ) ) ) {
         // wrong file type
         WriteLog( "Bad file: \"" + filename + "\" is of either unrecognized type or version" );
         return false;
@@ -947,6 +1062,18 @@ basic_region::deserialize( std::string const &Scenariofile ) {
     }
 
     return true;
+}
+
+// sends content of the class in legacy (text) format to provided stream
+void
+basic_region::export_as_text( std::ostream &Output ) const {
+
+    for( auto *section : m_sections ) {
+        // text format export dumps only relevant basic objects from non-empty sections
+        if( section != nullptr ) {
+            section->export_as_text( Output );
+        }
+    }
 }
 
 // legacy method, links specified path piece with potential neighbours
@@ -991,7 +1118,7 @@ basic_region::RadioStop( glm::dvec3 const &Location ) {
 }
 
 void
-basic_region::insert_shape( shape_node Shape, scratch_data &Scratchpad, bool const Transform ) {
+basic_region::insert( shape_node Shape, scratch_data &Scratchpad, bool const Transform ) {
 
     // shape might need to be split into smaller pieces, so we create list of nodes instead of just single one
     // using deque so we can do single pass iterating and addding generated pieces without invalidating anything
@@ -1032,13 +1159,12 @@ basic_region::insert_shape( shape_node Shape, scratch_data &Scratchpad, bool con
             while( true == RaTriangleDivider( shapes[ index ], shapes ) ) {
                 ; // all work is done during expression check
             }
-            // with the trimming done we can calculate shape's bounding radius
-            shape.compute_radius();
         }
     }
     // move the data into appropriate section(s)
     for( auto &shape : shapes ) {
-
+        // with the potential splitting done we can calculate each chunk's bounding radius
+        shape.compute_radius();
         if( point_inside( shape.m_data.area.center ) ) {
             // NOTE: nodes placed outside of region boundaries are discarded
             section( shape.m_data.area.center ).insert( shape );
@@ -1056,7 +1182,7 @@ basic_region::insert_shape( shape_node Shape, scratch_data &Scratchpad, bool con
 
 // inserts provided lines in the region
 void
-basic_region::insert_lines( lines_node Lines, scratch_data &Scratchpad ) {
+basic_region::insert( lines_node Lines, scratch_data &Scratchpad ) {
 
     if( Lines.m_data.vertices.empty() ) { return; }
     // transform point coordinates if needed
@@ -1098,89 +1224,6 @@ basic_region::insert_lines( lines_node Lines, scratch_data &Scratchpad ) {
     }
 }
 
-// inserts provided track in the region
-void
-basic_region::insert_path( TTrack *Path, const scratch_data &Scratchpad ) {
-
-    // NOTE: bounding area isn't present/filled until track class and wrapper refactoring is done
-    auto location = Path->location();
-
-    if( point_inside( location ) ) {
-        // NOTE: nodes placed outside of region boundaries are discarded
-        section( location ).insert( Path );
-    }
-    else {
-        // tracks are guaranteed to hava a name so we can skip the check
-        ErrorLog( "Bad scenario: track node \"" + Path->name() + "\" placed in location outside region bounds (" + to_string( location ) + ")" );
-    }
-    // also register path ends in appropriate sections, for path merging lookups
-    // TODO: clean this up during track refactoring
-    for( auto &point : Path->endpoints() ) {
-        register_path( Path, point );
-    }
-}
-
-// inserts provided track in the region
-void
-basic_region::insert_traction( TTraction *Traction, scratch_data &Scratchpad ) {
-
-    // NOTE: bounding area isn't present/filled until track class and wrapper refactoring is done
-    auto location = Traction->location();
-
-    if( point_inside( location ) ) {
-        // NOTE: nodes placed outside of region boundaries are discarded
-        section( location ).insert( Traction );
-    }
-    else {
-        // tracks are guaranteed to hava a name so we can skip the check
-        ErrorLog( "Bad scenario: traction node \"" + Traction->name() + "\" placed in location outside region bounds (" + to_string( location ) + ")" );
-    }
-    // also register traction ends in appropriate sections, for path merging lookups
-    // TODO: clean this up during track refactoring
-    for( auto &point : Traction->endpoints() ) {
-        register_traction( Traction, point );
-    }
-}
-
-// inserts provided instance of 3d model in the region
-void
-basic_region::insert_instance( TAnimModel *Instance, scratch_data &Scratchpad ) {
-
-    // NOTE: bounding area isn't present/filled until track class and wrapper refactoring is done
-    auto location = Instance->location();
-
-    if( point_inside( location ) ) {
-        // NOTE: nodes placed outside of region boundaries are discarded
-        section( location ).insert( Instance );
-    }
-    else {
-        // tracks are guaranteed to hava a name so we can skip the check
-        ErrorLog( "Bad scenario: model node \"" + Instance->name() + "\" placed in location outside region bounds (" + to_string( location ) + ")" );
-    }
-}
-
-// inserts provided sound in the region
-void
-basic_region::insert_sound( sound_source *Sound, scratch_data &Scratchpad ) {
-}
-
-// inserts provided event launcher in the region
-void
-basic_region::insert_launcher( TEventLauncher *Launcher, scratch_data &Scratchpad ) {
-
-    // NOTE: bounding area isn't present/filled until track class and wrapper refactoring is done
-    auto location = Launcher->location();
-
-    if( point_inside( location ) ) {
-        // NOTE: nodes placed outside of region boundaries are discarded
-        section( location ).insert( Launcher );
-    }
-    else {
-        // tracks are guaranteed to hava a name so we can skip the check
-        ErrorLog( "Bad scenario: event launcher \"" + Launcher->name() + "\" placed in location outside region bounds (" + to_string( location ) + ")" );
-    }
-}
-
 // find a vehicle located neares to specified location, within specified radius, optionally discarding vehicles without drivers
 std::tuple<TDynamicObject *, float>
 basic_region::find_vehicle( glm::dvec3 const &Point, float const Radius, bool const Onlycontrolled, bool const Findbycoupler ) {
@@ -1202,7 +1245,7 @@ basic_region::find_vehicle( glm::dvec3 const &Point, float const Radius, bool co
             std::tie( nearestvehicle, nearestdistance ) = std::tie( foundvehicle, founddistance );
         }
     }
-    return std::tie( nearestvehicle, nearestdistance );
+    return { nearestvehicle, nearestdistance };
 }
 
 // finds a path with one of its ends located in specified point. returns: located path and id of the matching endpoint
@@ -1215,7 +1258,7 @@ basic_region::find_path( glm::dvec3 const &Point, TTrack const *Exclude ) {
         return section( Point ).find( Point, Exclude );
     }
 
-    return std::make_tuple<TTrack *, int>( nullptr, -1 );
+    return { nullptr, -1 };
 }
 
 // finds a traction piece with one of its ends located in specified point. returns: located traction piece and id of the matching endpoint
@@ -1228,7 +1271,7 @@ basic_region::find_traction( glm::dvec3 const &Point, TTraction const *Exclude )
         return section( Point ).find( Point, Exclude );
     }
 
-    return std::make_tuple<TTraction *, int>( nullptr, -1 );
+    return { nullptr, -1 };
 }
 
 // finds a traction piece located nearest to specified point, sharing section with specified other piece and powered in specified direction. returns: located traction piece
@@ -1289,24 +1332,6 @@ basic_region::sections( glm::dvec3 const &Point, float const Radius ) {
         }
     }
     return m_scratchpad.sections;
-}
-
-// registers specified path in the lookup directory of a cell enclosing specified point
-void
-basic_region::register_path( TTrack *Path, glm::dvec3 const &Point ) {
-
-    if( point_inside( Point ) ) {
-        section( Point ).register_node( Path, Point );
-    }
-}
-
-// registers specified end point of the provided traction piece in the lookup directory of the region
-void
-basic_region::register_traction( TTraction *Traction, glm::dvec3 const &Point ) {
-
-    if( point_inside( Point ) ) {
-        section( Point ).register_node( Traction, Point );
-    }
 }
 
 // checks whether specified point is within boundaries of the region

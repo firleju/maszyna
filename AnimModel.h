@@ -14,20 +14,23 @@ http://mozilla.org/MPL/2.0/.
 
 #pragma once
 
+#include "Classes.h"
+#include "dumb3d.h"
+#include "Float3d.h"
 #include "Model3d.h"
-#include "material.h"
 #include "DynObj.h"
+#include "scenenode.h"
 
 const int iMaxNumLights = 8;
 float const DefaultDarkThresholdLevel { 0.325f };
 
 // typy stanu świateł
-enum TLightState
-{
+enum TLightState {
     ls_Off = 0, // zgaszone
     ls_On = 1, // zapalone
     ls_Blink = 2, // migające
-    ls_Dark = 3 // Ra: zapalajce się automatycznie, gdy zrobi się ciemno
+    ls_Dark = 3, // Ra: zapalajce się automatycznie, gdy zrobi się ciemno
+    ls_Home = 4 // like ls_dark but off late at night
 };
 
 class TAnimVocaloidFrame
@@ -44,14 +47,14 @@ class TEvent;
 
 class TAnimContainer
 { // opakowanie submodelu, określające animację egzemplarza - obsługiwane jako lista
-    friend class TAnimModel;
+    friend TAnimModel;
 
   private:
-    vector3 vRotateAngles; // dla obrotów Eulera
-    vector3 vDesiredAngles;
+    Math3D::vector3 vRotateAngles; // dla obrotów Eulera
+    Math3D::vector3 vDesiredAngles;
     double fRotateSpeed;
-    vector3 vTranslation;
-    vector3 vTranslateTo;
+    Math3D::vector3 vTranslation;
+    Math3D::vector3 vTranslateTo;
     double fTranslateSpeed; // może tu dać wektor?
     float4 qCurrent; // aktualny interpolowany
     float4 qStart; // pozycja początkowa (0 dla interpolacji)
@@ -81,8 +84,8 @@ class TAnimContainer
     inline
     std::string NameGet() {
         return (pSubModel ? pSubModel->pName : ""); };
-    void SetRotateAnim(vector3 vNewRotateAngles, double fNewRotateSpeed);
-    void SetTranslateAnim(vector3 vNewTranslate, double fNewSpeed);
+    void SetRotateAnim( Math3D::vector3 vNewRotateAngles, double fNewRotateSpeed);
+    void SetTranslateAnim( Math3D::vector3 vNewTranslate, double fNewSpeed);
     void AnimSetVMD(double fNewSpeed);
     void PrepareModel();
     void UpdateModel();
@@ -92,8 +95,8 @@ class TAnimContainer
     double AngleGet() {
         return vRotateAngles.z; }; // jednak ostatnia, T3D ma inny układ
     inline
-    vector3 TransGet() {
-        return vector3(-vTranslation.x, vTranslation.z, vTranslation.y); }; // zmiana, bo T3D ma inny układ
+    Math3D::vector3 TransGet() {
+        return Math3D::vector3(-vTranslation.x, vTranslation.z, vTranslation.y); }; // zmiana, bo T3D ma inny układ
     inline
     void WillBeAnimated() {
         if (pSubModel)
@@ -119,9 +122,10 @@ class TAnimAdvanced
 };
 
 // opakowanie modelu, określające stan egzemplarza
-class TAnimModel : public editor::basic_node {
+class TAnimModel : public scene::basic_node {
 
-    friend class opengl_renderer;
+    friend opengl_renderer;
+    friend ui_layer;
 
 public:
 // constructors
@@ -130,18 +134,12 @@ public:
     ~TAnimModel();
 // methods
     static void AnimUpdate( double dt );
-    bool Init(TModel3d *pNewModel);
     bool Init(std::string const &asName, std::string const &asReplacableTexture);
     bool Load(cParser *parser, bool ter = false);
     TAnimContainer * AddContainer(std::string const &Name);
     TAnimContainer * GetContainer(std::string const &Name = "");
-    void RaAnglesSet( glm::vec3 Angles ) {
-        vAngle.x = Angles.x;
-        vAngle.y = Angles.y;
-        vAngle.z = Angles.z; };
     void LightSet( int const n, float const v );
     void AnimationVND( void *pData, double a, double b, double c, double d );
-    bool TerrainLoaded();
     int TerrainCount();
     TSubModel * TerrainSquare(int n);
     int Flags();
@@ -151,21 +149,33 @@ public:
             return &m_materialdata; }
     inline
     TModel3d *
-        Model() {
+        Model() const {
             return pModel; }
+    inline
+    void
+        Angles( glm::vec3 const &Angles ) {
+            vAngle = Angles; }
+    inline
+    glm::vec3
+        Angles() const {
+            return vAngle; }
 // members
     static TAnimContainer *acAnimList; // lista animacji z eventem, które muszą być przeliczane również bez wyświetlania
-
-protected:
-    // calculates piece's bounding radius
-    void
-        radius_();
 
 private:
 // methods
     void RaPrepare(); // ustawienie animacji egzemplarza na wzorcu
     void RaAnimate( unsigned int const Framestamp ); // przeliczenie animacji egzemplarza
     void Advanced();
+    // radius() subclass details, calculates node's bounding radius
+    float radius_();
+    // serialize() subclass details, sends content of the subclass to provided stream
+    void serialize_( std::ostream &Output ) const;
+    // deserialize() subclass details, restores content of the subclass from provided stream
+    void deserialize_( std::istream &Input );
+    // export() subclass details, sends basic content of the class in legacy (text) format to provided stream
+    void export_as_text_( std::ostream &Output ) const;
+
 // members
     TAnimContainer *pRoot { nullptr }; // pojemniki sterujące, tylko dla aniomowanych submodeli
     TModel3d *pModel { nullptr };
@@ -173,7 +183,7 @@ private:
     int iNumLights { 0 };
     TSubModel *LightsOn[ iMaxNumLights ]; // Ra: te wskaźniki powinny być w ramach TModel3d
     TSubModel *LightsOff[ iMaxNumLights ];
-    vector3 vAngle; // bazowe obroty egzemplarza względem osi
+    glm::vec3 vAngle; // bazowe obroty egzemplarza względem osi
     material_data m_materialdata;
 
     std::string asText; // tekst dla wyświetlacza znakowego

@@ -16,13 +16,14 @@ Copyright (C) 2007-2014 Maciej Cierniak
 #include "hamulce.h"
 #include <typeinfo>
 #include "MOVER.h"
-#include "usefull.h"
+#include "utilities.h"
 
 //---FUNKCJE OGOLNE---
 
 static double const DPL = 0.25;
 double const TFV4aM::pos_table[11] = {-2, 6, -1, 0, -2, 1, 4, 6, 0, 0, 0};
-double const TMHZ_EN57::pos_table[11] = {-2, 10, -1, 0, 0, 2, 9, 10, 0, 0, 0};
+double const TMHZ_EN57::pos_table[11] = {-1, 10, -1, 0, 0, 2, 9, 10, 0, 0, 0};
+double const TMHZ_K5P::pos_table[11] = { -1, 3, -1, 0, 1, 1, 2, 3, 0, 0, 0 };
 double const TM394::pos_table[11] = {-1, 5, -1, 0, 1, 2, 4, 5, 0, 0, 0};
 double const TH14K1::BPT_K[6][2] = {{10, 0}, {4, 1}, {0, 1}, {4, 0}, {4, -1}, {15, -1}};
 double const TH14K1::pos_table[11] = {-1, 4, -1, 0, 1, 2, 3, 4, 0, 0, 0};
@@ -410,6 +411,17 @@ void TBrake::ForceEmptiness()
 
     ValveRes->Act();
     BrakeRes->Act();
+}
+
+// removes specified amount of air from the reservoirs
+// NOTE: experimental feature, for now limited only to brake reservoir
+void TBrake::ForceLeak( double const Amount ) {
+
+    BrakeRes->Flow( -Amount * BrakeRes->P() );
+    ValveRes->Flow( -Amount * ValveRes->P() * 0.01 ); // this reservoir has hard coded, tiny capacity compared to other parts
+
+    BrakeRes->Act();
+    ValveRes->Act();
 }
 
 //---WESTINGHOUSE---
@@ -1503,7 +1515,7 @@ double TEStED::GetPF( double const PP, double const dt, double const Vel )
     Miedzypoj->Flow(dv * dt * 0.15);
 
     RapidTemp =
-        RapidTemp + (RM * int((Vel > 55) && (BrakeDelayFlag == bdelay_R)) - RapidTemp) * dt / 2;
+        RapidTemp + (RM * int((Vel > RV) && (BrakeDelayFlag == bdelay_R)) - RapidTemp) * dt / 2;
     temp = Max0R(1 - RapidTemp, 0.001);
     //  if EDFlag then temp:=1000;
     //  temp:=temp/(1-);
@@ -1623,6 +1635,11 @@ void TEStED::SetLP( double const TM, double const LM, double const TBP )
     TareM = TM;
     LoadM = LM;
     TareBP = TBP;
+}
+
+void TEStED::SetRV(double const RVR)
+{
+	RV = RVR;
 }
 
 //---DAKO CV1---
@@ -2500,7 +2517,7 @@ bool TFV4aM::EQ(double pos, double i_pos)
     return (pos <= i_pos + 0.5) && (pos > i_pos - 0.5);
 }
 
-//---FV4a/M--- nowonapisany kran bez poprawki IC
+//---MHZ_EN57--- manipulator hamulca zespolonego do EN57
 
 double TMHZ_EN57::GetPF( double i_bcp, double PP, double HP, double dt, double ep ) {
     static int const LBDelay = 100;
@@ -2638,6 +2655,119 @@ double TMHZ_EN57::LPP_RP(double pos) // cisnienie z zaokraglonej pozycji;
 bool TMHZ_EN57::EQ(double pos, double i_pos)
 {
     return (pos <= i_pos + 0.5) && (pos > i_pos - 0.5);
+}
+
+//---MHZ_K5P--- manipulator hamulca zespolonego Knorr 5-ciopozycyjny
+
+double TMHZ_K5P::GetPF(double i_bcp, double PP, double HP, double dt, double ep) {
+	static int const LBDelay = 100;
+
+	double LimPP;
+	double dpPipe;
+	double dpMainValve;
+	double ActFlowSpeed;
+	double DP;
+	double pom;
+
+	for (int idx = 0; idx < 5; ++idx) {
+		Sounds[idx] = 0;
+	}
+
+	DP = 0;
+
+	i_bcp = Max0R(Min0R(i_bcp, 2.999), -0.999); // na wszelki wypadek, zeby nie wyszlo poza zakres
+
+	if ((TP > 0))
+	{
+		DP = 0.004;
+		TP = TP - DP * dt;
+		Sounds[s_fv4a_t] = DP;
+	}
+	else
+	{
+		TP = 0;
+	}
+	
+	if (EQ(i_bcp, 1)) //odcięcie - nie rób nic
+		LimPP = CP;
+	else if (i_bcp > 1) //hamowanie
+		LimPP = 3.4;
+	else //luzowanie
+		LimPP = 5.0;
+	pom = CP;
+	LimPP = Min0R(LimPP + TP + RedAdj, HP); // pozycja + czasowy lub zasilanie
+	ActFlowSpeed = 4;
+
+	if ((LimPP > CP)) // podwyzszanie szybkie
+		CP = CP + 9 * Min0R(abs(LimPP - CP), 0.05) * PR(CP, LimPP) * dt; // zbiornik sterujacy;
+	else
+		CP = CP + 9 * Min0R(abs(LimPP - CP), 0.05) * PR(CP, LimPP) * dt; // zbiornik sterujacy
+
+	LimPP = pom; // cp
+    dpPipe = Min0R(HP, LimPP);
+
+	if (dpPipe > PP)
+		dpMainValve = -PFVa(HP, PP, ActFlowSpeed / LBDelay, dpPipe, 0.4);
+	else
+		dpMainValve = PFVd(PP, 0, ActFlowSpeed / LBDelay, dpPipe, 0.4);
+
+	if (EQ(i_bcp, -1))
+	{
+		if ((TP < 1))
+			TP = TP + 0.03  * dt;
+	}
+
+	if (EQ(i_bcp, 3))
+	{
+		DP = PF(0, PP, 2 * ActFlowSpeed / LBDelay);
+		dpMainValve = DP;
+		Sounds[s_fv4a_e] = DP;
+		Sounds[s_fv4a_u] = 0;
+		Sounds[s_fv4a_b] = 0;
+		Sounds[s_fv4a_x] = 0;
+	}
+	else
+	{
+		if (dpMainValve > 0)
+			Sounds[s_fv4a_b] = dpMainValve;
+		else
+			Sounds[s_fv4a_u] = -dpMainValve;
+	}
+
+	return dpMainValve * dt;
+}
+
+void TMHZ_K5P::Init(double Press)
+{
+	CP = Press;
+}
+
+void TMHZ_K5P::SetReductor(double nAdj)
+{
+	RedAdj = nAdj;
+}
+
+double TMHZ_K5P::GetSound(int i)
+{
+	if (i > 4)
+		return 0;
+	else
+		return Sounds[i];
+}
+
+double TMHZ_K5P::GetPos(int i)
+{
+	return pos_table[i];
+}
+
+double TMHZ_K5P::GetCP()
+{
+	return RP;
+}
+
+bool TMHZ_K5P::EQ(double pos, double i_pos)
+{
+	return (pos <= i_pos + 0.5) && (pos > i_pos - 0.5);
 }
 
 //---M394--- Matrosow

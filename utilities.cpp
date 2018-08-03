@@ -12,7 +12,6 @@ Brakes.
 Copyright (C) 2007-2014 Maciej Cierniak
 */
 #include "stdafx.h"
-#include "mctools.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -24,13 +23,13 @@ Copyright (C) 2007-2014 Maciej Cierniak
 #define stat _stat
 #endif
 
+#include "utilities.h"
 #include "Globals.h"
-
-/*================================================*/
+#include "parser.h"
 
 bool DebugModeFlag = false;
 bool FreeFlyModeFlag = false;
-bool EditorModeFlag = true;
+bool EditorModeFlag = false;
 bool DebugCameraFlag = false;
 
 double Max0R(double x1, double x2)
@@ -58,6 +57,26 @@ std::string Now() {
     std::stringstream  converter;
     converter << std::put_time( &tm, "%c" );
     return converter.str();
+}
+
+// zwraca różnicę czasu
+// jeśli pierwsza jest aktualna, a druga rozkładowa, to ujemna oznacza opóżnienie
+// na dłuższą metę trzeba uwzględnić datę, jakby opóżnienia miały przekraczać 12h (towarowych)
+double CompareTime(double t1h, double t1m, double t2h, double t2m) {
+
+    double t;
+
+    if ((t2h < 0))
+        return 0;
+    else
+    {
+        t = (t2h - t1h) * 60 + t2m - t1m; // jeśli t2=00:05, a t1=23:50, to różnica wyjdzie ujemna
+        if ((t < -720)) // jeśli różnica przekracza 12h na minus
+            t = t + 1440; // to dodanie doby minut;else
+        if ((t > 720)) // jeśli przekracza 12h na plus
+            t = t - 1440; // to odjęcie doby minut
+        return t;
+    }
 }
 
 bool SetFlag( int &Flag, int const Value ) {
@@ -89,7 +108,7 @@ bool ClearFlag( int &Flag, int const Value ) {
 double Random(double a, double b)
 {
     std::uniform_real_distribution<> dis(a, b);
-    return dis(Global::random_engine);
+    return dis(Global.random_engine);
 }
 
 bool FuzzyLogic(double Test, double Threshold, double Probability)
@@ -238,18 +257,24 @@ int stol_def(const std::string &str, const int &DefaultValue) {
     return result;
 }
 
-std::string ToLower(std::string const &text)
-{
-	std::string lowercase( text );
-	std::transform(text.begin(), text.end(), lowercase.begin(), ::tolower);
+std::string ToLower(std::string const &text) {
+
+    auto lowercase { text };
+	std::transform(
+        std::begin( text ), std::end( text ),
+        std::begin( lowercase ),
+        []( unsigned char c ) { return std::tolower( c ); } );
 	return lowercase;
 }
 
-std::string ToUpper(std::string const &text)
-{
-	std::string uppercase( text );
-	std::transform(text.begin(), text.end(), uppercase.begin(), ::toupper);
-	return uppercase;
+std::string ToUpper(std::string const &text) {
+
+    auto uppercase { text };
+    std::transform(
+        std::begin( text ), std::end( text ),
+        std::begin( uppercase ),
+        []( unsigned char c ) { return std::toupper( c ); } );
+    return uppercase;
 }
 
 // replaces polish letters with basic ascii
@@ -266,6 +291,25 @@ win1250_to_ascii( std::string &Input ) {
             input = lookup->second;
     }
 }
+
+// Ra: tymczasowe rozwiązanie kwestii zagranicznych (czeskich) napisów
+char bezogonkowo[] = "E?,?\"_++?%S<STZZ?`'\"\".--??s>stzz"
+                        " ^^L$A|S^CS<--RZo±,l'uP.,as>L\"lz"
+                     "RAAAALCCCEEEEIIDDNNOOOOxRUUUUYTB"
+                     "raaaalccceeeeiiddnnoooo-ruuuuyt?";
+
+std::string Bezogonkow(std::string str, bool _)
+{ // wycięcie liter z ogonkami, bo OpenGL nie umie wyświetlić
+    for (unsigned int i = 1; i < str.length(); ++i)
+        if (str[i] & 0x80)
+            str[i] = bezogonkowo[str[i] & 0x7F];
+        else if (str[i] < ' ') // znaki sterujące nie są obsługiwane
+            str[i] = ' ';
+        else if (_)
+            if (str[i] == '_') // nazwy stacji nie mogą zawierać spacji
+                str[i] = ' '; // więc trzeba wyświetlać inaczej
+    return str;
+};
 
 template <>
 bool
@@ -287,20 +331,80 @@ extract_value( bool &Variable, std::string const &Key, std::string const &Input,
 }
 
 bool FileExists( std::string const &Filename ) {
-	std::string fn = Filename;
-	std::replace(fn.begin(), fn.end(), '\\', '/');
-	std::ifstream file( fn );
+	std::ifstream file( Filename );
     return( true == file.is_open() );
+}
+
+std::pair<std::string, std::string>
+FileExists( std::vector<std::string> const &Names, std::vector<std::string> const &Extensions ) {
+
+    for( auto const &name : Names ) {
+        for( auto const &extension : Extensions ) {
+            if( FileExists( name + extension ) ) {
+                return { name, extension };
+            }
+        }
+    }
+    // nothing found
+    return { {}, {} };
 }
 
 // returns time of last modification for specified file
 std::time_t
 last_modified( std::string const &Filename ) {
     std::string fn = Filename;
-    std::replace(fn.begin(), fn.end(), '\\', '/');
     struct stat filestat;
     if( ::stat( fn.c_str(), &filestat ) == 0 )
 		return filestat.st_mtime;
     else
 		return 0;
+}
+
+// potentially erases file extension from provided file name. returns: true if extension was removed, false otherwise
+bool
+erase_extension( std::string &Filename ) {
+
+    auto const extensionpos { Filename.rfind( '.' ) };
+
+    if( extensionpos == std::string::npos ) { return false; }
+
+    if( extensionpos != Filename.rfind( ".." ) + 1 ) {
+        // we can get extension for .mat or, in legacy files, some image format. just trim it and set it to material file extension
+        Filename.erase( extensionpos );
+        return true;
+    }
+    return false;
+}
+
+// potentially replaces backward slashes in provided file path with unix-compatible forward slashes
+void
+replace_slashes( std::string &Filename ) {
+
+    std::replace(
+        std::begin( Filename ), std::end( Filename ),
+        '\\', '/' );
+}
+
+// returns potential path part from provided file name
+std::string
+substr_path( std::string const &Filename ) {
+
+    return (
+        Filename.rfind( '/' ) != std::string::npos ?
+            Filename.substr( 0, Filename.rfind( '/' ) + 1 ) :
+            "" );
+}
+
+// helper, restores content of a 3d vector from provided input stream
+// TODO: review and clean up the helper routines, there's likely some redundant ones
+
+glm::dvec3 LoadPoint( cParser &Input ) {
+    // pobranie współrzędnych punktu
+    glm::dvec3 point;
+    Input.getTokens( 3 );
+    Input
+        >> point.x
+        >> point.y
+        >> point.z;
+    return point;
 }

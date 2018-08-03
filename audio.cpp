@@ -9,11 +9,13 @@ http://mozilla.org/MPL/2.0/.
 
 #include "stdafx.h"
 
+#include <sndfile.h>
+
 #include "audio.h"
 #include "Globals.h"
-#include "McZapkie/mctools.h"
 #include "Logs.h"
-#include <sndfile.h>
+#include "ResourceManager.h"
+#include "utilities.h"
 
 namespace audio {
 
@@ -24,34 +26,40 @@ openal_buffer::openal_buffer( std::string const &Filename ) :
 	si.format = 0;
 
 	std::string file = Filename;
-	std::replace(file.begin(), file.end(), '\\', '/');
+
+	WriteLog("sound: loading file: " + file);
 
 	SNDFILE *sf = sf_open(file.c_str(), SFM_READ, &si);
+
 	if (sf == nullptr)
 		throw std::runtime_error("sound: sf_open failed");
 
-	int16_t *fbuf = new int16_t[si.frames * si.channels];
-	if (sf_readf_short(sf, fbuf, si.frames) != si.frames)
+	sf_command(sf, SFC_SET_NORM_FLOAT, NULL, SF_TRUE);
+
+	float *fbuf = new float[si.frames * si.channels];
+	if (sf_readf_float(sf, fbuf, si.frames) != si.frames)
 		throw std::runtime_error("sound: incomplete file");
 
 	sf_close(sf);
 
 	rate = si.samplerate;
 
-	int16_t *buf = nullptr;
-	if (si.channels == 1)
-		buf = fbuf;
-	else
-	{
+	if (si.channels != 1)
 		WriteLog("sound: warning: mixing multichannel file to mono");
-		buf = new int16_t[si.frames];
-		for (size_t i = 0; i < si.frames; i++)
-		{
-			int32_t accum = 0;
-			for (size_t j = 0; j < si.channels; j++)
-				accum += fbuf[i * si.channels + j];
-			buf[i] = accum / si.channels;
-		}
+
+	int16_t *buf = new int16_t[si.frames];
+	for (size_t i = 0; i < si.frames; i++)
+	{
+		float accum = 0;
+		for (size_t j = 0; j < si.channels; j++)
+			accum += fbuf[i * si.channels + j];
+
+		long val = lrintf(accum / si.channels * 32767.0f);
+		if (val > 32767)
+			val = 32767;
+		if (val < -32767)
+			val = -32767;
+		buf[i] = val;
 	}
 
 	id = 0;
@@ -61,9 +69,24 @@ openal_buffer::openal_buffer( std::string const &Filename ) :
 
 	alBufferData(id, AL_FORMAT_MONO16, buf, si.frames * 2, rate);
 
-	if (si.channels != 1)
-		delete[] buf;
+	delete[] buf;
 	delete[] fbuf;
+
+	fetch_caption();
+}
+
+// retrieves sound caption in currently set language
+void
+openal_buffer::fetch_caption() {
+
+    std::string captionfilename { name };
+    captionfilename.erase( captionfilename.rfind( '.' ) ); // obcięcie rozszerzenia
+    captionfilename += "-" + Global.asLang + ".txt"; // już może być w różnych językach
+    if( true == FileExists( captionfilename ) ) {
+        // wczytanie
+        std::ifstream inputfile( captionfilename );
+        caption.assign( std::istreambuf_iterator<char>( inputfile ), std::istreambuf_iterator<char>() );
+    }
 }
 
 buffer_manager::~buffer_manager() {
@@ -81,26 +104,17 @@ buffer_manager::create( std::string const &Filename ) {
 
     auto filename { ToLower( Filename ) };
 
-    auto const dotpos { filename.rfind( '.' ) };
-    if( ( dotpos != std::string::npos )
-     && ( dotpos != filename.rfind( ".." ) + 1 ) ) {
-        // trim extension if there's one, but don't mistake folder traverse for extension
-        filename.erase( dotpos );
-    }
-    // convert slashes
-    std::replace(
-        std::begin( filename ), std::end( filename ),
-        '\\', '/' );
+    erase_extension( filename );
 
     audio::buffer_handle lookup { null_handle };
     std::string filelookup;
-    if( false == Global::asCurrentDynamicPath.empty() ) {
+    if( false == Global.asCurrentDynamicPath.empty() ) {
         // try dynamic-specific sounds first
-        lookup = find_buffer( Global::asCurrentDynamicPath + filename );
+        lookup = find_buffer( Global.asCurrentDynamicPath + filename );
         if( lookup != null_handle ) {
             return lookup;
         }
-        filelookup = find_file( Global::asCurrentDynamicPath + filename );
+        filelookup = find_file( Global.asCurrentDynamicPath + filename );
         if( false == filelookup.empty() ) {
             return emplace( filelookup );
         }
@@ -126,7 +140,7 @@ buffer_manager::create( std::string const &Filename ) {
         return emplace( filelookup );
     }
     // if we still didn't find anything, give up
-    ErrorLog( "Bad file: failed do locate audio file \"" + Filename + "\"" );
+    ErrorLog( "Bad file: failed do locate audio file \"" + Filename + "\"", logtype::file );
     return null_handle;
 }
 
@@ -145,8 +159,9 @@ buffer_manager::emplace( std::string Filename ) {
     m_buffers.emplace_back( Filename );
 
     // NOTE: we store mapping without file type extension, to simplify lookups
+    erase_extension( Filename );
     m_buffermappings.emplace(
-        Filename.erase( Filename.rfind( '.' ) ),
+        Filename,
         handle );
 
     return handle;
@@ -155,26 +170,22 @@ buffer_manager::emplace( std::string Filename ) {
 audio::buffer_handle
 buffer_manager::find_buffer( std::string const &Buffername ) const {
 
-    auto lookup = m_buffermappings.find( Buffername );
-    if( lookup != m_buffermappings.end() )
+    auto const lookup = m_buffermappings.find( Buffername );
+    if( lookup != std::end( m_buffermappings ) )
         return lookup->second;
     else
         return null_handle;
 }
 
-
 std::string
 buffer_manager::find_file( std::string const &Filename ) const {
 
-    std::vector<std::string> const extensions { ".wav", ".WAV", ".flac", ".ogg" };
+    auto const lookup {
+        FileExists(
+            { Filename },
+            { ".ogg", ".flac", ".wav" } ) };
 
-    for( auto const &extension : extensions ) {
-        if( FileExists( Filename + extension ) ) {
-            // valid name on success
-            return Filename + extension;
-        }
-    }
-    return {}; // empty string on failure
+    return lookup.first + lookup.second;
 }
 
 } // audio

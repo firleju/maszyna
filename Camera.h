@@ -10,53 +10,39 @@ http://mozilla.org/MPL/2.0/.
 #pragma once
 
 #include "dumb3d.h"
-#include "DynObj.h"
 #include "command.h"
 
-using namespace Math3D;
-
 //---------------------------------------------------------------------------
-enum TCameraType
+enum class TCameraType
 { // tryby pracy kamery
     tp_Follow, // jazda z pojazdem
     tp_Free, // stoi na scenerii
     tp_Satelite // widok z góry (nie używany)
 };
 
-class TCamera
-{
-  private:
-    struct keys {
-        bool forward{ false };
-        bool back{ false };
-        bool left{ false };
-        bool right{ false };
-        bool up{ false };
-        bool down{ false };
-        bool run{ false };
-    } m_keys;
-    glm::dvec3 m_moverate;
+class TCamera {
 
   public: // McZapkie: potrzebuje do kiwania na boki
+    void Init( Math3D::vector3 NPos, Math3D::vector3 NAngle);
+    void Reset();
+    void OnCursorMove(double const x, double const y);
+    bool OnCommand( command_data const &Command );
+    void Update();
+    Math3D::vector3 GetDirection();
+    bool SetMatrix(glm::dmat4 &Matrix);
+    void RaLook();
+
+    TCameraType Type;
     double Pitch;
     double Yaw; // w środku: 0=do przodu; na zewnątrz: 0=na południe
     double Roll;
-    TCameraType Type;
-    vector3 Pos; // współrzędne obserwatora
-    vector3 LookAt; // współrzędne punktu, na który ma patrzeć
-    vector3 vUp;
-    vector3 Velocity;
-    void Init(vector3 NPos, vector3 NAngle);
-    inline
-    void Reset() {
-        Pitch = Yaw = Roll = 0; };
-    void OnCursorMove(double const x, double const y);
-    void OnCommand( command_data const &Command );
-    void Update();
-    vector3 GetDirection();
-    bool SetMatrix(glm::dmat4 &Matrix);
-    void RaLook();
-    void Stop();
-    // bool GetMatrix(matrix4x4 &Matrix);
-    vector3 PtNext, PtPrev;
+    Math3D::vector3 Pos; // współrzędne obserwatora
+    Math3D::vector3 LookAt; // współrzędne punktu, na który ma patrzeć
+    Math3D::vector3 vUp;
+    Math3D::vector3 Velocity;
+
+private:
+    glm::dvec3 m_moverate;
+    glm::dvec3 m_rotationoffsets; // requested changes to pitch, yaw and roll
+
 };

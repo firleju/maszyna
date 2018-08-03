@@ -1,9 +1,7 @@
-
 #pragma once
 
 #include <string>
 #include "Texture.h"
-#include "Float3d.h"
 
 // GuiLayer -- basic user interface class. draws requested information on top of openGL screen
 
@@ -11,10 +9,10 @@ struct ui_panel {
 
     struct text_line {
 
-        float4 color;
         std::string data;
+        glm::vec4 color;
 
-        text_line( std::string const &Data, float4 const &Color):
+        text_line( std::string const &Data, glm::vec4 const &Color):
             data(Data), color(Color)
         {}
     };
@@ -23,7 +21,8 @@ struct ui_panel {
         origin_x(X), origin_y(Y)
     {}
 
-    std::vector<text_line> text_lines;
+	bool enabled = true;
+    std::deque<text_line> text_lines;
     int origin_x;
     int origin_y;
 };
@@ -34,18 +33,28 @@ public:
 // parameters:
 
 // constructors:
-
+    ui_layer() = default;
 // destructor:
     ~ui_layer();
 
 // methods:
     bool
         init( GLFWwindow *Window );
+    // assign texturing hardware unit
     void
         set_unit( GLint const Textureunit ) { m_textureunit = Textureunit; }
+    // potentially processes provided input key. returns: true if the input was processed, false otherwise
+    bool
+        on_key( int const Key, int const Action );
+    // updates state of UI elements
+    void
+        update();
 	// draws requested UI elements
 	void
         render();
+    //
+    void
+        set_cursor( int const Mode );
 	// stores operation progress
 	void
         set_progress( float const Progress = 0.0f, float const Subtaskprogress = 0.0f );
@@ -84,13 +93,12 @@ private:
         print( std::string const &Text );
     // draws a quad between coordinates x,y and z,w with uv-coordinates spanning 0-1
     void
-        quad( float4 const &Coordinates, float4 const &Color );
-
+        quad( glm::vec4 const &Coordinates, glm::vec4 const &Color );
 
 // members:
     GLFWwindow *m_window { nullptr };
     GLint m_textureunit{ GL_TEXTURE0 };
-    GLuint m_fontbase { (GLuint)-1 }; // numer DL dla znak�w w napisach
+    GLuint m_fontbase { (GLuint)-1 }; // numer DL dla znaków w napisach
 
     // progress bar config. TODO: put these together into an object
     float m_progress { 0.0f }; // percentage of filled progres bar, to indicate lengthy operations.
@@ -102,6 +110,14 @@ private:
     GLuint m_texture { 0 };
     std::vector<std::shared_ptr<ui_panel> > m_panels;
     std::string m_tooltip;
+    // TODO: clean these legacy components up
+    std::shared_ptr<ui_panel> UIHeader; // header ui panel
+    std::shared_ptr<ui_panel> UITable; // schedule or scan table
+    std::shared_ptr<ui_panel> UITranscripts; // voice transcripts
+    int tprev; // poprzedni czas
+    double VelPrev; // poprzednia prędkość
+    double Acc; // przyspieszenie styczne
+    bool m_cursorvisible { false };
 };
 
 extern ui_layer UILayer;

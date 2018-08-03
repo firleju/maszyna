@@ -11,6 +11,11 @@ http://mozilla.org/MPL/2.0/.
 #include "Logs.h"
 
 #include "Globals.h"
+#include "winheaders.h"
+#include "utilities.h"
+#include "uilayer.h"
+
+std::shared_ptr<ui_panel> ui_log = std::make_shared<ui_panel>( 20, 140 );
 
 std::ofstream output; // standardowy "log.txt", można go wyłączyć
 std::ofstream errors; // lista błędów "errors.txt", zawsze działa
@@ -53,125 +58,105 @@ std::string filename_date() {
 
 std::string filename_scenery() {
 
-    auto extension = Global::SceneryFile.rfind( '.' );
+    auto extension = Global.SceneryFile.rfind( '.' );
     if( extension != std::string::npos ) {
-        return Global::SceneryFile.substr( 0, extension );
+        return Global.SceneryFile.substr( 0, extension );
     }
     else {
-        return Global::SceneryFile;
+        return Global.SceneryFile;
     }
 }
 
-void WriteConsoleOnly(const char *str, double value) {
-#ifdef _WIN32
-    std::snprintf(logbuffer , sizeof(logbuffer), "%s %f \n", str, value);
-    // stdout=  GetStdHandle(STD_OUTPUT_HANDLE);
-    DWORD wr = 0;
-    WriteConsole(GetStdHandle(STD_OUTPUT_HANDLE), logbuffer, (DWORD)strlen(logbuffer), &wr, NULL);
-    // WriteConsole(GetStdHandle(STD_OUTPUT_HANDLE),endstring,strlen(endstring),&wr,NULL);
-#endif
-}
+void WriteLog( const char *str, logtype const Type ) {
 
-void WriteConsoleOnly(const char *str, bool newline)
-{
-#ifdef _WIN32
-    // printf("%n ffafaf /n",str);
-    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-                            FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-    DWORD wr = 0;
-    WriteConsole(GetStdHandle(STD_OUTPUT_HANDLE), str, (DWORD)strlen(str), &wr, NULL);
-    if (newline)
-        WriteConsole(GetStdHandle(STD_OUTPUT_HANDLE), endstring, (DWORD)strlen(endstring), &wr, NULL);
-#endif
-}
+    if( str == nullptr ) { return; }
+    if( true == TestFlag( Global.DisabledLogTypes, (int)Type ) ) { return; }
 
-void WriteLog(const char *str, double value) {
+    if (Global.iWriteLogEnabled & 1) {
+        if( !output.is_open() ) {
 
-    if (Global::iWriteLogEnabled) {
-        if (str) {
-            std::snprintf(logbuffer, sizeof(logbuffer), "%s %f", str, value);
-            WriteLog(logbuffer);
-        }
-    }
-};
-
-void WriteLog(const char *str, bool newline)
-{
-    if (str)
-    {
-        if (Global::iWriteLogEnabled & 1)
-        {
-            if( !output.is_open() ) {
-                
-                std::string const filename =
-                    ( Global::MultipleLogs ?
+            std::string const filename =
+                ( Global.MultipleLogs ?
                     "logs/log (" + filename_scenery() + ") " + filename_date() + ".txt" :
                     "log.txt" );
-                output.open( filename, std::ios::trunc );
-            }
-            output << str;
-            if (newline)
-                output << "\n";
-            output.flush();
+            output.open( filename, std::ios::trunc );
         }
-        // hunter-271211: pisanie do konsoli tylko, gdy nie jest ukrywana
-        if (Global::iWriteLogEnabled & 2)
-            WriteConsoleOnly(str, newline);
+        output << str << "\n";
+        output.flush();
     }
-};
 
-void ErrorLog(const char *str)
-{ // Ra: bezwarunkowa rejestracja poważnych błędów
+	ui_log->text_lines.emplace_back(std::string(str), Global.UITextColor);
+	if (ui_log->text_lines.size() > 20)
+		ui_log->text_lines.pop_front();
+
+#ifdef _WIN32
+    if( Global.iWriteLogEnabled & 2 ) {
+        // hunter-271211: pisanie do konsoli tylko, gdy nie jest ukrywana
+        SetConsoleTextAttribute( GetStdHandle( STD_OUTPUT_HANDLE ), FOREGROUND_GREEN | FOREGROUND_INTENSITY );
+        DWORD wr = 0;
+        WriteConsole( GetStdHandle( STD_OUTPUT_HANDLE ), str, (DWORD)strlen( str ), &wr, NULL );
+        WriteConsole( GetStdHandle( STD_OUTPUT_HANDLE ), endstring, (DWORD)strlen( endstring ), &wr, NULL );
+    }
+#else
+	printf("%s\n", str);
+#endif
+}
+
+// Ra: bezwarunkowa rejestracja poważnych błędów
+void ErrorLog( const char *str, logtype const Type ) {
+
+    if( str == nullptr ) { return; }
+    if( true == TestFlag( Global.DisabledLogTypes, (int)Type ) ) { return; }
+
     if (!errors.is_open()) {
 
         std::string const filename =
-            ( Global::MultipleLogs ?
-            "logs/errors (" + filename_scenery() + ") " + filename_date() + ".txt" :
-            "errors.txt" );
+            ( Global.MultipleLogs ?
+                "logs/errors (" + filename_scenery() + ") " + filename_date() + ".txt" :
+                "errors.txt" );
         errors.open( filename, std::ios::trunc );
-        errors << "EU07.EXE " + Global::asVersion << "\n";
+        errors << "EU07.EXE " + Global.asVersion << "\n";
     }
-    if (str)
-        errors << str;
-    errors << "\n";
+
+    errors << str << "\n";
     errors.flush();
 };
 
 void Error(const std::string &asMessage, bool box)
 {
     // if (box)
-    //	MessageBox(NULL, asMessage.c_str(), string("EU07 " + Global::asRelease).c_str(), MB_OK);
+    //	MessageBox(NULL, asMessage.c_str(), string("EU07 " + Global.asRelease).c_str(), MB_OK);
     ErrorLog(asMessage.c_str());
 }
 
 void Error(const char *&asMessage, bool box)
 {
     // if (box)
-    //	MessageBox(NULL, asMessage, string("EU07 " + Global::asRelease).c_str(), MB_OK);
+    //	MessageBox(NULL, asMessage, string("EU07 " + Global.asRelease).c_str(), MB_OK);
     ErrorLog(asMessage);
     WriteLog(asMessage);
 }
 
-void ErrorLog(const std::string &str, bool newline)
+void ErrorLog(const std::string &str, logtype const Type )
 {
-    ErrorLog(str.c_str());
-    WriteLog(str.c_str(), newline);
+    ErrorLog( str.c_str(), Type );
+    WriteLog( str.c_str(), Type );
 }
 
-void WriteLog(const std::string &str, bool newline)
+void WriteLog(const std::string &str, logtype const Type )
 { // Ra: wersja z AnsiString jest zamienna z Error()
-    WriteLog(str.c_str(), newline);
+    WriteLog( str.c_str(), Type );
 };
 
 void CommLog(const char *str)
 { // Ra: warunkowa rejestracja komunikatów
     WriteLog(str);
-    /*    if (Global::iWriteLogEnabled & 4)
+    /*    if (Global.iWriteLogEnabled & 4)
     {
     if (!comms.is_open())
     {
     comms.open("comms.txt", std::ios::trunc);
-    comms << AnsiString("EU07.EXE " + Global::asRelease).c_str() << "\n";
+    comms << AnsiString("EU07.EXE " + Global.asRelease).c_str() << "\n";
     }
     if (str)
     comms << str;
