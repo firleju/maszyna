@@ -231,6 +231,13 @@ clamp_circular( Type_ Value, Type_ const Range = static_cast<Type_>(360) ) {
 
 template <typename Type_>
 Type_
+quantize( Type_ const Value, Type_ const Step ) {
+
+    return ( Step * std::round( Value / Step ) );
+}
+
+template <typename Type_>
+Type_
 min_speed( Type_ const Left, Type_ const Right ) {
 
     if( Left == Right ) { return Left; }
@@ -248,14 +255,14 @@ template <typename Type_>
 Type_
 interpolate( Type_ const &First, Type_ const &Second, float const Factor ) {
 
-    return ( First * ( 1.0f - Factor ) ) + ( Second * Factor );
+    return static_cast<Type_>( ( First * ( 1.0f - Factor ) ) + ( Second * Factor ) );
 }
 
 template <typename Type_>
 Type_
 interpolate( Type_ const &First, Type_ const &Second, double const Factor ) {
 
-    return ( First * ( 1.0 - Factor ) ) + ( Second * Factor );
+    return static_cast<Type_>( ( First * ( 1.0 - Factor ) ) + ( Second * Factor ) );
 }
 
 // tests whether provided points form a degenerate triangle

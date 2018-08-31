@@ -1,16 +1,18 @@
 ﻿#include "stdafx.h"
 #include "uilayer.h"
-#include "uitranscripts.h"
 
 #include "Globals.h"
 #include "translation.h"
 #include "simulation.h"
+#include "simulationtime.h"
 #include "mtable.h"
 #include "Train.h"
 #include "DynObj.h"
 #include "Model3d.h"
 #include "renderer.h"
 #include "Timer.h"
+#include "sceneeditor.h"
+#include "renderer.h"
 #include "utilities.h"
 #include "Logs.h"
 #include <GL/glut.h>
@@ -126,6 +128,13 @@ ui_layer::on_key( int const Key, int const Action ) {
             }
 
             if( Action == GLFW_RELEASE ) { return true; } // recognized, but ignored
+
+            EditorModeFlag = ( Key == GLFW_KEY_F11 );
+            if( ( true == EditorModeFlag )
+             && ( false == Global.ControlPicking ) ) {
+                set_cursor( GLFW_CURSOR_NORMAL );
+                Global.ControlPicking = true;
+            }
         }
 
         default: { // everything else
@@ -270,12 +279,8 @@ ui_layer::update() {
 
         case( GLFW_KEY_F1 ) : {
             // f1, default mode: current time and timetable excerpt
-            auto const &time = simulation::Time.data();
             uitextline1 =
-                "Time: "
-                + to_string( time.wHour ) + ":"
-                + ( time.wMinute < 10 ? "0" : "" ) + to_string( time.wMinute ) + ":"
-                + ( time.wSecond < 10 ? "0" : "" ) + to_string( time.wSecond );
+                "Time: " + std::string( simulation::Time );
             if( Global.iPause ) {
                 uitextline1 += " (paused)";
             }
@@ -291,7 +296,7 @@ ui_layer::update() {
                 else if( mover->ActiveDir < 0 ) { uitextline2 += " R"; }
                 else                            { uitextline2 += " N"; }
 
-                uitextline3 = "Brakes:" + to_string( mover->fBrakeCtrlPos, 1, 5 ) + "+" + std::to_string( mover->LocalBrakePos ) + ( mover->SlippingWheels ? " !" : "  " );
+                uitextline3 = "Brakes:" + to_string( mover->fBrakeCtrlPos, 1, 5 ) + "+" + to_string( mover->LocalBrakePosA * LocalBrakePosNo, 0 ) + ( mover->SlippingWheels ? " !" : "  " );
 
                 uitextline4 = (
                     true == TestFlag( mover->SecuritySystem.Status, s_aware ) ?
@@ -308,13 +313,18 @@ ui_layer::update() {
                     uitextline2 +=
                         " Speed: " + std::to_string( static_cast<int>( std::floor( mover->Vel ) ) ) + " km/h"
                         + " (limit: " + std::to_string( speedlimit ) + " km/h";
-                    auto const nextspeedlimit { static_cast<int>( std::floor( controlled->Mechanik->VelNext ) ) };
+                    auto const nextspeedlimit { static_cast<int>( std::floor( driver->VelNext ) ) };
                     if( nextspeedlimit != speedlimit ) {
                         uitextline2 +=
                             ", new limit: " + std::to_string( nextspeedlimit ) + " km/h"
-                            + " in " + to_string( controlled->Mechanik->ActualProximityDist * 0.001, 1 ) + " km";
+                            + " in " + to_string( driver->ActualProximityDist * 0.001, 1 ) + " km";
                     }
                     uitextline2 += ")";
+                    auto const reverser { ( mover->ActiveDir > 0 ? 1 : -1 ) };
+                    auto const grade { controlled->VectorFront().y * 100 * ( controlled->DirectionGet() == reverser ? 1 : -1 ) * reverser };
+                    if( std::abs( grade ) >= 0.25 ) {
+                        uitextline2 += " Grade: " + to_string( grade, 1 ) + "%";
+                    }
                     uitextline3 +=
                         " Pressure: " + to_string( mover->BrakePress * 100.0, 2 ) + " kPa"
                         + " (train pipe: " + to_string( mover->PipePress * 100.0, 2 ) + " kPa)";
@@ -487,7 +497,7 @@ ui_layer::update() {
                 uitextline2 += ( vehicle->MoverParameters->OilPump.is_active ? "O" : ( vehicle->MoverParameters->OilPump.is_enabled ? "o" : "." ) );
                 uitextline2 += ( false == vehicle->MoverParameters->ConverterAllowLocal ? "-" : ( vehicle->MoverParameters->ConverterAllow ? ( vehicle->MoverParameters->ConverterFlag ? "X" : "x" ) : "." ) );
                 uitextline2 += ( vehicle->MoverParameters->ConvOvldFlag ? "!" : "." );
-                uitextline2 += ( vehicle->MoverParameters->CompressorFlag ? "C" : ( false == vehicle->MoverParameters->CompressorAllowLocal ? "-" : ( ( vehicle->MoverParameters->CompressorAllow || vehicle->MoverParameters->CompressorStart == start::automatic ) ? "c" : "." ) ) );
+                uitextline2 += ( vehicle->MoverParameters->CompressorFlag ? "C" : ( false == vehicle->MoverParameters->CompressorAllowLocal ? "-" : ( ( vehicle->MoverParameters->CompressorAllow || vehicle->MoverParameters->CompressorStart == start_t::automatic ) ? "c" : "." ) ) );
                 uitextline2 += ( vehicle->MoverParameters->CompressorGovernorLock ? "!" : "." );
 
                 auto const train { Global.pWorld->train() };
@@ -528,7 +538,7 @@ ui_layer::update() {
                     + ( vehicle->MoverParameters->SlippingWheels ? " (!)" : "" );
 
                 if( vehicle->Mechanik ) {
-                    uitextline2 += "; Ag: " + to_string( vehicle->Mechanik->fAccGravity, 2 );
+                    uitextline2 += "; Ag: " + to_string( vehicle->Mechanik->fAccGravity, 2 ) + " (" + ( vehicle->Mechanik->fAccGravity > 0.01 ? "\\" : ( vehicle->Mechanik->fAccGravity < -0.01 ? "/" : "-" ) ) + ")";
                 }
 
                 uitextline2 +=
@@ -689,19 +699,7 @@ ui_layer::update() {
             uitextline3 =
                   "vehicles: " + to_string( Timer::subsystem.sim_dynamics.average(), 2 ) + " msec"
                 + " update total: " + to_string( Timer::subsystem.sim_total.average(), 2 ) + " msec";
-
-            break;
-        }
-
-        case( GLFW_KEY_F10 ) : {
-
-            uitextline1 = "Press [Y] key to quit / Aby zakonczyc program, przycisnij klawisz [Y].";
-
-            break;
-        }
-
-        case( GLFW_KEY_F11 ): {
-            // scenario inspector
+            // current event queue
             auto const time { Timer::GetTime() };
             auto const *event { simulation::Events.begin() };
             auto eventtableindex{ 0 };
@@ -722,6 +720,143 @@ ui_layer::update() {
                     ++eventtableindex;
                 }
                 event = event->evNext;
+            }
+
+            break;
+        }
+
+        case( GLFW_KEY_F10 ) : {
+
+            uitextline1 = "Press [Y] key to quit / Aby zakonczyc program, przycisnij klawisz [Y].";
+
+            break;
+        }
+
+        case( GLFW_KEY_F11 ): {
+            // scenario inspector
+            auto const *node { scene::Editor.node() };
+
+            if( node == nullptr ) {
+                auto const mouseposition { Global.pCamera->Pos + GfxRenderer.Mouse_Position() };
+                uitextline1 = "mouse location: [" + to_string( mouseposition.x, 2 ) + ", " + to_string( mouseposition.y, 2 ) + ", " + to_string( mouseposition.z, 2 ) + "]";
+                break;
+            }
+
+            uitextline1 =
+                "node name: " + node->name()
+                + "; location: [" + to_string( node->location().x, 2 ) + ", " + to_string( node->location().y, 2 ) + ", " + to_string( node->location().z, 2 ) + "]"
+                + " (distance: " + to_string( glm::length( glm::dvec3{ node->location().x, 0.0, node->location().z } -glm::dvec3{ Global.pCameraPosition.x, 0.0, Global.pCameraPosition.z } ), 1 ) + " m)";
+            // subclass-specific data
+            // TBD, TODO: specialized data dump method in each node subclass, or data imports in the panel for provided subclass pointer?
+            if( typeid( *node ) == typeid( TAnimModel ) ) {
+
+                auto const *subnode = static_cast<TAnimModel const *>( node );
+
+                uitextline2 = "angle: " + to_string( clamp_circular( subnode->vAngle.y, 360.f ), 2 ) + " deg";
+                uitextline2 += "; lights: ";
+                if( subnode->iNumLights > 0 ) {
+                    uitextline2 += '[';
+                    for( int lightidx = 0; lightidx < subnode->iNumLights; ++lightidx ) {
+                        uitextline2 += to_string( subnode->lsLights[ lightidx ] );
+                        if( lightidx < subnode->iNumLights - 1 ) {
+                            uitextline2 += ", ";
+                        }
+                    }
+                    uitextline2 += ']';
+                }
+                else {
+                    uitextline2 += "none";
+                }
+                    // 3d shape
+                auto modelfile { (
+                    subnode->pModel ?
+                        subnode->pModel->NameGet() :
+                        "none" ) };
+                if( modelfile.find( szModelPath ) == 0 ) {
+                    // don't include 'models/' in the path
+                    modelfile.erase( 0, std::string{ szModelPath }.size() );
+                }
+                // texture
+                auto texturefile { (
+                    subnode->Material()->replacable_skins[ 1 ] != null_handle ?
+                        GfxRenderer.Material( subnode->Material()->replacable_skins[ 1 ] ).name :
+                        "none" ) };
+                if( texturefile.find( szTexturePath ) == 0 ) {
+                    // don't include 'textures/' in the path
+                    texturefile.erase( 0, std::string{ szTexturePath }.size() );
+                }
+                uitextline3 = "mesh: " + modelfile;
+                uitextline4 = "skin: " + texturefile;
+            }
+            else if( typeid( *node ) == typeid( TTrack ) ) {
+
+                auto const *subnode = static_cast<TTrack const *>( node );
+                // basic attributes
+                uitextline2 =
+                    "isolated: " + ( subnode->pIsolated ? subnode->pIsolated->asName : "none" )
+                    + "; velocity: " + to_string( subnode->SwitchExtension ? subnode->SwitchExtension->fVelocity : subnode->fVelocity )
+                    + "; width: " + to_string( subnode->fTrackWidth ) + " m"
+                    + "; friction: " + to_string( subnode->fFriction, 2 )
+                    + "; quality: " + to_string( subnode->iQualityFlag );
+                // textures
+                auto texturefile { (
+                    subnode->m_material1 != null_handle ?
+                        GfxRenderer.Material( subnode->m_material1 ).name :
+                        "none" ) };
+                if( texturefile.find( szTexturePath ) == 0 ) {
+                    texturefile.erase( 0, std::string{ szTexturePath }.size() );
+                }
+                auto texturefile2{ (
+                    subnode->m_material2 != null_handle ?
+                        GfxRenderer.Material( subnode->m_material2 ).name :
+                        "none" ) };
+                if( texturefile2.find( szTexturePath ) == 0 ) {
+                    texturefile2.erase( 0, std::string{ szTexturePath }.size() );
+                }
+                uitextline2 += "; skins: [" + texturefile + ", " + texturefile2 + "]";
+                // paths
+                uitextline3 = "paths: ";
+                for( auto const &path : subnode->m_paths ) {
+                    uitextline3 +=
+                        "["
+                        + to_string( path.points[ segment_data::point::start ].x, 3 ) + ", "
+                        + to_string( path.points[ segment_data::point::start ].y, 3 ) + ", "
+                        + to_string( path.points[ segment_data::point::start ].z, 3 ) + "]->"
+                        + "["
+                        + to_string( path.points[ segment_data::point::end ].x, 3 ) + ", "
+                        + to_string( path.points[ segment_data::point::end ].y, 3 ) + ", "
+                        + to_string( path.points[ segment_data::point::end ].z, 3 ) + "] ";
+                }
+                // events
+                std::vector< std::pair< std::string, TTrack::event_sequence const * > > const eventsequences {
+                    { "ev0", &subnode->m_events0 }, { "ev0all", &subnode->m_events0all },
+                    { "ev1", &subnode->m_events1 }, { "ev1all", &subnode->m_events1all },
+                    { "ev2", &subnode->m_events2 }, { "ev2all", &subnode->m_events2all } };
+
+                for( auto const &eventsequence : eventsequences ) {
+                    if( eventsequence.second->empty() ) { continue; }
+                    uitextline4 += eventsequence.first + ": [";
+                    for( auto const &event : *( eventsequence.second ) ) {
+                        if( uitextline4.back() != '[' ) {
+                            uitextline4 += ", ";
+                        }
+                        if( event.second ) {
+                            uitextline4 += event.second->asName;
+                        }
+                    }
+                    uitextline4 += "] ";
+                }
+
+            }
+            else if( typeid( *node ) == typeid( TMemCell ) ) {
+
+                auto const *subnode = static_cast<TMemCell const *>( node );
+
+                uitextline2 =
+                    "data: [" + subnode->Text() + "]"
+                    + " [" + to_string( subnode->Value1(), 2 ) + "]"
+                    + " [" + to_string( subnode->Value2(), 2 ) + "]";
+                uitextline3 = "track: " + ( subnode->asTrackName.empty() ? "none" : subnode->asTrackName );
             }
 
             break;
@@ -762,9 +897,9 @@ ui_layer::update() {
 
                 uitextline2 =
                     "HamZ=" + to_string( vehicle->MoverParameters->fBrakeCtrlPos, 2 )
-                    + "; HamP=" + std::to_string( vehicle->MoverParameters->LocalBrakePos ) + "/" + to_string( vehicle->MoverParameters->LocalBrakePosA, 2 )
+                    + "; HamP=" + to_string( vehicle->MoverParameters->LocalBrakePosA, 2 )
                     + "; NasJ=" + std::to_string( vehicle->MoverParameters->MainCtrlPos ) + "(" + std::to_string( vehicle->MoverParameters->MainCtrlActualPos ) + ")"
-                    + ( ( vehicle->MoverParameters->ShuntMode && vehicle->MoverParameters->EngineType == DieselElectric ) ?
+                    + ( ( vehicle->MoverParameters->ShuntMode && vehicle->MoverParameters->EngineType == TEngineType::DieselElectric ) ?
                         "; NasB=" + to_string( vehicle->MoverParameters->AnPos, 2 ) :
                         "; NasB=" + std::to_string( vehicle->MoverParameters->ScndCtrlPos ) + "(" + std::to_string( vehicle->MoverParameters->ScndCtrlActualPos ) + ")" )
                     + "; I=" +
@@ -829,7 +964,7 @@ ui_layer::update() {
                     uitextline3 += " Vtrack " + to_string( vehicle->MoverParameters->RunningTrack.Velmax, 2 );
                 }
 
-                if( ( vehicle->MoverParameters->EnginePowerSource.SourceType == CurrentCollector )
+                if( ( vehicle->MoverParameters->EnginePowerSource.SourceType == TPowerSource::CurrentCollector )
                     || ( vehicle->MoverParameters->TrainType == dt_EZT ) ) {
                     uitextline3 +=
                         "; pant. " + to_string( vehicle->MoverParameters->PantPress, 2 )
@@ -857,7 +992,7 @@ ui_layer::update() {
                 }
 
                 // induction motor data
-                if( vehicle->MoverParameters->EngineType == ElectricInductionMotor ) {
+                if( vehicle->MoverParameters->EngineType == TEngineType::ElectricInductionMotor ) {
 
                     UITable->text_lines.emplace_back( "      eimc:            eimv:            press:", Global.UITextColor );
                     for( int i = 0; i <= 20; ++i ) {
@@ -880,7 +1015,7 @@ ui_layer::update() {
                         UITable->text_lines.emplace_back( parameters, Global.UITextColor );
                     }
                 }
-				if (vehicle->MoverParameters->EngineType == DieselEngine) {
+				if (vehicle->MoverParameters->EngineType == TEngineType::DieselEngine) {
 					std::string parameters = "param       value";
 					UITable->text_lines.emplace_back(parameters, Global.UITextColor);
 					parameters = "efill: " + to_string(vehicle->MoverParameters->dizel_fill, 2, 9);
@@ -1000,6 +1135,13 @@ ui_layer::render() {
 }
 
 void
+ui_layer::set_cursor( int const Mode ) {
+
+    glfwSetInputMode( m_window, GLFW_CURSOR, Mode );
+    m_cursorvisible = ( Mode != GLFW_CURSOR_DISABLED );
+}
+
+void
 ui_layer::set_progress( float const Progress, float const Subtaskprogress ) {
 
     m_progress = Progress * 0.01f;
@@ -1104,6 +1246,7 @@ void
 ui_layer::render_tooltip() {
 
     if( m_tooltip.empty() ) { return; }
+    if( false == m_cursorvisible ) { return; }
 
     glm::dvec2 mousepos;
     glfwGetCursorPos( m_window, &mousepos.x, &mousepos.y );

@@ -52,6 +52,8 @@ struct opengl_technique {
 class opengl_camera {
 
 public:
+// constructors
+    opengl_camera() = default;
 // methods:
     inline
     void
@@ -113,10 +115,10 @@ class opengl_renderer {
 
 public:
 // types
-
+// constructors
+    opengl_renderer() = default;
 // destructor
     ~opengl_renderer() { gluDeleteQuadric( m_quadric ); }
-
 // methods
     bool
         Init( GLFWwindow *Window );
@@ -165,13 +167,17 @@ public:
         Pick_Control() const { return m_pickcontrolitem; }
     scene::basic_node const *
         Pick_Node() const { return m_picksceneryitem; }
+    glm::dvec3
+        Mouse_Position() const { return m_worldmousecoordinates; }
     // maintenance methods
     void
         Update( double const Deltatime );
-    TSubModel const *
+    TSubModel *
         Update_Pick_Control();
-    scene::basic_node const *
+    scene::basic_node *
         Update_Pick_Node();
+    glm::dvec3
+        Update_Mouse_Position();
     // debug methods
     std::string const &
         info_times() const;
@@ -275,7 +281,7 @@ private:
     bool
         Render( TDynamicObject *Dynamic );
     bool
-        Render( TModel3d *Model, material_data const *Material, float const Squaredistance, Math3D::vector3 const &Position, Math3D::vector3 const &Angle );
+        Render( TModel3d *Model, material_data const *Material, float const Squaredistance, Math3D::vector3 const &Position, glm::vec3 const &Angle );
     bool
         Render( TModel3d *Model, material_data const *Material, float const Squaredistance );
     void
@@ -301,7 +307,7 @@ private:
     bool
         Render_Alpha( TDynamicObject *Dynamic );
     bool
-        Render_Alpha( TModel3d *Model, material_data const *Material, float const Squaredistance, Math3D::vector3 const &Position, Math3D::vector3 const &Angle );
+        Render_Alpha( TModel3d *Model, material_data const *Material, float const Squaredistance, Math3D::vector3 const &Position, glm::vec3 const &Angle );
     bool
         Render_Alpha( TModel3d *Model, material_data const *Material, float const Squaredistance );
     void
@@ -384,12 +390,14 @@ private:
     renderpass_config m_renderpass; // parameters for current render pass
     section_sequence m_sectionqueue; // list of sections in current render pass
     cell_sequence m_cellqueue;
+    renderpass_config m_colorpass; // parametrs of most recent color pass
     renderpass_config m_shadowpass; // parametrs of most recent shadowmap pass
     renderpass_config m_cabshadowpass; // parameters of most recent cab shadowmap pass
-    std::vector<TSubModel const *> m_pickcontrolsitems;
-    TSubModel const *m_pickcontrolitem { nullptr };
-    std::vector<scene::basic_node const *> m_picksceneryitems;
-    scene::basic_node const *m_picksceneryitem { nullptr };
+    std::vector<TSubModel *> m_pickcontrolsitems;
+    TSubModel *m_pickcontrolitem { nullptr };
+    std::vector<scene::basic_node *> m_picksceneryitems;
+    scene::basic_node *m_picksceneryitem { nullptr };
+    glm::vec3 m_worldmousecoordinates { 0.f };
 #ifdef EU07_USE_DEBUG_CAMERA
     renderpass_config m_worldcamera; // debug item
 #endif
