@@ -24,6 +24,8 @@ http://mozilla.org/MPL/2.0/.
 #include "Logs.h"
 #include "screenshot.h"
 #include "motiontelemetry.h"
+#include "network.h"
+#include <CpperoMQ/All.hpp>
 
 #pragma comment (lib, "glu32.lib")
 #pragma comment (lib, "dsound.lib")
@@ -216,6 +218,8 @@ eu07_application::run()
         input::uart = std::make_unique<uart_input>();
         input::uart->init();
     }
+	if (Global.network_conf.enable)
+		Global.network = std::make_unique<multiplayer::ZMQConnection>();
 	if (Global.motiontelemetry_conf.enable)
 		input::motiontelemetry = std::make_unique<motiontelemetry>();
 #ifdef _WIN32
@@ -250,6 +254,12 @@ eu07_application::run()
         && ( true == GfxRenderer.Render() ) ) {
         glfwPollEvents();
         input::Keyboard.poll();
+		if (Global.network)
+		{
+			Global.network->poll();
+			Global.network->send();
+			World.OnCommandGet(Global.network->getIncomingQueue());
+		}
 		simulation::Commands.update();
 		if (input::motiontelemetry)
 			input::motiontelemetry->update();
