@@ -117,6 +117,9 @@ void CSkyDome::Update( glm::vec3 const &Sun ) {
 // render skydome to screen
 void CSkyDome::Render() {
 
+    // cache entry state
+    ::glPushClientAttrib( GL_CLIENT_VERTEX_ARRAY_BIT );
+
     if( m_vertexbuffer == -1 ) {
         // build the buffers
         ::glGenBuffers( 1, &m_vertexbuffer );
@@ -145,8 +148,7 @@ void CSkyDome::Render() {
     ::glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, m_indexbuffer );
     ::glDrawElements( GL_TRIANGLES, static_cast<GLsizei>( m_indices.size() ), GL_UNSIGNED_SHORT, reinterpret_cast<void const*>( 0 ) );
     // cleanup
-    ::glDisableClientState( GL_COLOR_ARRAY );
-    ::glDisableClientState( GL_VERTEX_ARRAY );
+    ::glPopClientAttrib();
 }
 
 bool CSkyDome::SetSunPosition( glm::vec3 const &Direction ) {
@@ -345,10 +347,16 @@ void CSkyDome::RebuildColors() {
 
     if( m_coloursbuffer != -1 ) {
         // the colour buffer was already initialized, so on this run we update its content
+        // cache entry state
+        ::glPushClientAttrib( GL_CLIENT_VERTEX_ARRAY_BIT );
+        // begin
+        ::glEnableClientState( GL_VERTEX_ARRAY );
+        // update
         ::glBindBuffer( GL_ARRAY_BUFFER, m_coloursbuffer );
         ::glBufferSubData( GL_ARRAY_BUFFER, 0, m_colours.size() * sizeof( glm::vec3 ), m_colours.data() );
+        // cleanup
+        ::glPopClientAttrib();
     }
-
 }
 
 //******************************************************************************//

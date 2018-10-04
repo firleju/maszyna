@@ -24,6 +24,7 @@ struct opengl_material {
 
     bool has_alpha { false }; // alpha state, calculated from presence of alpha in texture1
     std::string name;
+    glm::vec2 size { -1.f, -1.f }; // 'physical' size of bound texture, in meters
 
 // constructors
     opengl_material() = default;
@@ -37,6 +38,9 @@ private:
     // imports member data pair from the config file, overriding existing parameter values of lower priority
     bool
         deserialize_mapping( cParser &Input, int const Priority, bool const Loadnow );
+    // extracts name of the sound file from provided data stream
+    std::string
+        deserialize_filename( cParser &Input );
 
 // members
     int priority1 { -1 }; // priority of last loaded primary texture

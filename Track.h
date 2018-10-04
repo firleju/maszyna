@@ -44,7 +44,7 @@ enum TEnvironmentType {
 };
 // Ra: opracować alternatywny system cieni/świateł z definiowaniem koloru oświetlenia w halach
 
-class TEvent;
+class basic_event;
 class TTrack;
 class TGroundNode;
 class TSubRect;
@@ -89,7 +89,7 @@ class TSwitchExtension
     bool bMovement = false; // czy w trakcie animacji
     scene::basic_cell *pOwner = nullptr; // TODO: convert this to observer pattern
     TTrack *pNextAnim = nullptr; // następny tor do animowania
-    TEvent *evPlus = nullptr,
+    basic_event *evPlus = nullptr,
            *evMinus = nullptr; // zdarzenia sygnalizacji rozprucia
     float fVelocity = -1.0; // maksymalne ograniczenie prędkości (ustawianej eventem)
     Math3D::vector3 vTrans; // docelowa translacja przesuwnicy
@@ -99,27 +99,42 @@ class TIsolated
 { // obiekt zbierający zajętości z kilku odcinków
 public:
     // constructors
-    TIsolated();
     TIsolated(const std::string &n, TIsolated *i);
     // methods
     static void DeleteAll();
-    static TIsolated * Find(const std::string &n, bool create = true); // znalezienie obiektu albo utworzenie nowego
+    static TIsolated * Find(const std::string &n); // znalezienie obiektu albo utworzenie nowego
+    bool AssignEvents();
     void Modify(int i, TDynamicObject *o); // dodanie lub odjęcie osi
-    bool Busy() {
-        return (iAxles > 0); };
-    static TIsolated * Root() {
-        return (pRoot); };
-    TIsolated * Next() {
-        return (pNext); };
+    inline
+    bool
+        Busy() {
+            return (iAxles > 0); };
+    inline
+    static TIsolated *
+        Root() {
+            return (pRoot); };
+    inline
+    TIsolated *
+        Next() {
+            return (pNext); };
+    inline
+    void
+        parent( TIsolated *Parent ) {
+            pParent = Parent; }
+    inline
+    TIsolated *
+        parent() const {
+            return pParent; }
     // members
     std::string asName; // nazwa obiektu, baza do nazw eventów
-    TEvent *evBusy { nullptr }; // zdarzenie wyzwalane po zajęciu grupy
-    TEvent *evFree { nullptr }; // zdarzenie wyzwalane po całkowitym zwolnieniu zajętości grupy
+    basic_event *evBusy { nullptr }; // zdarzenie wyzwalane po zajęciu grupy
+    basic_event *evFree { nullptr }; // zdarzenie wyzwalane po całkowitym zwolnieniu zajętości grupy
     TMemCell *pMemCell { nullptr }; // automatyczna komórka pamięci, która współpracuje z odcinkiem izolowanym
 private:
     // members
     int iAxles { 0 }; // ilość osi na odcinkach obsługiwanych przez obiekt
     TIsolated *pNext { nullptr }; // odcinki izolowane są trzymane w postaci listy jednikierunkowej
+    TIsolated *pParent { nullptr }; // optional parent piece, collecting data from its children
     static TIsolated *pRoot; // początek listy
 };
 
@@ -128,7 +143,7 @@ class TTrack : public scene::basic_node {
 
     friend opengl_renderer;
     // NOTE: temporary arrangement
-    friend ui_layer;
+    friend itemproperties_panel;
 
 private:
     TIsolated * pIsolated = nullptr; // obwód izolowany obsługujący zajęcia/zwolnienia grupy torów
@@ -140,6 +155,7 @@ private:
     // McZapkie-070402: dodalem zmienne opisujace rozmiary tekstur
     int iTrapezoid = 0; // 0-standard, 1-przechyłka, 2-trapez, 3-oba
     double fRadiusTable[ 2 ] = { 0.0, 0.0 }; // dwa promienie, drugi dla zwrotnicy
+    float fVerticalRadius { 0.f }; // y-axis track radius (currently not supported)
     float fTexLength = 4.0f; // długość powtarzania tekstury w metrach
     float fTexRatio1 = 1.0f; // proporcja boków tekstury nawierzchni (żeby zaoszczędzić na rozmiarach tekstur...)
     float fTexRatio2 = 1.0f; // proporcja boków tekstury chodnika (żeby zaoszczędzić na rozmiarach tekstur...)
@@ -159,7 +175,7 @@ private:
 
 public:
     using dynamics_sequence = std::deque<TDynamicObject *>;
-    using event_sequence = std::vector<std::pair<std::string, TEvent *> >;
+    using event_sequence = std::vector<std::pair<std::string, basic_event *> >;
 
     dynamics_sequence Dynamics;
     event_sequence
@@ -235,7 +251,7 @@ public:
                 1 ); }
     void Load(cParser *parser, glm::dvec3 const &pOrigin);
     bool AssignEvents();
-    bool AssignForcedEvents(TEvent *NewEventPlus, TEvent *NewEventMinus);
+    bool AssignForcedEvents(basic_event *NewEventPlus, basic_event *NewEventMinus);
     void QueueEvents( event_sequence const &Events, TDynamicObject const *Owner );
     void QueueEvents( event_sequence const &Events, TDynamicObject const *Owner, double const Delaylimit );
     bool CheckDynamicObject(TDynamicObject *Dynamic);
@@ -256,7 +272,7 @@ public:
     void RaOwnerSet( scene::basic_cell *o ) {
         if( SwitchExtension ) { SwitchExtension->pOwner = o; } };
     bool InMovement(); // czy w trakcie animacji?
-    void RaAssign( TAnimModel *am, TEvent *done, TEvent *joined );
+    void RaAssign( TAnimModel *am, basic_event *done, basic_event *joined );
     void RaAnimListAdd(TTrack *t);
     TTrack * RaAnimate();
 
@@ -265,7 +281,6 @@ public:
         if (pIsolated)
             pIsolated->Modify(i, o); }; // dodanie lub odjęcie osi
     std::string IsolatedName();
-    bool IsolatedEventsAssign(TEvent *busy, TEvent *free);
     double WidthTotal();
     bool IsGroupable();
     int TestPoint( Math3D::vector3 *Point);
@@ -283,7 +298,8 @@ private:
     void deserialize_( std::istream &Input );
     // export() subclass details, sends basic content of the class in legacy (text) format to provided stream
     void export_as_text_( std::ostream &Output ) const;
-
+    // returns texture length for specified material
+    float texture_length( material_handle const Material );
 };
 
 

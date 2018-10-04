@@ -54,6 +54,7 @@ struct scratch_data {
         bool is_open { false };
     } trainset;
 
+    std::string name;
     bool initialized { false };
 };
 
@@ -172,8 +173,7 @@ private:
         enclose_area( scene::basic_node *Node );
 // members
     scene::bounding_area m_area { glm::dvec3(), static_cast<float>( 0.5 * M_SQRT2 * EU07_CELLSIZE ) };
-    bool m_active { false }; // whether the cell holds any actual data
-    // content
+    bool m_active { false }; // whether the cell holds any actual data content
     shapenode_sequence m_shapesopaque; // opaque pieces of geometry
     shapenode_sequence m_shapestranslucent; // translucent pieces of geometry
     linesnode_sequence m_lines;
@@ -322,6 +322,9 @@ public:
     // legacy method, updates sounds around camera
     void
         update_sounds();
+    // checks whether specified file is a valid region data file
+    bool
+        is_scene( std::string const &Scenariofile ) const;
     // stores content of the class in file with specified name
     void
         serialize( std::string const &Scenariofile ) const;

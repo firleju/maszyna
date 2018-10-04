@@ -14,7 +14,7 @@ http://mozilla.org/MPL/2.0/.
 //---------------------------------------------------------------------------
 class opengl_renderer;
 class TTrack; // odcinek trajektorii
-class TEvent;
+class basic_event;
 class TTrain; // pojazd sterowany
 class TDynamicObject; // pojazd w scenerii
 struct material_data;
@@ -28,14 +28,22 @@ class sound_source;
 class TEventLauncher;
 class TTraction; // drut
 class TTractionPowerSource; // zasilanie drutów
-class TWorld;
 class TCamera;
 class scenario_time;
 class TMoverParameters;
 class ui_layer;
+class editor_ui;
+class itemproperties_panel;
+class event_manager;
+class memory_table;
+class powergridsource_table;
+class instance_table;
+class vehicle_table;
+struct light_array;
 
 namespace scene {
 struct node_data;
+class basic_node;
 }
 
 namespace Mtable
@@ -61,5 +69,7 @@ enum class TCommandType
     cm_Shunt,
     cm_Command // komenda pobierana z komórki
 };
+
+using material_handle = int;
 
 #endif

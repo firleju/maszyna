@@ -2,7 +2,7 @@
 #include "uart.h"
 
 #include "Globals.h"
-#include "World.h"
+#include "simulation.h"
 #include "Train.h"
 #include "parser.h"
 #include "Logs.h"
@@ -130,7 +130,7 @@ void uart_input::poll()
         return;
     last_update = now;
 
-    auto *t = Global.pWorld->train();
+    auto const *t =simulation::Train;
 	if (!t)
 		return;
 
@@ -253,7 +253,8 @@ void uart_input::poll()
                 trainstate.ventilator_overload << 1
               | trainstate.motor_overload_threshold << 2),
             //byte 3
-			0,
+			(uint8_t)(
+                trainstate.coupled_hv_voltage_relays << 0),
             //byte 4
 			(uint8_t)(
                 trainstate.train_heating << 0
@@ -301,7 +302,7 @@ void uart_input::poll()
 			WriteLog("uart: tx: " + std::string(buf));
 		}
 
-	    ret = sp_nonblocking_write(port, (void*)buffer.data(), buffer.size());
+	    ret = sp_blocking_write(port, (void*)buffer.data(), buffer.size(), 0);
 	    if (ret != buffer.size())
 			throw std::runtime_error("uart: failed to write to port");
 

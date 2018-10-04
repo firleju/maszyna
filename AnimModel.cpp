@@ -19,6 +19,7 @@ http://mozilla.org/MPL/2.0/.
 #include "MdlMngr.h"
 #include "simulation.h"
 #include "simulationtime.h"
+#include "event.h"
 #include "Globals.h"
 #include "Timer.h"
 #include "Logs.h"
@@ -403,7 +404,7 @@ bool TAnimContainer::InMovement()
     return (fRotateSpeed != 0.0) || (fTranslateSpeed != 0.0);
 }
 
-void TAnimContainer::EventAssign(TEvent *ev)
+void TAnimContainer::EventAssign(basic_event *ev)
 { // przypisanie eventu wykonywanego po zakończeniu animacji
     evDone = ev;
 };
@@ -584,7 +585,7 @@ void TAnimModel::RaPrepare()
             case ls_Dark: {
                 // zapalone, gdy ciemno
                 state = (
-                    Global.fLuminance <= (
+                    Global.fLuminance - std::max( 0.f, Global.Overcast - 1.f ) <= (
                         lsLights[ i ] == static_cast<float>( ls_Dark ) ?
                             DefaultDarkThresholdLevel :
                             ( lsLights[ i ] - static_cast<float>( ls_Dark ) ) ) );
@@ -594,7 +595,7 @@ void TAnimModel::RaPrepare()
                 // like ls_dark but off late at night
                 auto const simulationhour { simulation::Time.data().wHour };
                 state = (
-                    Global.fLuminance <= (
+                    Global.fLuminance - std::max( 0.f, Global.Overcast - 1.f ) <= (
                         lsLights[ i ] == static_cast<float>( ls_Home ) ?
                             DefaultDarkThresholdLevel :
                             ( lsLights[ i ] - static_cast<float>( ls_Home ) ) ) );
@@ -611,7 +612,7 @@ void TAnimModel::RaPrepare()
         if (LightsOff[i])
             LightsOff[i]->iVisible = !state;
     }
-    TSubModel::iInstance = (size_t)this; //żeby nie robić cudzych animacji
+    TSubModel::iInstance = reinterpret_cast<std::uintptr_t>( this ); //żeby nie robić cudzych animacji
     TSubModel::pasText = &asText; // przekazanie tekstu do wyświetlacza (!!!! do przemyślenia)
     if (pAdvanced) // jeśli jest zaawansowana animacja
         Advanced(); // wykonać co tam trzeba

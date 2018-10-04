@@ -12,6 +12,10 @@ http://mozilla.org/MPL/2.0/.
 
 #include "simulation.h"
 #include "Globals.h"
+#include "Camera.h"
+#include "AnimModel.h"
+#include "Event.h"
+#include "EvLaunch.h"
 #include "Timer.h"
 #include "Logs.h"
 #include "sn_utils.h"
@@ -20,6 +24,7 @@ http://mozilla.org/MPL/2.0/.
 namespace scene {
 
 std::string const EU07_FILEEXTENSION_REGION { ".sbt" };
+std::uint32_t const EU07_FILEHEADER { MAKE_ID4( 'E','U','0','7' ) };
 std::uint32_t const EU07_FILEVERSION_REGION { MAKE_ID4( 'S', 'B', 'T', 1 ) };
 
 // potentially activates event handler with the same name as provided node, and within handler activation range
@@ -119,7 +124,7 @@ basic_cell::update_events() {
     // event launchers
     for( auto *launcher : m_eventlaunchers ) {
         if( ( true == ( launcher->check_activation() && launcher->check_conditions() ) )
-         && ( SquareMagnitude( launcher->location() - Global.pCameraPosition ) < launcher->dRadius ) ) {
+         && ( SquareMagnitude( launcher->location() - Global.pCamera.Pos ) < launcher->dRadius ) ) {
 
             launch_event( launcher );
         }
@@ -228,7 +233,8 @@ basic_cell::deserialize( std::istream &Input ) {
     }
     // cell activation flag
     m_active = (
-        ( false == m_shapesopaque.empty() )
+        ( true == m_active )
+     || ( false == m_shapesopaque.empty() )
      || ( false == m_shapestranslucent.empty() )
      || ( false == m_lines.empty() ) );
 }
@@ -945,9 +951,9 @@ void
 basic_region::update_events() {
     // render events and sounds from sectors near enough to the viewer
     auto const range = EU07_SECTIONSIZE; // arbitrary range
-    auto const &sectionlist = sections( Global.pCameraPosition, range );
+    auto const &sectionlist = sections( Global.pCamera.Pos, range );
     for( auto *section : sectionlist ) {
-        section->update_events( Global.pCameraPosition, range );
+        section->update_events( Global.pCamera.Pos, range );
     }
 }
 
@@ -956,9 +962,9 @@ void
 basic_region::update_sounds() {
     // render events and sounds from sectors near enough to the viewer
     auto const range = 2750.f; // audible range of 100 db sound
-    auto const &sectionlist = sections( Global.pCameraPosition, range );
+    auto const &sectionlist = sections( Global.pCamera.Pos, range );
     for( auto *section : sectionlist ) {
-        section->update_sounds( Global.pCameraPosition, range );
+        section->update_sounds( Global.pCamera.Pos, range );
     }
 }
 
@@ -981,6 +987,37 @@ basic_region::update_traction( TDynamicObject *Vehicle, int const Pantographinde
     }
 }
 
+// checks whether specified file is a valid region data file
+bool
+basic_region::is_scene( std::string const &Scenariofile ) const {
+
+    auto filename { Scenariofile };
+    while( filename[ 0 ] == '$' ) {
+        // trim leading $ char rainsted utility may add to the base name for modified .scn files
+        filename.erase( 0, 1 );
+    }
+    erase_extension( filename );
+    filename = Global.asCurrentSceneryPath + filename;
+    filename += EU07_FILEEXTENSION_REGION;
+
+    if( false == FileExists( filename ) ) {
+        return false;
+    }
+    // file type and version check
+    std::ifstream input( filename, std::ios::binary );
+
+    uint32_t headermain{ sn_utils::ld_uint32( input ) };
+    uint32_t headertype{ sn_utils::ld_uint32( input ) };
+
+    if( ( headermain != EU07_FILEHEADER
+     || ( headertype != EU07_FILEVERSION_REGION ) ) ) {
+        // wrong file type
+        return false;
+    }
+
+    return true;
+}
+
 // stores content of the class in file with specified name
 void
 basic_region::serialize( std::string const &Scenariofile ) const {
@@ -998,7 +1035,7 @@ basic_region::serialize( std::string const &Scenariofile ) const {
 
     // region file version 1
     // header: EU07SBT + version (0-255)
-    sn_utils::ls_uint32( output, MAKE_ID4( 'E', 'U', '0', '7' ) );
+    sn_utils::ls_uint32( output, EU07_FILEHEADER );
     sn_utils::ls_uint32( output, EU07_FILEVERSION_REGION );
     // sections
     // TBD, TODO: build table of sections and file offsets, if we postpone section loading until they're within range
@@ -1043,7 +1080,7 @@ basic_region::deserialize( std::string const &Scenariofile ) {
     uint32_t headermain { sn_utils::ld_uint32( input ) };
     uint32_t headertype { sn_utils::ld_uint32( input ) };
 
-    if( ( headermain != MAKE_ID4( 'E', 'U', '0', '7' )
+    if( ( headermain != EU07_FILEHEADER
      || ( headertype != EU07_FILEVERSION_REGION ) ) ) {
         // wrong file type
         WriteLog( "Bad file: \"" + filename + "\" is of either unrecognized type or version" );
@@ -1055,10 +1092,12 @@ basic_region::deserialize( std::string const &Scenariofile ) {
     auto sectioncount { sn_utils::ld_uint32( input ) };
     while( sectioncount-- ) {
         // section index, followed by section data size, followed by section data
-        auto *&section { m_sections[ sn_utils::ld_uint32( input ) ] };
+        auto const sectionindex { sn_utils::ld_uint32( input ) };
         auto const sectionsize { sn_utils::ld_uint32( input ) };
-        section = new basic_section();
-        section->deserialize( input );
+        if( m_sections[ sectionindex ] == nullptr ) {
+            m_sections[ sectionindex ] = new basic_section();
+        }
+        m_sections[ sectionindex ]->deserialize( input );
     }
 
     return true;

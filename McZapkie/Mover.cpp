@@ -86,7 +86,6 @@ double TMoverParameters::Current(double n, double U)
     // w zaleznosci od polozenia nastawnikow MainCtrl i ScndCtrl oraz predkosci obrotowej n
     // a takze wywala bezpiecznik nadmiarowy gdy za duzy prad lub za male napiecie
     // jest takze mozliwosc uszkodzenia silnika wskutek nietypowych parametrow
-    double const ep09resED = 5.8; // TODO: dobrac tak aby sie zgadzalo ze wbudzeniem
 
     double R, MotorCurrent;
     double Rz, Delta, Isf;
@@ -143,28 +142,12 @@ double TMoverParameters::Current(double n, double U)
         Mn = RList[ MainCtrlActualPos ].Mn * RList[ MainCtrlActualPos ].Bn;
     }
 
-    //  writepaslog("#",
-    //  "C++-----------------------------------------------------------------------------");
-    //  writepaslog("MCAP           ", IntToStr(MainCtrlActualPos));
-    //  writepaslog("SCAP           ", IntToStr(ScndCtrlActualPos));
-    //  writepaslog("n              ", FloatToStr(n));
-    //  writepaslog("StLinFlag      ", BoolToYN(StLinFlag));
-    //  writepaslog("DelayCtrlFlag  ", booltoYN(DelayCtrlFlag));
-    //  writepaslog("Bn             ", FloatToStr(Bn));
-    //  writepaslog("R              ", FloatToStr(R));
-    //  writepaslog("Mn             ", IntToStr(Mn));
-    //  writepaslog("RList[MCAP].Bn ", FloatToStr(RList[MainCtrlActualPos].Bn));
-    //  writepaslog("RList[MCAP].Mn ", FloatToStr(RList[MainCtrlActualPos].Mn));
-    //  writepaslog("RList[MCAP].R  ", FloatToStr(RList[MainCtrlActualPos].R));
-
-    // z Megapacka ... bylo tutaj zakomentowane    Q: no to usuwam...
-
     if (DynamicBrakeFlag && (!FuseFlag) && (DynamicBrakeType == dbrake_automatic) &&
         ConverterFlag && Mains) // hamowanie EP09   //TUHEX
     {
         // TODO: zrobic bardziej uniwersalne nie tylko dla EP09
         MotorCurrent =
-            -Max0R(MotorParam[0].fi * (Vadd / (Vadd + MotorParam[0].Isat) - MotorParam[0].fi0), 0) * n * 2.0 / ep09resED;
+            -Max0R(MotorParam[0].fi * (Vadd / (Vadd + MotorParam[0].Isat) - MotorParam[0].fi0), 0) * n * 2.0 / DynamicBrakeRes;
     }
     else if( ( RList[ MainCtrlActualPos ].Bn == 0 )
           || ( false == StLinFlag ) ) {
@@ -249,7 +232,7 @@ double TMoverParameters::Current(double n, double U)
 	else
 		Im = MotorCurrent;
 
-    EnginePower = abs(Itot) * (1 + RList[MainCtrlActualPos].Mn) * abs(U);
+    EnginePower = abs(Itot) * (1 + RList[MainCtrlActualPos].Mn) * abs(U) / 1000.0;
 
     // awarie
     MotorCurrent = abs(Im); // zmienna pomocnicza
@@ -277,21 +260,14 @@ double TMoverParameters::Current(double n, double U)
 // *************************************************************************************************
 //  główny konstruktor
 // *************************************************************************************************
-TMoverParameters::TMoverParameters(double VelInitial, std::string TypeNameInit,
-                                   std::string NameInit, int LoadInitial,
-                                   std::string LoadTypeInitial,
-                                   int Cab) ://: T_MoverParameters(VelInitial, TypeNameInit,
-                                            //NameInit, LoadInitial, LoadTypeInitial, Cab)
+TMoverParameters::TMoverParameters(double VelInitial, std::string TypeNameInit, std::string NameInit, int Cab) :
 TypeName( TypeNameInit ),
 Name( NameInit ),
-ActiveCab( Cab ),
-Load( LoadInitial ),
-LoadType( LoadTypeInitial )
+ActiveCab( Cab )
 {
     WriteLog(
         "------------------------------------------------------");
-    WriteLog("init default physic values for " + NameInit + ", [" + TypeNameInit + "], [" +
-             LoadTypeInitial + "]");
+    WriteLog("init default physic values for " + NameInit + ", [" + TypeNameInit + "]");
     Dim = TDimension();
 
     // BrakeLevelSet(-2); //Pascal ustawia na 0, przestawimy na odcięcie (CHK jest jeszcze nie wczytane!)
@@ -353,10 +329,6 @@ LoadType( LoadTypeInitial )
     }
 	eimc[eimc_p_eped] = 1.5;
 
-    // inicjalizacja zmiennych}
-    // Loc:=LocInitial; //Ra: to i tak trzeba potem przesunąć, po ustaleniu pozycji na torze
-    // (potrzebna długość)
-    // Rot:=RotInitial;
     for (int b = 0; b < 2; ++b)
     {
         Couplers[b].AllowedFlag = 3; // domyślnie hak i hamulec, inne trzeba włączyć jawnie w FIZ
@@ -408,20 +380,6 @@ LoadType( LoadTypeInitial )
     SecuritySystem.RadioStop = false; // domyślnie nie ma
     SecuritySystem.AwareMinSpeed = 0.1 * Vmax;
     s_CAtestebrake = false;
-    // ABu 240105:
-    // CouplerNr[0]:=1;
-    // CouplerNr[1]:=0;
-
-    // TO POTEM TU UAKTYWNIC A WYWALIC Z CHECKPARAM}
-    //{
-    //  if Pos(LoadTypeInitial,LoadAccepted)>0 then
-    //   begin
-    //}
-
-    //{
-    //   end
-    //  else Load:=0;
-    // }
 };
 
 double TMoverParameters::Distance(const TLocation &Loc1, const TLocation &Loc2,
@@ -732,14 +690,14 @@ void TMoverParameters::UpdatePantVolume(double dt)
         // Ra 2014-07: kurek trójdrogowy łączy spr.pom. z pantografami i wyłącznikiem ciśnieniowym WS
         // Ra 2014-07: zbiornika rozrządu nie pompuje się tu, tylko pantografy; potem można zamknąć
         // WS i odpalić resztę
-        if ((TrainType == dt_EZT) ? (PantPress < ScndPipePress) :
-                                    bPantKurek3) // kurek zamyka połączenie z ZG
+        if ((TrainType == dt_EZT) ?
+            (PantPress < ScndPipePress) :
+            bPantKurek3) // kurek zamyka połączenie z ZG
         { // zbiornik pantografu połączony ze zbiornikiem głównym - małą sprężarką się tego nie napompuje
             // Ra 2013-12: Niebugocław mówi, że w EZT nie ma potrzeby odcinać kurkiem
             PantPress = ScndPipePress;
             // ograniczenie ciśnienia do MaxPress (tylko w pantografach!)
-            PantPress = std::min( PantPress, EnginePowerSource.CollectorParameters.MaxPress );
-            PantPress = std::max( PantPress, 0.0 );
+            PantPress = clamp( ScndPipePress, 0.0, EnginePowerSource.CollectorParameters.MaxPress );
             PantVolume = (PantPress + 1.0) * 0.1; // objętość, na wypadek odcięcia kurkiem
         }
         else
@@ -752,38 +710,52 @@ void TMoverParameters::UpdatePantVolume(double dt)
                     * ( TrainType == dt_EZT ? 0.003 : 0.005 ) / std::max( 1.0, PantPress )
                     * ( 0.45 - ( ( 0.1 / PantVolume / 10 ) - 0.1 ) ) / 0.45;
             }
-            PantPress = std::min( (10.0 * PantVolume) - 1.0, EnginePowerSource.CollectorParameters.MaxPress ); // tu by się przydała objętość zbiornika
-            PantPress = std::max( PantPress, 0.0 );
+            PantPress = clamp( ( 10.0 * PantVolume ) - 1.0, 0.0, EnginePowerSource.CollectorParameters.MaxPress ); // tu by się przydała objętość zbiornika
         }
         if( !PantCompFlag && ( PantVolume > 0.1 ) )
             PantVolume -= dt * 0.0003 * std::max( 1.0, PantPress * 0.5 ); // nieszczelności: 0.0003=0.3l/s
-/*
-        // NOTE: disabled as this is redundant with check done in dynobj.update()
-        // TODO: determine if this isn't a mistake --
-        // though unlikely it's possible this is emulation of a different circuit than the pantograph pressure switch, with similar function?
-        // TBD, TODO: alternatively, move the dynobj.update() subroutine here, as it doesn't touch elements outside of the mover object
-        if( Mains ) {
-            // nie wchodzić w funkcję bez potrzeby
-            if( EngineType == ElectricSeriesMotor ) {
-                // nie dotyczy... czego właściwie?
-                if( ( true == PantPressSwitchActive )
-                 && ( PantPress < EnginePowerSource.CollectorParameters.MinPress ) ) {
-                    // wywalenie szybkiego z powodu niskiego ciśnienia
-                    if( GetTrainsetVoltage() < 0.5 * EnginePowerSource.MaxVoltage ) {
-                        // to jest trochę proteza; zasilanie członu może być przez sprzęg WN
-                        if( MainSwitch( false, ( TrainType == dt_EZT ? range::unit : range::local ) ) ) {
-                            EventFlag = true;
-                        }
+
+        if( PantPress < EnginePowerSource.CollectorParameters.MinPress ) {
+            // 3.5 wg http://www.transportszynowy.pl/eu06-07pneumat.php
+            if( true == PantPressSwitchActive ) {
+                // opuszczenie pantografów przy niskim ciśnieniu
+                if( TrainType != dt_EZT ) {
+                    // pressure switch safety measure -- open the line breaker, unless there's alternate source of traction voltage
+                    if( GetTrainsetVoltage() < EnginePowerSource.CollectorParameters.MinV ) {
+                        // TODO: check whether line breaker should be open EMU-wide
+                        MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) );
                     }
+                }
+                else {
+                    // specialized variant for EMU -- pwr system disables converter and heating,
+                    // and prevents their activation until pressure switch is set again
+                    PantPressLockActive = true;
+                    // TODO: separate 'heating allowed' from actual heating flag, so we can disable it here without messing up heating toggle
+                    ConverterSwitch( false, range_t::unit );
+                }
+                // mark the pressure switch as spent
+                PantPressSwitchActive = false;
+            }
+        }
+        else {
+            if( PantPress >= 4.6 ) {
+                // NOTE: we require active low power source to prime the pressure switch
+                // this is a work-around for potential isssues caused by the switch activating on otherwise idle vehicles, but should check whether it's accurate
+                if( ( true == Battery )
+                 || ( true == ConverterFlag ) ) {
+                    // prime the pressure switch
+                    PantPressSwitchActive = true;
+                    // turn off the subsystems lock
+                    PantPressLockActive = false;
+                }
 
-                    // NOTE: disabled, the flag gets set in dynobj.update() when the pantograph actually drops
-                    // mark the pressure switch as spent, regardless whether line breaker actually opened
-                    PantPressSwitchActive = false;
-
+                if( PantPress >= 4.8 ) {
+                    // Winger - automatyczne wylaczanie malej sprezarki
+                    // TODO: governor lock, disables usage until pressure drop below 3.8 (should really make compressor object we could reuse)
+                    PantCompFlag = false;
                 }
             }
         }
-*/
 /*
         // NOTE: pantograph tank pressure sharing experimentally disabled for more accurate simulation
         if (TrainType != dt_EZT) // w EN57 pompuje się tylko w silnikowym
@@ -972,7 +944,7 @@ double TMoverParameters::ManualBrakeRatio(void)
 // Q: 20160713
 // Zwraca objętość
 // *****************************************************************************
-double TMoverParameters::BrakeVP(void)
+double TMoverParameters::BrakeVP(void) const
 {
     if (BrakeVVolume > 0)
         return Volume / (10.0 * BrakeVVolume);
@@ -1240,6 +1212,7 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
             OffsetTrackH = Sign(RunningShape.R) * 0.2;
         }
 
+    // TODO: investigate, seems supplied NewRot is always 0 although the code here suggests some actual values are expected
     Loc = NewLoc;
     Rot = NewRot;
     NewRot.Rx = 0;
@@ -1309,7 +1282,7 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
                 if (SetFlag(DamageFlag, dtrain_out))
                 {
                     EventFlag = true;
-                    Mains = false;
+                    MainSwitch( false, range_t::local );
                     RunningShape.R = 0;
                     if (TestFlag(Track.DamageFlag, dtrack_norail))
                         DerailReason = 1; // Ra: powód wykolejenia: brak szyn
@@ -1321,7 +1294,7 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
                 if (SetFlag(DamageFlag, dtrain_out))
                 {
                     EventFlag = true;
-                    Mains = false;
+                    MainSwitch( false, range_t::local );
                     RunningShape.R = 0;
                     DerailReason = 3; // Ra: powód wykolejenia: za szeroki tor
                 }
@@ -1331,7 +1304,7 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
             if (SetFlag(DamageFlag, dtrain_out))
             {
                 EventFlag = true;
-                Mains = false;
+                MainSwitch( false, range_t::local );
                 DerailReason = 4; // Ra: powód wykolejenia: nieodpowiednia trajektoria
             }
         if( ( true == TestFlag( DamageFlag, dtrain_out ) )
@@ -1350,9 +1323,6 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
 
     } // liczone dL, predkosc i przyspieszenie
 
-    if (Power > 1.0) // w rozrządczym nie (jest błąd w FIZ!) - Ra 2014-07: teraz we wszystkich
-        UpdatePantVolume(dt); // Ra 2014-07: obsługa zbiornika rozrządu oraz pantografów
-
     auto const d { (
         EngineType == TEngineType::WheelsDriven ?
             dL * CabNo : // na chwile dla testu
@@ -1363,6 +1333,7 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
 
     // koniec procedury, tu nastepuja dodatkowe procedury pomocnicze
     compute_movement_( dt );
+
     // security system
     if (!DebugModeFlag)
         SecuritySystemCheck(dt1);
@@ -1429,9 +1400,6 @@ double TMoverParameters::FastComputeMovement(double dt, const TTrackShape &Shape
             if (Couplers[b].CheckCollision)
                 CollisionDetect(b, dt); // zmienia niejawnie AccS, V !!!
     } // liczone dL, predkosc i przyspieszenie
-    // QQQ
-    if (Power > 1.0) // w rozrządczym nie (jest błąd w FIZ!)
-        UpdatePantVolume(dt); // Ra 2014-07: obsługa zbiornika rozrządu oraz pantografów
 
     auto const d { (
         EngineType == TEngineType::WheelsDriven ?
@@ -1481,6 +1449,11 @@ void TMoverParameters::compute_movement_( double const Deltatime ) {
         // sprężarka musi mieć jakąś niezerową wydajność żeby rozważać jej załączenie i pracę
         CompressorCheck( Deltatime );
     }
+    if( Power > 1.0 ) {
+        // w rozrządczym nie (jest błąd w FIZ!) - Ra 2014-07: teraz we wszystkich
+        UpdatePantVolume( Deltatime ); // Ra 2014-07: obsługa zbiornika rozrządu oraz pantografów
+    }
+
     UpdateBrakePressure(Deltatime);
     UpdatePipePressure(Deltatime);
     UpdateBatteryVoltage(Deltatime);
@@ -1551,7 +1524,9 @@ void TMoverParameters::WaterPumpCheck( double const Timestep ) {
     WaterPump.is_active = (
         ( true == Battery )
      && ( true == WaterPump.breaker )
-     && ( ( true == WaterPump.is_enabled ) || ( WaterPump.start_type == start_t::battery ) ) ); 
+     && ( false == WaterPump.is_disabled )
+     && ( ( true == WaterPump.is_active )
+       || ( true == WaterPump.is_enabled ) || ( WaterPump.start_type == start_t::battery ) ) ); 
 }
 
 // water heater status check
@@ -1580,10 +1555,12 @@ void TMoverParameters::FuelPumpCheck( double const Timestep ) {
 
     FuelPump.is_active = (
         ( true == Battery )
-     && ( FuelPump.start_type == start_t::manual ? ( FuelPump.is_enabled ) :
-          FuelPump.start_type == start_t::automatic ? ( dizel_startup || Mains ) :
-          FuelPump.start_type == start_t::manualwithautofallback ? ( FuelPump.is_enabled || dizel_startup || Mains ) :
-          false ) ); // shouldn't ever get this far but, eh
+     && ( false == FuelPump.is_disabled )
+     && ( ( FuelPump.is_active )
+       || ( FuelPump.start_type == start_t::manual ? ( FuelPump.is_enabled ) :
+            FuelPump.start_type == start_t::automatic ? ( dizel_startup || Mains ) :
+            FuelPump.start_type == start_t::manualwithautofallback ? ( FuelPump.is_enabled || dizel_startup || Mains ) :
+            false ) ) ); // shouldn't ever get this far but, eh
 }
 
 // oil pump status update
@@ -1591,10 +1568,13 @@ void TMoverParameters::OilPumpCheck( double const Timestep ) {
 
     OilPump.is_active = (
         ( true == Battery )
-     && ( OilPump.start_type == start_t::manual ? ( OilPump.is_enabled ) :
-          OilPump.start_type == start_t::automatic ? ( dizel_startup || Mains ) :
-          OilPump.start_type == start_t::manualwithautofallback ? ( OilPump.is_enabled || dizel_startup || Mains ) :
-          false ) ); // shouldn't ever get this far but, eh
+     && ( false == Mains )
+     && ( false == OilPump.is_disabled )
+     && ( ( OilPump.is_active )
+       || ( OilPump.start_type == start_t::manual ? ( OilPump.is_enabled ) :
+            OilPump.start_type == start_t::automatic ? ( dizel_startup ) :
+            OilPump.start_type == start_t::manualwithautofallback ? ( OilPump.is_enabled || dizel_startup ) :
+            false ) ) ); // shouldn't ever get this far but, eh
 
     auto const maxrevolutions {
         EngineType == TEngineType::DieselEngine ?
@@ -1627,7 +1607,7 @@ void TMoverParameters::OilPumpCheck( double const Timestep ) {
 }
 
 
-double TMoverParameters::ShowCurrent(int AmpN)
+double TMoverParameters::ShowCurrent(int AmpN) const
 { // Odczyt poboru prądu na podanym amperomierzu
     switch (EngineType)
     {
@@ -2428,6 +2408,31 @@ bool TMoverParameters::WaterPumpSwitch( bool State, range_t const Notify ) {
     return ( WaterPump.is_enabled != initialstate );
 }
 
+// water pump state toggle
+bool TMoverParameters::WaterPumpSwitchOff( bool State, range_t const Notify ) {
+
+    if( WaterPump.start_type == start_t::battery ) {
+        // automatic fuel pump ignores 'manual' state commands
+        return false;
+    }
+
+    bool const initialstate { WaterPump.is_disabled };
+
+    WaterPump.is_disabled = State;
+
+    if( Notify != range_t::local ) {
+        SendCtrlToNext(
+            "WaterPumpSwitchOff",
+            ( WaterPump.is_disabled ? 1 : 0 ),
+            CabNo,
+            ( Notify == range_t::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return ( WaterPump.is_disabled != initialstate );
+}
+
 // water heater breaker state toggle
 bool TMoverParameters::WaterHeaterBreakerSwitch( bool State, range_t const Notify ) {
 /*
@@ -2528,6 +2533,30 @@ bool TMoverParameters::FuelPumpSwitch( bool State, range_t const Notify ) {
     return ( FuelPump.is_enabled != initialstate );
 }
 
+bool TMoverParameters::FuelPumpSwitchOff( bool State, range_t const Notify ) {
+
+    if( FuelPump.start_type == start_t::automatic ) {
+        // automatic fuel pump ignores 'manual' state commands
+        return false;
+    }
+
+    bool const initialstate { FuelPump.is_disabled };
+
+    FuelPump.is_disabled = State;
+
+    if( Notify != range_t::local ) {
+        SendCtrlToNext(
+            "FuelPumpSwitchOff",
+            ( FuelPump.is_disabled ? 1 : 0 ),
+            CabNo,
+            ( Notify == range_t::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return ( FuelPump.is_disabled != initialstate );
+}
+
 // oil pump state toggle
 bool TMoverParameters::OilPumpSwitch( bool State, range_t const Notify ) {
 
@@ -2553,6 +2582,30 @@ bool TMoverParameters::OilPumpSwitch( bool State, range_t const Notify ) {
     return ( OilPump.is_enabled != initialstate );
 }
 
+bool TMoverParameters::OilPumpSwitchOff( bool State, range_t const Notify ) {
+
+    if( OilPump.start_type == start_t::automatic ) {
+        // automatic pump ignores 'manual' state commands
+        return false;
+    }
+
+    bool const initialstate { OilPump.is_disabled };
+
+    OilPump.is_disabled = State;
+
+    if( Notify != range_t::local ) {
+        SendCtrlToNext(
+            "OilPumpSwitchOff",
+            ( OilPump.is_disabled ? 1 : 0 ),
+            CabNo,
+            ( Notify == range_t::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return ( OilPump.is_disabled != initialstate );
+}
+
 // *************************************************************************************************
 // Q: 20160713
 // włączenie / wyłączenie obwodu głownego
@@ -2567,6 +2620,8 @@ bool TMoverParameters::MainSwitch( bool const State, range_t const Notify )
         if( ( false == State )
          || ( ( ( ScndCtrlPos == 0 ) || ( EngineType == TEngineType::ElectricInductionMotor ) )
            && ( ( ConvOvldFlag == false ) || ( TrainType == dt_EZT ) )
+           && ( true == NoVoltRelay )
+           && ( true == OvervoltageRelay )
            && ( LastSwitchingTime > CtrlDelay )
            && ( false == TestFlag( DamageFlag, dtrain_out ) )
            && ( false == TestFlag( EngDmgFlag, 1 ) ) ) ) {
@@ -2584,6 +2639,9 @@ bool TMoverParameters::MainSwitch( bool const State, range_t const Notify )
             }
             else {
                 Mains = false;
+                // potentially knock out the pumps if their switch doesn't force them on
+                WaterPump.is_active &= WaterPump.is_enabled;
+                FuelPump.is_active &= FuelPump.is_enabled;
             }
 
             if( ( TrainType == dt_EZT )
@@ -2694,61 +2752,21 @@ bool TMoverParameters::IncBrakeLevelOld(void)
 {
     bool IBLO = false;
 
-    if ((BrakeCtrlPosNo > 0) /*and (LocalBrakePos=0)*/)
+    if (BrakeCtrlPosNo > 0)
     {
         if (BrakeCtrlPos < BrakeCtrlPosNo)
         {
-            BrakeCtrlPos++;
-            //      BrakeCtrlPosR = BrakeCtrlPos;
-
-            // youBy: wywalilem to, jak jest EP, to sa przenoszone sygnaly nt. co ma robic, a nie
-            // poszczegolne pozycje;
-            //       wystarczy spojrzec na Knorra i Oerlikona EP w EN57; mogly ze soba
-            //       wspolapracowac
-            //{
-            //        if (BrakeSystem==ElectroPneumatic)
-            //          if (BrakePressureActual.BrakeType==ElectroPneumatic)
-            //           {
-            //           BrakeStatus = ord(BrakeCtrlPos > 0);
-            //             SendCtrlToNext("BrakeCtrl", BrakeCtrlPos, CabNo);
-            //           }
-            //          else SendCtrlToNext("BrakeCtrl", -2, CabNo);
-            //        else
-            //         if (!TestFlag(BrakeStatus,b_dmg))
-            //          BrakeStatus = b_on;}
-
+            ++BrakeCtrlPos;
             // youBy: EP po nowemu
-
             IBLO = true;
             if ((BrakePressureActual.PipePressureVal < 0) &&
                 (BrakePressureTable[BrakeCtrlPos - 1].PipePressureVal > 0))
                 LimPipePress = PipePress;
-
-			//ten kawałek jest bez sensu gdyż nic nie robił. Zakomntowałem. GF 20161124
-            //if (BrakeSystem == ElectroPneumatic)
-            //    if (BrakeSubsystem != ss_K)
-            //    {
-            //        if ((BrakeCtrlPos * BrakeCtrlPos) == 1)
-            //        {
-            //            //                SendCtrlToNext('Brake',BrakeCtrlPos,CabNo);
-            //            //                SetFlag(BrakeStatus,b_epused);
-            //        }
-            //        else
-            //        {
-            //            //                SendCtrlToNext('Brake',0,CabNo);
-            //            //                SetFlag(BrakeStatus,-b_epused);
-            //        }
-            //    }
         }
-        else
-        {
+        else {
             IBLO = false;
-            //        if (BrakeSystem == Pneumatic)
-            //         EmergencyBrakeSwitch(true);
         }
     }
-    else
-        IBLO = false;
 
     return IBLO;
 }
@@ -2761,69 +2779,20 @@ bool TMoverParameters::DecBrakeLevelOld(void)
 {
     bool DBLO = false;
 
-    if ((BrakeCtrlPosNo > 0) /*&& (LocalBrakePos == 0)*/)
+    if (BrakeCtrlPosNo > 0)
     {
-        if (BrakeCtrlPos > -1 - int(BrakeHandle == TBrakeHandle::FV4a))
+        if (BrakeCtrlPos > ( ( BrakeHandle == TBrakeHandle::FV4a ) ? -2 : -1 ) )
         {
-            BrakeCtrlPos--;
-            //        BrakeCtrlPosR:=BrakeCtrlPos;
-            //if (EmergencyBrakeFlag)
-            //{
-            //    EmergencyBrakeFlag = false; //!!!
-            //    SendCtrlToNext("Emergency_brake", 0, CabNo);
-            //}
-
-            // youBy: wywalilem to, jak jest EP, to sa przenoszone sygnaly nt. co ma robic, a nie
-            // poszczegolne pozycje;
-            //       wystarczy spojrzec na Knorra i Oerlikona EP w EN57; mogly ze soba
-            //       wspolapracowac
-            /*
-                    if (BrakeSystem == ElectroPneumatic)
-                      if (BrakePressureActual.BrakeType == ElectroPneumatic)
-                       {
-            //             BrakeStatus =ord(BrakeCtrlPos > 0);
-                         SendCtrlToNext("BrakeCtrl",BrakeCtrlPos,CabNo);
-                       }
-                      else SendCtrlToNext('BrakeCtrl',-2,CabNo);
-            //        else}
-            //         if (not TestFlag(BrakeStatus,b_dmg) and (not
-            TestFlag(BrakeStatus,b_release))) then
-            //          BrakeStatus:=b_off;   {luzowanie jesli dziala oraz nie byl wlaczony
-            odluzniacz
-            */
-
+            --BrakeCtrlPos;
             // youBy: EP po nowemu
             DBLO = true;
-            //        if ((BrakePressureTable[BrakeCtrlPos].PipePressureVal<0.0) &&
-            //        (BrakePressureTable[BrakeCtrlPos+1].PipePressureVal > 0))
-            //          LimPipePress:=PipePress;
-
-			// to nic nie robi. Zakomentowałem. GF 20161124
-            //if (BrakeSystem == ElectroPneumatic)
-            //    if (BrakeSubsystem != ss_K)
-            //    {
-            //        if ((BrakeCtrlPos * BrakeCtrlPos) == 1)
-            //        {
-            //            //                SendCtrlToNext("Brake", BrakeCtrlPos, CabNo);
-            //            //                SetFlag(BrakeStatus, b_epused);
-            //        }
-            //        else
-            //        {
-            //            //                SendCtrlToNext("Brake", 0, CabNo);
-            //            //                SetFlag(BrakeStatus, -b_epused);
-            //        }
-            //    }
-            //    for b:=0 to 1 do  {poprawic to!}
-            //     with Couplers[b] do
-            //      if CouplingFlag and ctrain_controll=ctrain_controll then
-            //       Connected^.BrakeCtrlPos:=BrakeCtrlPos;
-            //
+//            if ((BrakePressureTable[BrakeCtrlPos].PipePressureVal<0.0) &&
+//                (BrakePressureTable[BrakeCtrlPos+1].PipePressureVal > 0))
+//                LimPipePress=PipePress;
         }
         else
             DBLO = false;
     }
-    else
-        DBLO = false;
 
     return DBLO;
 }
@@ -3829,27 +3798,25 @@ void TMoverParameters::ComputeConstans(void)
 // *************************************************************************************************
 double TMoverParameters::ComputeMass(void)
 {
-    double M;
-	LoadType = ToLower(LoadType); // po co zakładać jak można mieć na pewno
-    if (Load > 0)
-    { // zakładamy, że ładunek jest pisany małymi literami
+    double M { 0.0 };
+    // TODO: unit weight table, pulled from external data file
+    if( LoadAmount > 0 ) {
+
         if (ToLower(LoadQuantity) == "tonns")
-            M = Load * 1000;
-        else if (LoadType == "passengers")
-            M = Load * 80;
-        else if (LoadType == "luggage")
-            M = Load * 100;
-        else if (LoadType == "cars")
-            M = Load * 1200; // 800 kilo to miał maluch
-        else if (LoadType == "containers")
-            M = Load * 8000;
-        else if (LoadType == "transformers")
-            M = Load * 50000;
+            M = LoadAmount * 1000;
+        else if (LoadType.name == "passengers")
+            M = LoadAmount * 80;
+        else if (LoadType.name == "luggage")
+            M = LoadAmount * 100;
+        else if (LoadType.name == "cars")
+            M = LoadAmount * 1200; // 800 kilo to miał maluch
+        else if (LoadType.name == "containers")
+            M = LoadAmount * 8000;
+        else if (LoadType.name == "transformers")
+            M = LoadAmount * 50000;
         else
-            M = Load * 1000;
+            M = LoadAmount * 1000;
     }
-    else
-        M = 0;
     // Ra: na razie tak, ale nie wszędzie masy wirujące się wliczają
     return Mass + M + Mred;
 }
@@ -4122,7 +4089,7 @@ double TMoverParameters::FrictionForce(double R, int TDamage)
 // Q: 20160713
 // Oblicza przyczepność
 // *************************************************************************************************
-double TMoverParameters::Adhesive(double staticfriction)
+double TMoverParameters::Adhesive(double staticfriction) const 
 {
     double adhesion = 0.0;
 	const double adh_factor = 0.25; //współczynnik określający, jak bardzo spada tarcie przy poślizgu
@@ -4427,7 +4394,7 @@ double TMoverParameters::TractionForce( double dt ) {
 
                     case 1: { // manual
                         if( ( ActiveDir != 0 )
-                            && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
+                         && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
                             RventRot += ( RVentnmax - RventRot ) * RVentSpeed * dt;
                         }
                         else {
@@ -4439,7 +4406,7 @@ double TMoverParameters::TractionForce( double dt ) {
                     case 2: { // automatic
                         auto const motorcurrent{ std::min<double>( ImaxHi, std::abs( Im ) ) };
                         if( ( std::abs( Itot ) > RVentMinI )
-                            && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
+                         && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
 
                             RventRot +=
                                 ( RVentnmax
@@ -4526,6 +4493,39 @@ double TMoverParameters::TractionForce( double dt ) {
         }
     }
 
+    switch( EngineType ) {
+
+        case TEngineType::ElectricSeriesMotor: {
+/*
+			if ((Mains)) // nie wchodzić w funkcję bez potrzeby
+				if ( (std::max(GetTrainsetVoltage(), std::abs(Voltage)) < EnginePowerSource.CollectorParameters.MinV) ||
+					(std::max(GetTrainsetVoltage(), std::abs(Voltage)) * EnginePowerSource.CollectorParameters.OVP >
+						EnginePowerSource.CollectorParameters.MaxV))
+                        if( MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ) ) // TODO: check whether we need to send this EMU-wide
+						EventFlag = true; // wywalanie szybkiego z powodu niewłaściwego napięcia
+*/
+            // update the state of voltage relays
+            auto const voltage { std::max( GetTrainsetVoltage(), std::abs( RunningTraction.TractionVoltage ) ) };
+            NoVoltRelay = ( voltage >= EnginePowerSource.CollectorParameters.MinV );
+            OvervoltageRelay = ( voltage <= EnginePowerSource.CollectorParameters.MaxV ) || ( false == EnginePowerSource.CollectorParameters.OVP );
+            // wywalanie szybkiego z powodu niewłaściwego napięcia
+            EventFlag |= ( ( true == Mains )
+                        && ( ( false == NoVoltRelay ) || ( false == OvervoltageRelay ) )
+                        && ( MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ) ) ); // TODO: check whether we need to send this EMU-wide
+            break;
+        }
+
+        case TEngineType::DieselElectric: {
+            // TODO: move this to the auto relay check when the electric engine code paths are unified
+            StLinFlag = MotorConnectorsCheck();
+            break;
+        }
+
+        default: {
+            break;
+        }
+    }
+
     if (ActiveDir != 0)
         switch (EngineType)
         {
@@ -4579,16 +4579,16 @@ double TMoverParameters::TractionForce( double dt ) {
             }
             if ((DynamicBrakeType == dbrake_automatic) && (DynamicBrakeFlag))
             {
-                if (((Vadd + abs(Im)) > 760) || (Hamulec->GetEDBCP() < 0.25))
+                if (((Vadd + abs(Im)) > TUHEX_Sum + TUHEX_Diff) || (Hamulec->GetEDBCP() < 0.25))
                 {
                     Vadd -= 500.0 * dt;
                     if (Vadd < 1)
                         Vadd = 0;
                 }
-                else if ((DynamicBrakeFlag) && ((Vadd + abs(Im)) < 740))
+                else if ((DynamicBrakeFlag) && ((Vadd + abs(Im)) < TUHEX_Sum - TUHEX_Diff))
                 {
                     Vadd += 70.0 * dt;
-                    Vadd = Min0R(Max0R(Vadd, 60), 400);
+                    Vadd = Min0R(Max0R(Vadd, TUHEX_MinIw), TUHEX_MaxIw);
                 }
                 if (Vadd > 0)
                     Mm = MomentumF(Im, Vadd, 0);
@@ -4605,13 +4605,6 @@ double TMoverParameters::TractionForce( double dt ) {
                 Vhyp = 0;
             if (Vhyp > CtrlDelay / 2) // jesli czas oddzialywania przekroczony
                 FuseOff(); // wywalanie bezpiecznika z powodu przetezenia silnikow
-
-			if ((Mains)) // nie wchodzić w funkcję bez potrzeby
-				if ( (std::max(GetTrainsetVoltage(), std::abs(Voltage)) < EnginePowerSource.CollectorParameters.MinV) ||
-					(std::max(GetTrainsetVoltage(), std::abs(Voltage)) * EnginePowerSource.CollectorParameters.OVP >
-						EnginePowerSource.CollectorParameters.MaxV))
-                        if( MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ) ) // TODO: check whether we need to send this EMU-wide
-						EventFlag = true; // wywalanie szybkiego z powodu niewłaściwego napięcia
 
             if (((DynamicBrakeType == dbrake_automatic) || (DynamicBrakeType == dbrake_switch)) && (DynamicBrakeFlag))
                 Itot = Im * 2; // 2x2 silniki w EP09
@@ -4770,7 +4763,7 @@ double TMoverParameters::TractionForce( double dt ) {
                 Voltage = 0;
 
             // przekazniki bocznikowania, kazdy inny dla kazdej pozycji
-            if ((MainCtrlPos == 0) || (ShuntMode))
+            if ((MainCtrlPos == 0) || (ShuntMode) || (false==Mains))
                 ScndCtrlPos = 0;
 
             else {
@@ -5235,7 +5228,7 @@ double TMoverParameters::ComputeRotatingWheel(double WForce, double dt, double n
 // Q: 20160713
 // Sprawdzenie bezpiecznika nadmiarowego
 // *************************************************************************************************
-bool TMoverParameters::FuseFlagCheck(void)
+bool TMoverParameters::FuseFlagCheck(void) const
 {
     bool FFC;
 
@@ -5427,7 +5420,7 @@ bool TMoverParameters::MinCurrentSwitch(bool State)
 // Q: 20160713
 // Sprawdzenie wskaźnika jazdy na oporach
 // *************************************************************************************************
-bool TMoverParameters::ResistorsFlagCheck(void)
+bool TMoverParameters::ResistorsFlagCheck(void) const
 {
     bool RFC = false;
 
@@ -5470,34 +5463,30 @@ bool TMoverParameters::AutoRelaySwitch(bool State)
 bool TMoverParameters::AutoRelayCheck(void)
 {
     bool OK = false; // b:int;
-    bool ARFASI = false;
-    bool ARFASI2 = false; // sprawdzenie wszystkich warunkow (AutoRelayFlag, AutoSwitch, Im<Imin)
     bool ARC = false;
 
+    auto const motorconnectors { MotorConnectorsCheck() };
+
     // Ra 2014-06: dla SN61 nie działa prawidłowo
-    // rozlaczanie stycznikow liniowych
-    if( ( false == Mains )
-     || ( true == FuseFlag )
-     || ( true == StLinSwitchOff )
-     || ( MainCtrlPos == 0 )
-     || ( ( TrainType != dt_EZT ) && ( BrakePress > 2.1 ) )
-     || ( ActiveDir == 0 ) ) // hunter-111211: wylacznik cisnieniowy
-    {
-        StLinFlag = false; // yBARC - rozlaczenie stycznikow liniowych
+    // yBARC - rozlaczenie stycznikow liniowych
+    if( false == motorconnectors ) {
+        StLinFlag = false;
         OK = false;
-        if (!DynamicBrakeFlag)
-        {
+        if( false == DynamicBrakeFlag ) {
             Im = 0;
             Itot = 0;
             ResistorsFlag = false;
         }
     }
 
-    ARFASI2 = (!AutoRelayFlag) || ((MotorParam[ScndCtrlActualPos].AutoSwitch) &&
-                                    (abs(Im) < Imin)); // wszystkie warunki w jednym
-    ARFASI = (!AutoRelayFlag) || ((RList[MainCtrlActualPos].AutoSwitch) && (abs(Im) < Imin)) ||
-              ((!RList[MainCtrlActualPos].AutoSwitch) &&
-               (RList[MainCtrlActualPos].Relay < MainCtrlPos)); // wszystkie warunki w jednym
+    // sprawdzenie wszystkich warunkow (AutoRelayFlag, AutoSwitch, Im<Imin)
+    auto const ARFASI2 { (
+        ( !AutoRelayFlag )
+     || ( ( MotorParam[ ScndCtrlActualPos ].AutoSwitch ) && ( abs( Im ) < Imin ) ) ) };
+    auto const ARFASI { (
+        ( !AutoRelayFlag )
+     || ( ( RList[ MainCtrlActualPos ].AutoSwitch ) && ( abs( Im ) < Imin ) )
+     || ( ( !RList[ MainCtrlActualPos ].AutoSwitch ) && ( RList[ MainCtrlActualPos ].Relay < MainCtrlPos ) ) ) };
     // brak PSR                   na tej pozycji działa PSR i prąd poniżej progu
     // na tej pozycji nie działa PSR i pozycja walu ponizej
     //                         chodzi w tym wszystkim o to, żeby można było zatrzymać rozruch na
@@ -5658,17 +5647,11 @@ bool TMoverParameters::AutoRelayCheck(void)
         else // not StLinFlag
         {
             OK = false;
-            // ybARC - tutaj sa wszystkie warunki, jakie musza byc spelnione, zeby mozna byla
-            // zalaczyc styczniki liniowe
-            if (((MainCtrlPos == 1) || ((TrainType == dt_EZT) && (MainCtrlPos > 0))) &&
-                (!FuseFlag) && (Mains) && ((BrakePress < 1.0) || (TrainType == dt_EZT)) &&
-                (MainCtrlActualPos == 0) && (ActiveDir != 0))
-            { //^^ TODO: sprawdzic BUG, prawdopodobnie w CreateBrakeSys()
+            // ybARC - zalaczenie stycznikow liniowych
+            if( true == motorconnectors ) {
                 DelayCtrlFlag = true;
-                if( (LastRelayTime >= InitialCtrlDelay)
-                 && ( false == StLinSwitchOff ) )
-                {
-                    StLinFlag = true; // ybARC - zalaczenie stycznikow liniowych
+                if( LastRelayTime >= InitialCtrlDelay ) {
+                    StLinFlag = true;
                     MainCtrlActualPos = 1;
                     DelayCtrlFlag = false;
                     SetFlag(SoundFlag, sound::relay | sound::loud);
@@ -5739,6 +5722,34 @@ bool TMoverParameters::AutoRelayCheck(void)
 
         return OK;
     }
+}
+
+bool TMoverParameters::MotorConnectorsCheck() {
+
+    // hunter-111211: wylacznik cisnieniowy
+    auto const pressureswitch {
+        ( TrainType != dt_EZT )
+     && ( ( BrakePress > 2.0 )
+       || ( PipePress < 3.6 ) ) };
+
+    if( pressureswitch ) { return false; }
+
+    auto const connectorsoff {
+        ( false == Mains )
+     || ( true == FuseFlag )
+     || ( true == StLinSwitchOff )
+     || ( MainCtrlPos == 0 )
+     || ( ActiveDir == 0 ) };
+
+    if( connectorsoff ) { return false; }
+
+    auto const connectorson {
+        ( true == StLinFlag )
+     || ( ( MainCtrlActualPos == 0 )
+       && ( ( MainCtrlPos == 1 )
+         || ( ( TrainType == dt_EZT ) && ( MainCtrlPos > 0 ) ) ) ) };
+
+    return connectorson;
 }
 
 // *************************************************************************************************
@@ -6047,8 +6058,9 @@ bool TMoverParameters::dizel_Update(double dt) {
         dizel_startup = false;
         dizel_ignition = false;
         // TODO: split engine and main circuit state indicator in two separate flags
-        Mains = true;
         LastSwitchingTime = 0;
+        Mains = true;
+        dizel_spinup = true;
         enrot = std::max(
             enrot,
             0.35 * ( // TODO: dac zaleznie od temperatury i baterii
@@ -6057,6 +6069,14 @@ bool TMoverParameters::dizel_Update(double dt) {
                     DElist[ 0 ].RPM / 60.0 ) );
 
     }
+
+    dizel_spinup = (
+        dizel_spinup
+        && Mains
+        && ( enrot < 0.95 * (
+            EngineType == TEngineType::DieselEngine ?
+                dizel_nmin :
+                DElist[ 0 ].RPM / 60.0 ) ) );
 
     if( ( true == Mains )
      && ( false == FuelPump.is_active ) ) {
@@ -6178,7 +6198,7 @@ double TMoverParameters::dizel_Momentum(double dizel_fill, double n, double dt)
         // wstrzymywanie przy malych obrotach
         Moment -= dizel_Mstand;
     }
-	if (true == dizel_ignition)
+	if (true == dizel_spinup)
 		Moment += dizel_Mstand / (0.3 + std::max(0.0, enrot/dizel_nmin)); //rozrusznik
 
 	dizel_Torque = Moment;
@@ -6289,11 +6309,10 @@ double TMoverParameters::dizel_Momentum(double dizel_fill, double n, double dt)
 	}
 
 
-	if ((enrot <= 0) && (!dizel_ignition))
-	{
-		Mains = false;
-		enrot = 0;
-	}
+    if( ( enrot <= 0 ) && ( false == dizel_spinup ) ) {
+        MainSwitch( false );
+        enrot = 0;
+    }
 
 	dizel_n_old = n; //obecna predkosc katowa na potrzeby kolejnej klatki
 
@@ -6501,72 +6520,117 @@ void TMoverParameters::dizel_Heat( double const dt ) {
 */
 }
 
+bool
+TMoverParameters::AssignLoad( std::string const &Name, float const Amount ) {
+
+    if( Name == "pantstate" ) {
+        if( EnginePowerSource.SourceType == TPowerSource::CurrentCollector ) {
+            // wartość niby "pantstate" - nazwa dla formalności, ważna jest ilość
+            auto const pantographsetup { static_cast<int>( Amount ) };
+            if( pantographsetup & ( 1 << 2 ) ) {
+                DoubleTr = -1;
+            }
+            if( pantographsetup & ( 1 << 0 ) ) {
+                if( DoubleTr == 1 ) { PantFront( true ); }
+                else                { PantRear( true ); }
+            }
+            if( pantographsetup & ( 1 << 1 ) ) {
+                if( DoubleTr == 1 ) { PantRear( true ); }
+                else                { PantFront( true ); }
+            }
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    // can't mix load types, at least for the time being
+    if( ( LoadAmount > 0 ) && ( LoadType.name != Name ) ) { return false; }
+
+    if( Name.empty() ) {
+        // empty the vehicle
+        LoadType = load_attributes();
+        LoadAmount = 0.f;
+        return true;
+    }
+
+    for( auto const &loadattributes : LoadAttributes ) {
+        if( Name == loadattributes.name ) {
+            LoadType = loadattributes;
+            LoadAmount = Amount;
+            return true;
+        }
+    }
+    // didn't find matching load configuration, this type is unsupported
+    return false;
+}
+
 // *************************************************************************************************
 // Q: 20160713
 // Test zakończenia załadunku / rozładunku
 // *************************************************************************************************
-bool TMoverParameters::LoadingDone(double LSpeed, std::string LoadInit)
-{
-    // test zakończenia załadunku/rozładunku
-    long LoadChange = 0;
-    bool LD = false;
+bool TMoverParameters::LoadingDone(double const LSpeed, std::string const &Loadname) {
 
-    // ClearPendingExceptions; // zabezpieczenie dla Trunc()
-    // LoadingDone:=false; //nie zakończone
-    if (!LoadInit.empty()) // nazwa ładunku niepusta
-    {
-        if (Load > MaxLoad)
-            LoadChange = abs(long(LSpeed * LastLoadChangeTime / 2.0)); // przeładowanie?
-        else
-            LoadChange = abs(long(LSpeed * LastLoadChangeTime));
-        if (LSpeed < 0) // gdy rozładunek
-        {
-            LoadStatus = 2; // trwa rozładunek (włączenie naliczania czasu)
-            if (LoadChange != 0) // jeśli coś przeładowano
-            {
-                LastLoadChangeTime = 0; // naliczony czas został zużyty
-                Load -= LoadChange; // zmniejszenie ilości ładunku
-                CommandIn.Value1 =
-                    CommandIn.Value1 - LoadChange; // zmniejszenie ilości do rozładowania
-                if (Load < 0)
-                    Load = 0; //ładunek nie może być ujemny
-                if ((Load == 0) || (CommandIn.Value1 < 0)) // pusto lub rozładowano żądaną ilość
-                    LoadStatus = 4; // skończony rozładunek
-                if (Load == 0)
-                    LoadType.clear(); // jak nic nie ma, to nie ma też nazwy
-            }
-        }
-        else if (LSpeed > 0) // gdy załadunek
-        {
-            LoadStatus = 1; // trwa załadunek (włączenie naliczania czasu)
-            if (LoadChange != 0) // jeśli coś przeładowano
-            {
-                LastLoadChangeTime = 0; // naliczony czas został zużyty
-                LoadType = LoadInit; // nazwa
-                Load += LoadChange; // zwiększenie ładunku
-                CommandIn.Value1 = CommandIn.Value1 - LoadChange;
-                if ((Load >= MaxLoad * (1.0 + OverLoadFactor)) || (CommandIn.Value1 < 0))
-                    LoadStatus = 4; // skończony załadunek
-            }
-        }
-        else
-            LoadStatus = 4; // zerowa prędkość zmiany, to koniec
+    if( LSpeed == 0.0 ) {
+        // zerowa prędkość zmiany, to koniec
+        LoadStatus = 4;
+        return true;
     }
-    return (LoadStatus >= 4);
+
+    if( Loadname.empty() )             { return ( LoadStatus >= 4 ); } 
+    if( Loadname != LoadType.name ) { return ( LoadStatus >= 4 ); }
+
+    // test zakończenia załadunku/rozładunku
+    // load exchange speed is reduced if the wagon is overloaded
+    auto const loadchange { static_cast<float>( std::abs( LSpeed * LastLoadChangeTime ) * ( LoadAmount > MaxLoad ? 0.5 : 1.0 ) ) };
+
+    if( LSpeed < 0 ) {
+        // gdy rozładunek
+        LoadStatus = 2; // trwa rozładunek (włączenie naliczania czasu)
+        if( loadchange > 0 ) // jeśli coś przeładowano
+        {
+            LastLoadChangeTime = 0; // naliczony czas został zużyty
+            LoadAmount -= loadchange; // zmniejszenie ilości ładunku
+            CommandIn.Value1 -= loadchange; // zmniejszenie ilości do rozładowania
+            if( ( LoadAmount <= 0 ) || ( CommandIn.Value1 <= 0 ) ) {
+                // pusto lub rozładowano żądaną ilość
+                LoadStatus = 4; // skończony rozładunek
+                LoadAmount = std::max( 0.f, LoadAmount ); //ładunek nie może być ujemny
+            }
+            if( LoadAmount == 0.f ) {
+                AssignLoad(""); // jak nic nie ma, to nie ma też nazwy
+            }
+        }
+    }
+    else if( LSpeed > 0 ) {
+        // gdy załadunek
+        LoadStatus = 1; // trwa załadunek (włączenie naliczania czasu)
+        if( loadchange > 0 ) // jeśli coś przeładowano
+        {
+            LastLoadChangeTime = 0; // naliczony czas został zużyty
+            LoadAmount += loadchange; // zwiększenie ładunku
+            CommandIn.Value1 -= loadchange;
+            if( ( LoadAmount >= MaxLoad * ( 1.0 + OverLoadFactor ) ) || ( CommandIn.Value1 <= 0 ) ) {
+                LoadStatus = 4; // skończony załadunek
+                LoadAmount = std::min<float>( MaxLoad * ( 1.0 + OverLoadFactor ), LoadAmount );
+            }
+        }
+    }
+
+    return ( LoadStatus >= 4 );
 }
 
 // *************************************************************************************************
 // Q: 20160713
 // Zwraca informacje o działającej blokadzie drzwi
 // *************************************************************************************************
-bool TMoverParameters::DoorBlockedFlag(void)
-{
-    // if (DoorBlocked=true) and (Vel<5.0) then
-    bool DBF = false;
-    if ((DoorBlocked == true) && (Vel >= 5.0))
-        DBF = true;
-
-    return DBF;
+bool TMoverParameters::DoorBlockedFlag( void ) {
+    // TBD: configurable lock activation threshold?
+    return (
+        ( true == DoorBlocked )
+     && ( true == DoorLockEnabled )
+     && ( Vel >= 10.0 ) );
 }
 
 // *************************************************************************************************
@@ -6699,12 +6763,9 @@ TMoverParameters::signal_departure( bool const State, range_t const Notify ) {
 void
 TMoverParameters::update_autonomous_doors( double const Deltatime ) {
 
-    if( ( DoorCloseCtrl != control_t::autonomous )
-     || ( ( false == DoorLeftOpened )
-       && ( false == DoorRightOpened ) ) ) {
-        // nothing to do
-        return;
-    }
+    if( DoorCloseCtrl != control_t::autonomous ) { return; }
+    if( ( false == DoorLeftOpened )
+     && ( false == DoorRightOpened ) ) { return; }
 
     if( DoorStayOpen > 0.0 ) {
         // update door timers if the door close after defined time
@@ -6716,18 +6777,19 @@ TMoverParameters::update_autonomous_doors( double const Deltatime ) {
         if( true == DoorLeftOpened )  { DoorLeftOpenTimer  = DoorStayOpen; }
         if( true == DoorRightOpened ) { DoorRightOpenTimer = DoorStayOpen; }
     }
-    // the door are closed if their timer goes below 0, or if the vehicle is moving at > 5 km/h
+    // the door are closed if their timer goes below 0, or if the vehicle is moving at > 10 km/h
+    auto const closingspeed { 10.0 };
     // NOTE: timer value of 0 is 'special' as it means the door will stay open until vehicle is moving
     if( true == DoorLeftOpened ) {
         if( ( ( DoorStayOpen > 0.0 ) && ( DoorLeftOpenTimer < 0.0 ) )
-         || ( Vel > 5.0 ) ) {
+         || ( Vel > closingspeed ) ) {
             // close the door and set the timer to expired state (closing may happen sooner if vehicle starts moving)
             DoorLeft( false, range_t::local );
         }
     }
     if( true == DoorRightOpened ) {
         if( ( ( DoorStayOpen > 0.0 ) && ( DoorRightOpenTimer < 0.0 ) )
-         || ( Vel > 5.0 ) ) {
+         || ( Vel > closingspeed ) ) {
             // close the door and set the timer to expired state (closing may happen sooner if vehicle starts moving)
             DoorRight( false, range_t::local );
         }
@@ -6761,7 +6823,7 @@ bool TMoverParameters::ChangeOffsetH(double DeltaOffset)
 // Q: 20160713
 // Testuje zmienną (narazie tylko 0) i na podstawie uszkodzenia zwraca informację tekstową
 // *************************************************************************************************
-std::string TMoverParameters::EngineDescription(int what)
+std::string TMoverParameters::EngineDescription(int what) const
 {
     std::string outstr { "OK" };
     switch (what) {
@@ -7640,11 +7702,24 @@ void TMoverParameters::LoadFIZ_Param( std::string const &line ) {
 
 void TMoverParameters::LoadFIZ_Load( std::string const &line ) {
 
-    extract_value( LoadAccepted, "LoadAccepted", line, "" );
-    if( true == LoadAccepted.empty() ) {
-        return;
+    auto const acceptedloads { Split( extract_value( "LoadAccepted", line ), ',' ) };
+
+    if( acceptedloads.empty() ) { return; }
+
+    auto const minoffsets { Split( extract_value( "LoadMinOffset", line ), ',' ) };
+    auto minoffset { 0.f };
+    auto minoffsetsiterator { std::begin( minoffsets ) };
+    // NOTE: last (if any) offset parameter retrieved from the list applies to the remainder of the list
+    // TBD, TODO: include other load parameters in this system
+    for( auto &load : acceptedloads ) {
+        if( minoffsetsiterator != std::end( minoffsets ) ) {
+            minoffset = std::stof( *minoffsetsiterator );
+            ++minoffsetsiterator;
+        }
+        LoadAttributes.emplace_back(
+            ToLower( load ),
+            minoffset );
     }
-    LoadAccepted = ToLower( LoadAccepted );
 
     extract_value( MaxLoad, "MaxLoad", line, "" );
     extract_value( LoadQuantity, "LoadQ", line, "" );
@@ -7852,11 +7927,9 @@ void TMoverParameters::LoadFIZ_Doors( std::string const &line ) {
     else if( openmethod == "Fold" ) { DoorOpenMethod = 3; } //3 submodele się obracają
     else if( openmethod == "Plug" ) { DoorOpenMethod = 4; } //odskokowo-przesuwne
 
-    std::string closurewarning; extract_value( closurewarning, "DoorClosureWarning", line, "" );
-    DoorClosureWarning = ( closurewarning == "Yes" );
-
-    std::string doorblocked; extract_value( doorblocked, "DoorBlocked", line, "" );
-    DoorBlocked = ( doorblocked == "Yes" );
+    extract_value( DoorClosureWarning, "DoorClosureWarning", line, "" );
+    extract_value( DoorClosureWarningAuto, "DoorClosureWarningAuto", line, "" );
+    extract_value( DoorBlocked, "DoorBlocked", line, "" );
 
     extract_value( PlatformSpeed, "PlatformSpeed", line, "" );
     extract_value( PlatformMaxShift, "PlatformMaxShift", line, "" );
@@ -8086,6 +8159,7 @@ void TMoverParameters::LoadFIZ_Cntrl( std::string const &line ) {
             lookup != dynamicbrakes.end() ?
             lookup->second :
             dbrake_none;
+		extract_value(DynamicBrakeAmpmeters, "DBAM", line, "");
     }
 
     extract_value( MainCtrlPosNo, "MCPN", line, "" );
@@ -8477,6 +8551,10 @@ void TMoverParameters::LoadFIZ_Circuit( std::string const &Input ) {
     extract_value( ImaxHi, "ImaxHi", Input, "" );
     Imin = IminLo;
     Imax = ImaxLo;
+	extract_value( TUHEX_Sum, "TUHEX_Sum", Input, "" );
+	extract_value( TUHEX_Diff, "TUHEX_Diff", Input, "" );
+	extract_value( TUHEX_MaxIw, "TUHEX_MaxIw", Input, "" );
+	extract_value( TUHEX_MinIw, "TUHEX_MinIw", Input, "" );
 }
 
 void TMoverParameters::LoadFIZ_RList( std::string const &Input ) {
@@ -8504,6 +8582,7 @@ void TMoverParameters::LoadFIZ_RList( std::string const &Input ) {
     }
     extract_value( RVentMinI, "RVentMinI", Input, "" );
     extract_value( RVentSpeed, "RVentSpeed", Input, "" );
+	extract_value( DynamicBrakeRes, "DynBrakeRes", Input, "");
 }
 
 void TMoverParameters::LoadFIZ_DList( std::string const &Input ) {
@@ -8563,15 +8642,14 @@ void TMoverParameters::LoadFIZ_PowerParamsDecode( TPowerParameters &Powerparamet
 
             auto &collectorparameters = Powerparameters.CollectorParameters;
 
+            collectorparameters = TCurrentCollector { 0, 0, 0, 0, 0, 0, false, 0, 0, 0 };
+
             extract_value( collectorparameters.CollectorsNo, "CollectorsNo", Line, "" );
             extract_value( collectorparameters.MinH, "MinH", Line, "" );
             extract_value( collectorparameters.MaxH, "MaxH", Line, "" );
             extract_value( collectorparameters.CSW, "CSW", Line, "" ); //szerokość części roboczej
             extract_value( collectorparameters.MaxV, "MaxVoltage", Line, "" );
-            collectorparameters.OVP = //przekaźnik nadnapięciowy
-                extract_value( "OverVoltProt", Line ) == "Yes" ?
-                    1 :
-                    0;
+            extract_value( collectorparameters.OVP, "OverVoltProt", Line, "" ); //przekaźnik nadnapięciowy
             //napięcie rozłączające WS
             collectorparameters.MinV = 0.5 * collectorparameters.MaxV; //gdyby parametr nie podany
             extract_value( collectorparameters.MinV, "MinV", Line, "" );
@@ -8581,8 +8659,8 @@ void TMoverParameters::LoadFIZ_PowerParamsDecode( TPowerParameters &Powerparamet
             //ciśnienie rozłączające WS
             extract_value( collectorparameters.MinPress, "MinPress", Line, "3.5" ); //domyślnie 2 bary do załączenia WS
             //maksymalne ciśnienie za reduktorem
-            collectorparameters.MaxPress = 5.0 + 0.001 * ( Random( 50 ) - Random( 50 ) );
-            extract_value( collectorparameters.MaxPress, "MaxPress", Line, "" );
+//            collectorparameters.MaxPress = 5.0 + 0.001 * ( Random( 50 ) - Random( 50 ) );
+            extract_value( collectorparameters.MaxPress, "MaxPress", Line, "5.0" );
             break;
         }
         case TPowerSource::PowerCable: {
@@ -8691,11 +8769,6 @@ bool TMoverParameters::CheckLocomotiveParameters(bool ReadyFlag, int Dir)
         // test poprawnosci ilosci osi indywidualnie napedzanych
         OK = ( ( RList[ 1 ].Bn * RList[ 1 ].Mn ) == NPoweredAxles );
         // WriteLogSS("aa ok", BoolToYN(OK));
-    }
-
-    if( ( LoadType.empty() == false ) && ( LoadAccepted.find( LoadType ) == std::string::npos ) ) {
-        // remove load if the type isn't supported
-        Load = 0.0;
     }
 
 	if (BrakeSystem == TBrakeSystem::Individual)
@@ -8931,16 +9004,16 @@ bool TMoverParameters::CheckLocomotiveParameters(bool ReadyFlag, int Dir)
 
     if( LoadFlag > 0 ) {
 
-        if( Load < MaxLoad * 0.45 ) {
+        if( LoadAmount < MaxLoad * 0.45 ) {
             IncBrakeMult();
             IncBrakeMult();
             DecBrakeMult(); // TODO: przeinesiono do mover.cpp
-            if( Load < MaxLoad * 0.35 )
+            if( LoadAmount < MaxLoad * 0.35 )
                 DecBrakeMult();
         }
         else {
             IncBrakeMult(); // TODO: przeinesiono do mover.cpp
-            if( Load >= MaxLoad * 0.55 )
+            if( LoadAmount >= MaxLoad * 0.55 )
                 IncBrakeMult();
         }
     }
@@ -9149,6 +9222,14 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
     }
+    else if( Command == "WaterPumpSwitchOff" ) {
+
+        if( WaterPump.start_type != start_t::battery ) {
+            // automatic fuel pump ignores 'manual' state commands
+            WaterPump.is_disabled = ( CValue1 == 1 );
+        }
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+    }
     else if( Command == "WaterHeaterBreakerSwitch" ) {
 /*
         if( FuelPump.start_type != start::automatic ) {
@@ -9185,10 +9266,24 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
+    else if (Command == "FuelPumpSwitchOff") {
+        if( FuelPump.start_type != start_t::automatic ) {
+            // automatic fuel pump ignores 'manual' state commands
+            FuelPump.is_disabled = ( CValue1 == 1 );
+        }
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+	}
     else if (Command == "OilPumpSwitch") {
         if( OilPump.start_type != start_t::automatic ) {
             // automatic pump ignores 'manual' state commands
             OilPump.is_enabled = ( CValue1 == 1 );
+        }
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+	}
+    else if (Command == "OilPumpSwitchOff") {
+        if( OilPump.start_type != start_t::automatic ) {
+            // automatic pump ignores 'manual' state commands
+            OilPump.is_disabled = ( CValue1 == 1 );
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
@@ -9206,6 +9301,9 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
 		}
         else {
             Mains = false;
+            // potentially knock out the pumps if their switch doesn't force them on
+            WaterPump.is_active &= WaterPump.is_enabled;
+            FuelPump.is_active &= FuelPump.is_enabled;
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
@@ -9521,39 +9619,44 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
 		OK = true; // true, gdy można usunąć komendę
 	}
 	/*naladunek/rozladunek*/
-	else if ( issection( "Load=", Command ) )
+    // TODO: have these commands leverage load exchange system instead
+    else if ( issection( "Load=", Command ) )
 	{
 		OK = false; // będzie powtarzane aż się załaduje
-        if( ( Vel < 0.01 )
+        if( ( Vel < 0.1 ) // tolerance margin for small vehicle movements in the consist
          && ( MaxLoad > 0 )
-         && ( Load < MaxLoad * ( 1.0 + OverLoadFactor ) ) ) {
-            // czy można ładowac?
-            if( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) {
-                // ten peron/rampa
-                auto const testload { ToLower( extract_value( "Load", Command ) ) };
-                if( LoadAccepted.find( testload ) != std::string::npos ) // nazwa jest obecna w CHK
-                    OK = LoadingDone( Min0R( CValue2, LoadSpeed ), testload ); // zmienia LoadStatus
+         && ( LoadAmount < MaxLoad * ( 1.0 + OverLoadFactor ) )
+         && ( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) ) { // ten peron/rampa
+
+            auto const loadname { ToLower( extract_value( "Load", Command ) ) };
+            if( LoadAmount == 0.f ) {
+                AssignLoad( loadname );
             }
+            OK = LoadingDone(
+                std::min<float>( CValue2, LoadSpeed ),
+                loadname ); // zmienia LoadStatus
         }
-		// if OK then LoadStatus:=0; //nie udalo sie w ogole albo juz skonczone
+        else {
+            // no loading can be done if conditions aren't met
+            LastLoadChangeTime = 0.0;
+        }
 	}
     else if( issection( "UnLoad=", Command ) )
 	{
 		OK = false; // będzie powtarzane aż się rozładuje
-        if( ( Vel < 0.01 )
-         && ( Load > 0 ) ) {
-            // czy jest co rozladowac?
-            if( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) {
-                // ten peron
-                auto const testload { ToLower( extract_value( "UnLoad", Command ) ) }; // zgodność nazwy ładunku z CHK
-                if( LoadType == testload ) {
-                    /*mozna to rozladowac*/
-                    OK = LoadingDone( -Min0R( CValue2, LoadSpeed ), testload );
-                }
-            }
+        if( ( Vel < 0.1 ) // tolerance margin for small vehicle movements in the consist
+         && ( LoadAmount > 0 )  // czy jest co rozladowac?
+         && ( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) ) { // ten peron
+            /*mozna to rozladowac*/
+            OK = LoadingDone(
+                -1.f * std::min<float>( CValue2, LoadSpeed ),
+                ToLower( extract_value( "UnLoad", Command ) ) );
         }
-		// if OK then LoadStatus:=0;
-	}
+        else {
+            // no loading can be done if conditions aren't met
+            LastLoadChangeTime = 0.0;
+        }
+    }
 	else if (Command == "SpeedCntrl")
 	{
 		if ((EngineType == TEngineType::ElectricInductionMotor))
@@ -9597,7 +9700,7 @@ bool TMoverParameters::RunInternalCommand()
 // Q: 20160714
 // Zwraca wartość natężenia prądu na wybranym amperomierzu. Podfunkcja do ShowCurrent.
 // *************************************************************************************************
-double TMoverParameters::ShowCurrentP(int AmpN)
+double TMoverParameters::ShowCurrentP(int AmpN) const
 {
     int b, Bn;
     bool Grupowy;
@@ -9607,7 +9710,7 @@ double TMoverParameters::ShowCurrentP(int AmpN)
     Bn = RList[MainCtrlActualPos].Bn; // ile równoległych gałęzi silników
 
     if ((DynamicBrakeType == dbrake_automatic) && (DynamicBrakeFlag))
-        Bn = 2;
+        Bn = DynamicBrakeAmpmeters;
     if (Power > 0.01)
     {
         if (AmpN > 0) // podać prąd w gałęzi
