@@ -15,6 +15,7 @@ http://mozilla.org/MPL/2.0/.
 #include "drivermouseinput.h"
 #include "gamepadinput.h"
 #include "uart.h"
+#include "network.h"
 #include "Console.h"
 #include "Camera.h"
 #include "Classes.h"
@@ -63,7 +64,7 @@ private:
 #endif
         std::unique_ptr<uart_input> uart;
         std::unique_ptr<motiontelemetry> telemetry;
-
+		//std::unique_ptr<multiplayer::ZMQConnection> network;
         bool init();
         void poll();
     };

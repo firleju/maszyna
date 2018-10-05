@@ -128,7 +128,7 @@ namespace multiplayer {
 		void poll(); // otrzymuje wiadomoœci z socketa i wrzuca do wewnêtrznej listy
 		void send(); // wysy³a wiadomoœci z ogólnodostepnej listy
 		auto getIncomingQueue()->std::list<multiplayer::network_queue_t>&;
-		int protocol_version = 1;
+		static const int protocol_version = 1;
 	private:
 		CpperoMQ::IsReceiveReady<CpperoMQ::DealerSocket> net_pollReceiver = CpperoMQ::isReceiveReady(m_socket, [this]()
 		{
@@ -161,4 +161,5 @@ namespace multiplayer {
 	void SendIsolatedOccupancy(std::string name);
 	void SendIsolatedOccupancy(std::string name, bool occupied);
 	void SendSimulationStatus(int which_param);
+	void OnCommandGet(std::list<network_queue_t> &incoming_queue);
 }

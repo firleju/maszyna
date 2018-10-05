@@ -11,6 +11,10 @@ http://mozilla.org/MPL/2.0/.
 #include "network.h"
 #include "Globals.h"
 #include "simulation.h"
+#include "simulationtime.h"
+#include "event.h"
+#include "DynObj.h"
+#include "Driver.h"
 #include "mtable.h"
 #include "Logs.h"
 #include "sn_utils.h"
@@ -135,12 +139,6 @@ namespace multiplayer {
 			it = Global.network_queue.erase(it);
 
 		}
-		//for (auto &m : Global.network_queue)
-		//{
-		//		m_socket.send(m.message);
-		//		Global.network_queue.pop_front();
-		//}
-
 	}
 
 	auto ZMQConnection::getIncomingQueue() -> std::list<multiplayer::network_queue_t>&
@@ -167,7 +165,7 @@ namespace multiplayer {
 		auto msg = ZMQMessage();
 		msg.AddFrame(network_codes::net_proto_version);
 		msg.AddFrame(1);
-		msg.AddFrame(Global.network->protocol_version);
+		msg.AddFrame(ZMQConnection::protocol_version);
 		Global.network_queue.push_back(msg);
 	}
 
@@ -315,4 +313,237 @@ namespace multiplayer {
 		Global.network_queue.push_back(msg);
 	}
 
+	void OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queue)
+	{
+		for (auto &m : incoming_queue)
+		{
+			//check if message has min 2 frames: order code, order type code
+			if (m.message.size() < 2)
+				return;
+			switch (m.message[0].ToInt())
+			{
+			case 0: {
+				// informacja o wersji protoko³u
+				switch (m.message[1].ToInt())
+				{
+				case 0:
+					CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " ask for version" + " rcvd");
+					SendVersionInfo();
+					break;
+				case 1:
+					CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " Information about version" + " rcvd");
+					if (m.message.size() != 3)
+					{
+						CommLog(Now() + " Wrong number of frames");
+						return;
+					}
+					//if (m.message[2].ToInt() != network->protocol_version)
+					//{
+					//	CommLog(Now() + " Wrong protocol version: disable network");
+					//	Global.network.~unique_ptr();
+					//	Global.network_conf.enable = false;
+					//}
+					break;
+				default:
+					CommLog(Now() + " Wrong code type");
+				}
+				break;
+			}
+			case 1: {
+				// informacja o scenerii (nazwa pliku)
+				switch (m.message[1].ToInt())
+				{
+				case 0:
+					CommLog(Now() + " " + m.message[0].ToString() + " Ask for scenery name" + " rcvd");
+					SendScenery();
+					break;
+				case 1:
+					CommLog(Now() + " " + m.message[0].ToString() + " Information about scenery name" + " rcvd");
+					if (m.message.size() != 3)
+					{
+						CommLog(Now() + " Wrong number of frames");
+						return;
+					}
+					//if (m.message[2].ToString() != Global.SceneryFile)
+					//{
+					//	CommLog(Now() + " Wrong scenery name on both sides: disable network. Server side use: " + m.message[2].ToString());
+					//	Global.network.~unique_ptr();
+					//	Global.network_conf.enable = false;
+					//}
+					break;
+				default:
+					CommLog(Now() + " Wrong code type");
+
+				}
+			}
+					break;
+			case 2: {
+				// wyw³oanie eventu
+				switch (m.message[1].ToInt())
+				{
+				case 0:
+				{
+					CommLog(Now() + " " + m.message[0].ToString() + " Remote call of event" + " rcvd");
+					if (m.message.size() != 3)
+					{
+						CommLog(Now() + " Wrong number of frames");
+						return;
+					}
+					auto *event = simulation::Events.FindEvent(m.message[2].ToString());
+					if (event != nullptr) {
+						if ((typeid(*event) == typeid(multi_event))
+							|| (typeid(*event) == typeid(lights_event))
+							|| (event->m_sibling != 0)) {
+							// tylko jawne albo niejawne Multiple
+							simulation::Events.AddToQuery(event, nullptr); // drugi parametr to dynamic wywo³uj¹cy - tu brak
+						}
+					}
+					else
+						multiplayer::SendEventCallConfirmation(0, m.message[2].ToString()); //b³¹d
+
+					break;
+				}
+				case 1:
+				{
+					CommLog(Now() + " Client do not handle event launch confirmation messages");
+					break;
+				}
+				default:
+					CommLog(Now() + " Wrong code type");
+				}
+				break;
+			}
+			case 3: // rozkaz dla AI
+				switch (m.message[1].ToInt())
+				{
+				case 0:
+				{
+					CommLog(Now() + " " + m.message[0].ToString() + " Remote command for vehicle" + " rcvd");
+					if (m.message.size() != 6)
+					{
+						CommLog(Now() + " Wrong number of frames");
+						return;
+					}
+					CommLog(Now() + " Vehicle: " + m.message[2].ToString() + " Command: " + m.message[3].ToString() + " rcvd");
+					// nazwa pojazdu jest druga
+					auto *vehicle = simulation::Vehicles.find(m.message[2].ToString());
+					if ((vehicle != nullptr)
+						&& (vehicle->Mechanik != nullptr)) {
+						vehicle->Mechanik->PutCommand(
+							m.message[3].ToString(),
+							m.message[4].ToFloat(), m.message[5].ToFloat(),
+							nullptr,
+							stopExt);
+						WriteLog("AI command: " + m.message[3].ToString());
+						multiplayer::SendAiCommandConfirmation(1, m.message[2].ToString(), m.message[3].ToString()); //OK
+					}
+					else
+						multiplayer::SendAiCommandConfirmation(0, m.message[2].ToString(), m.message[3].ToString()); //b³¹d
+
+					break;
+				}
+				case 1:
+				{
+					CommLog(Now() + " Client do not handle command launch confirmation messages");
+					break;
+				}
+				default:
+					CommLog(Now() + " Wrong code type");
+				}
+				break;
+			case 4: // stan toru
+				switch (m.message[1].ToInt())
+				{
+				case 0:
+					CommLog(Now() + " " + m.message[0].ToString() + " Ask for track free / busy" + " rcvd");
+					if (m.message.size() != 3)
+					{
+						CommLog(Now() + " Wrong number of frames");
+						return;
+					}
+					CommLog(Now() + " Track: " + m.message[2].ToString() + " rcvd");
+					multiplayer::SendTrackOccupancy(m.message[2].ToString());
+					break;
+				case 1:
+					CommLog(Now() + " Client do not handle messages with track busy / free info");
+					break;
+				default:
+					CommLog(Now() + " Wrong code type");
+				}
+				break;
+			case 5: // zajêtoœæ odcinków izolowanych
+			{
+				switch (m.message[1].ToInt())
+				{
+				case 0:
+					CommLog(Now() + " " + m.message[0].ToString() + " Ask for isolated free / busy" + " rcvd");
+					if (m.message.size() != 3)
+					{
+						CommLog(Now() + " Wrong number of frames");
+						return;
+					}
+					CommLog(Now() + " Isolated: " + m.message[2].ToString() + " rcvd");
+					multiplayer::SendIsolatedOccupancy(m.message[2].ToString());
+					break;
+				case 1:
+					CommLog(Now() + " Client do not handle messages with isolated busy / free info");
+					break;
+				default:
+					CommLog(Now() + " Wrong code type");
+				}
+				break;
+			}
+			case 6: // stan symulacji
+				switch (m.message[1].ToInt())
+				{
+				case 0:
+					CommLog(Now() + " Ask for simulation status rcvd");
+					if (m.message.size() != 3)
+					{
+						CommLog(Now() + " Wrong number of frames");
+						return;
+					}
+					switch (m.message[2].ToInt())
+					{
+					case 1:
+						multiplayer::SendSimulationStatus(1);
+						break;
+					case 2:
+						multiplayer::SendSimulationStatus(2);
+						break;
+					default:
+						break;
+					}
+					break;
+				case 1:
+					CommLog(Now() + " Set pause rcvd");
+					if (m.message.size() != 3)
+					{
+						CommLog(Now() + " Wrong number of frames");
+						return;
+					}
+					Global.iPause = m.message[2].ToInt();
+					break;
+				case 2:
+					CommLog(Now() + " Set simulation time rcvd");
+					if (m.message.size() != 3)
+					{
+						CommLog(Now() + " Wrong number of frames");
+						return;
+					}
+					double t = m.message[2].ToFloat();
+					simulation::Time.data().wDay = std::floor(t); // niby nie powinno byæ dnia, ale...
+					if (Global.fMoveLight >= 0)
+						Global.fMoveLight = t; // trzeba by deklinacjê S³oñca przeliczyæ
+					simulation::Time.data().wHour = std::floor(24 * t) - 24.0 * simulation::Time.data().wDay;
+					simulation::Time.data().wMinute = std::floor(60 * 24 * t) - 60.0 * (24.0 * simulation::Time.data().wDay + simulation::Time.data().wHour);
+					simulation::Time.data().wSecond = std::floor(60 * 60 * 24 * t) - 60.0 * (60.0 * (24.0 * simulation::Time.data().wDay + simulation::Time.data().wHour) + simulation::Time.data().wMinute);
+					break;
+				}
+				break;
+			default:
+				CommLog(Now() + " Recieved not handled message type code: " + to_string(m.message[0].ToInt()));
+			}
+		}
+	}
 }

@@ -48,6 +48,11 @@ driver_mode::drivermode_input::poll() {
     if( uart != nullptr ) {
         uart->poll();
     }
+
+	if (Global.network != nullptr) {
+		Global.network->poll();
+		Global.network->send();
+	}
     // TBD, TODO: wrap current command in object, include other input sources?
     input::command = (
         mouse.command() != user_command::none ?
@@ -71,6 +76,9 @@ driver_mode::drivermode_input::init() {
     }
     if (Global.motiontelemetry_conf.enable)
         telemetry = std::make_unique<motiontelemetry>();
+
+	if (Global.network_conf.enable)
+		Global.network = std::make_unique<multiplayer::ZMQConnection>();
 
 #ifdef _WIN32
     Console::On(); // włączenie konsoli
