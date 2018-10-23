@@ -13,13 +13,14 @@ http://mozilla.org/MPL/2.0/.
 #include "Globals.h"
 #include "application.h"
 #include "utilities.h"
+#include "Globals.h"
+#include "Timer.h"
 #include "simulation.h"
 #include "Train.h"
 #include "AnimModel.h"
 #include "renderer.h"
 #include "uilayer.h"
 #include "Logs.h"
-#include "Timer.h"
 
 void
 mouse_slider::bind( user_command const &Command ) {
@@ -498,6 +499,15 @@ drivermouse_input::default_bindings() {
             user_command::none } },
         { "oilpump_sw:", {
             user_command::oilpumptoggle,
+            user_command::none } },
+        { "motorblowersfront_sw:", {
+            user_command::motorblowerstogglefront,
+            user_command::none } },
+        { "motorblowersrear_sw:", {
+            user_command::motorblowerstogglerear,
+            user_command::none } },
+        { "motorblowersalloff_sw:", {
+            user_command::motorblowersdisableall,
             user_command::none } },
         { "main_off_bt:", {
             user_command::linebreakeropen,

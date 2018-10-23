@@ -31,7 +31,7 @@ void render_task::run() {
         if( ( outputwidth != nullptr )
          && ( outputheight != nullptr ) ) {
 
-            GfxRenderer.Bind_Material( m_target );
+            ::glBindTexture( GL_TEXTURE_2D, GfxRenderer.Texture( m_target ).id );
             // setup texture parameters
             ::glTexParameteri( GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE );
             ::glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
@@ -44,9 +44,11 @@ void render_task::run() {
             // build texture
             ::glTexImage2D(
                 GL_TEXTURE_2D, 0,
-                GL_RGBA8,
+                GL_RGB8,
                 PyInt_AsLong( outputwidth ), PyInt_AsLong( outputheight ), 0,
                 GL_RGB, GL_UNSIGNED_BYTE, reinterpret_cast<GLubyte const *>( PyString_AsString( output ) ) );
+
+            glFlush();
         }
         Py_DECREF( outputheight );
         Py_DECREF( outputwidth );
@@ -160,6 +162,18 @@ auto python_taskqueue::insert( task_request const &Task ) -> bool {
     // acquire a lock on the task queue and add a new task
     {
         std::lock_guard<std::mutex> lock( m_tasks.mutex );
+
+        // if task for this target already exists, don't add another
+        for (render_task *task : m_tasks.data)
+            if (task->get_target() == Task.target)
+            {
+                PyEval_AcquireLock();
+                Py_DECREF(Task.input);
+                PyEval_ReleaseLock();
+
+                return false;
+            }
+
         m_tasks.data.emplace_back( new render_task( renderer, Task.input, Task.target ) );
     }
     // potentially wake a worker to handle the new task

@@ -252,6 +252,13 @@ class TTrain
     static void OnCommand_compressorenable( TTrain *Train, command_data const &Command );
     static void OnCommand_compressordisable( TTrain *Train, command_data const &Command );
     static void OnCommand_compressortogglelocal( TTrain *Train, command_data const &Command );
+    static void OnCommand_motorblowerstogglefront( TTrain *Train, command_data const &Command );
+    static void OnCommand_motorblowersenablefront( TTrain *Train, command_data const &Command );
+    static void OnCommand_motorblowersdisablefront( TTrain *Train, command_data const &Command );
+    static void OnCommand_motorblowerstogglerear( TTrain *Train, command_data const &Command );
+    static void OnCommand_motorblowersenablerear( TTrain *Train, command_data const &Command );
+    static void OnCommand_motorblowersdisablerear( TTrain *Train, command_data const &Command );
+    static void OnCommand_motorblowersdisableall( TTrain *Train, command_data const &Command );
     static void OnCommand_motorconnectorsopen( TTrain *Train, command_data const &Command );
     static void OnCommand_motorconnectorsclose( TTrain *Train, command_data const &Command );
     static void OnCommand_motordisconnect( TTrain *Train, command_data const &Command );
@@ -323,6 +330,7 @@ class TTrain
     static void OnCommand_cabchangebackward( TTrain *Train, command_data const &Command );
     static void OnCommand_generictoggle( TTrain *Train, command_data const &Command );
 
+
 // members
     TDynamicObject *DynamicObject { nullptr }; // przestawia zmiana pojazdu [F5]
     TMoverParameters *mvControlled { nullptr }; // człon, w którym sterujemy silnikiem
@@ -351,7 +359,7 @@ public: // reszta może by?publiczna
     TGauge ggI3B;
     TGauge ggItotalB;
 
-    TGauge ggOilPressB;
+    TGauge ggOilPressB; // other unit oil pressure indicator
     TGauge ggWater1TempB;
 
     // McZapkie: definicje regulatorow
@@ -459,6 +467,9 @@ public: // reszta może by?publiczna
     TGauge ggWaterCircuitsLinkButton;
     TGauge ggFuelPumpButton; // fuel pump switch
     TGauge ggOilPumpButton; // fuel pump switch
+    TGauge ggMotorBlowersFrontButton; // front traction motor fan switch
+    TGauge ggMotorBlowersRearButton; // rear traction motor fan switch
+    TGauge ggMotorBlowersAllOffButton; // motor fans shutdown switch
 
     TButton btLampkaPoslizg;
     TButton btLampkaStyczn;
@@ -530,6 +541,7 @@ public: // reszta może by?publiczna
     TButton btLampkaDoorRight;
     TButton btLampkaDepartureSignal;
     TButton btLampkaBlokadaDrzwi;
+    TButton btLampkaDoorLockOff;
     TButton btLampkaHamulecReczny;
     TButton btLampkaForward; // Ra: lampki w przód i w ty?dla komputerowych kabin
     TButton btLampkaBackward;
@@ -659,7 +671,7 @@ private:
     // McZapkie: do syczenia
     float fPPress, fNPress;
     int iRadioChannel { 1 }; // numer aktualnego kana?u radiowego
-    std::vector<std::pair<std::string, material_handle>> m_screens;
+    std::vector<std::pair<std::string, texture_handle>> m_screens;
 
   public:
     float fPress[20][3]; // cisnienia dla wszystkich czlonow

@@ -29,6 +29,7 @@ http://mozilla.org/MPL/2.0/.
 #include "mtable.h"
 #include "Console.h"
 #include "application.h"
+#include "renderer.h"
 
 namespace input {
 
@@ -266,6 +267,9 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::compressorenable, &TTrain::OnCommand_compressorenable },
     { user_command::compressordisable, &TTrain::OnCommand_compressordisable },
     { user_command::compressortogglelocal, &TTrain::OnCommand_compressortogglelocal },
+    { user_command::motorblowerstogglefront, &TTrain::OnCommand_motorblowerstogglefront },
+    { user_command::motorblowerstogglerear, &TTrain::OnCommand_motorblowerstogglerear },
+    { user_command::motorblowersdisableall, &TTrain::OnCommand_motorblowersdisableall },
     { user_command::motorconnectorsopen, &TTrain::OnCommand_motorconnectorsopen },
     { user_command::motorconnectorsclose, &TTrain::OnCommand_motorconnectorsclose },
     { user_command::motordisconnect, &TTrain::OnCommand_motordisconnect },
@@ -448,9 +452,11 @@ bool TTrain::Init(TDynamicObject *NewDynamicObject, bool e3d)
 PyObject *TTrain::GetTrainState() {
 
     auto const *mover = DynamicObject->MoverParameters;
+    PyEval_AcquireLock();
     auto *dict = PyDict_New();
     if( ( dict == nullptr )
      || ( mover == nullptr ) ) {
+        PyEval_ReleaseLock();
         return nullptr;
     }
 
@@ -580,6 +586,7 @@ PyObject *TTrain::GetTrainState() {
     PyDict_SetItemString( dict, "seconds", PyGetInt( simulation::Time.second() ) );
     PyDict_SetItemString( dict, "air_temperature", PyGetInt( Global.AirTemperature ) );
 
+    PyEval_ReleaseLock();
     return dict;
 }
 
@@ -2776,8 +2783,193 @@ void TTrain::OnCommand_compressortogglelocal( TTrain *Train, command_data const 
     }
 }
 
-void TTrain::OnCommand_motorconnectorsopen( TTrain *Train, command_data const &cmd ) {
-    command_data Command = cmd;
+void TTrain::OnCommand_motorblowerstogglefront( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersFrontButton.type() == TGaugeType::push ) {
+        // impulse switch
+        // currently there's no off button so we always try to turn it on
+        OnCommand_motorblowersenablefront( Train, Command );
+    }
+    else {
+        // two-state switch
+        if( Command.action == GLFW_RELEASE ) { return; }
+
+        if( false == Train->mvControlled->MotorBlowers[side::front].is_enabled ) {
+            // turn on
+            OnCommand_motorblowersenablefront( Train, Command );
+        }
+        else {
+            //turn off
+            OnCommand_motorblowersdisablefront( Train, Command );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersenablefront( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersFrontButton.type() == TGaugeType::push ) {
+        // impulse switch
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersFrontButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( true, side::front );
+        }
+        else if( Command.action == GLFW_RELEASE ) {
+            // visual feedback
+            Train->ggMotorBlowersFrontButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( false, side::front );
+        }
+    }
+    else {
+        // two-state switch, only cares about press events
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersFrontButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( true, side::front );
+            Train->mvControlled->MotorBlowersSwitchOff( false, side::front );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersdisablefront( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersFrontButton.type() == TGaugeType::push ) {
+        // impulse switch
+        // currently there's no disable return type switch
+        return;
+    }
+    else {
+        // two-state switch, only cares about press events
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersFrontButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( false, side::front );
+            Train->mvControlled->MotorBlowersSwitchOff( true, side::front );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowerstogglerear( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersRearButton.type() == TGaugeType::push ) {
+        // impulse switch
+        // currently there's no off button so we always try to turn it on
+        OnCommand_motorblowersenablerear( Train, Command );
+    }
+    else {
+        // two-state switch
+        if( Command.action == GLFW_RELEASE ) { return; }
+
+        if( false == Train->mvControlled->MotorBlowers[ side::rear ].is_enabled ) {
+            // turn on
+            OnCommand_motorblowersenablerear( Train, Command );
+        }
+        else {
+            //turn off
+            OnCommand_motorblowersdisablerear( Train, Command );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersenablerear( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersRearButton.type() == TGaugeType::push ) {
+        // impulse switch
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersRearButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( true, side::rear );
+        }
+        else if( Command.action == GLFW_RELEASE ) {
+            // visual feedback
+            Train->ggMotorBlowersRearButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( false, side::rear );
+        }
+    }
+    else {
+        // two-state switch, only cares about press events
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersRearButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( true, side::rear );
+            Train->mvControlled->MotorBlowersSwitchOff( false, side::rear );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersdisablerear( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersRearButton.type() == TGaugeType::push ) {
+        // impulse switch
+        // currently there's no disable return type switch
+        return;
+    }
+    else {
+        // two-state switch, only cares about press events
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersRearButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( false, side::rear );
+            Train->mvControlled->MotorBlowersSwitchOff( true, side::rear );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersdisableall( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersAllOffButton.type() == TGaugeType::push ) {
+        // impulse switch
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersAllOffButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitchOff( true, side::front );
+            Train->mvControlled->MotorBlowersSwitchOff( true, side::rear );
+        }
+        else if( Command.action == GLFW_RELEASE ) {
+            // visual feedback
+            Train->ggMotorBlowersAllOffButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitchOff( false, side::front );
+            Train->mvControlled->MotorBlowersSwitchOff( false, side::rear );
+        }
+    }
+    else {
+        // two-state switch, only cares about press events
+        // NOTE: generally this switch doesn't come in two-state form
+        if( Command.action == GLFW_PRESS ) {
+            if( Train->ggMotorBlowersAllOffButton.GetDesiredValue() < 0.5f ) {
+                // switch is off, activate
+                Train->mvControlled->MotorBlowersSwitchOff( true, side::front );
+                Train->mvControlled->MotorBlowersSwitchOff( true, side::rear );
+                // visual feedback
+                Train->ggMotorBlowersRearButton.UpdateValue( 1.f, Train->dsbSwitch );
+            }
+            else {
+                // deactivate
+                Train->mvControlled->MotorBlowersSwitchOff( false, side::front );
+                Train->mvControlled->MotorBlowersSwitchOff( false, side::rear );
+                // visual feedback
+                Train->ggMotorBlowersRearButton.UpdateValue( 0.f, Train->dsbSwitch );
+            }
+        }
+    }
+}
+
+void TTrain::OnCommand_motorconnectorsopen( TTrain *Train, command_data const &Command ) {
+
     // TODO: don't rely on presense of 3d model to determine presence of the switch
     if( Train->ggStLinOffButton.SubModel == nullptr ) {
         if( Command.action == GLFW_PRESS ) {
@@ -5055,7 +5247,7 @@ bool TTrain::Update( double const Deltatime )
                         ggWater1TempB.Update();
                     }
                     if( ggOilPressB.SubModel ) {
-                        ggOilPressB.UpdateValue( tmp->MoverParameters->OilPump.pressure_present );
+                        ggOilPressB.UpdateValue( tmp->MoverParameters->OilPump.pressure );
                         ggOilPressB.Update();
                     }
                 }
@@ -5334,6 +5526,7 @@ bool TTrain::Update( double const Deltatime )
             btLampkaDoorLeft.Turn(mvOccupied->DoorLeftOpened);
             btLampkaDoorRight.Turn(mvOccupied->DoorRightOpened);
             btLampkaBlokadaDrzwi.Turn(mvOccupied->DoorBlockedFlag());
+            btLampkaDoorLockOff.Turn( false == mvOccupied->DoorLockEnabled );
             btLampkaDepartureSignal.Turn( mvControlled->DepartureSignal );
             btLampkaNapNastHam.Turn((mvControlled->ActiveDir != 0) && (mvOccupied->EpFuse)); // napiecie na nastawniku hamulcowym
             btLampkaForward.Turn(mvControlled->ActiveDir > 0); // jazda do przodu
@@ -5356,7 +5549,7 @@ bool TTrain::Update( double const Deltatime )
             btLampkaRearRightEndLight.Turn( ( mvOccupied->iLights[ side::rear ] & light::redmarker_right ) != 0 );
             // others
             btLampkaMalfunction.Turn( mvControlled->dizel_heat.PA );
-            btLampkaMotorBlowers.Turn( mvControlled->RventRot > 0.1 );
+            btLampkaMotorBlowers.Turn( ( mvControlled->MotorBlowers[ side::front ].is_active ) && ( mvControlled->MotorBlowers[ side::rear ].is_active ) );
         }
         else {
             // wylaczone
@@ -5392,6 +5585,7 @@ bool TTrain::Update( double const Deltatime )
             btLampkaDoorLeft.Turn( false );
             btLampkaDoorRight.Turn( false );
             btLampkaBlokadaDrzwi.Turn( false );
+            btLampkaDoorLockOff.Turn( false );
             btLampkaDepartureSignal.Turn( false );
             btLampkaNapNastHam.Turn( false );
             btLampkaForward.Turn( false );
@@ -5715,6 +5909,9 @@ bool TTrain::Update( double const Deltatime )
         ggWaterCircuitsLinkButton.Update();
         ggFuelPumpButton.Update();
         ggOilPumpButton.Update();
+        ggMotorBlowersFrontButton.Update();
+        ggMotorBlowersRearButton.Update();
+        ggMotorBlowersAllOffButton.Update();
         //------
     }
     // wyprowadzenie sygnałów dla haslera na PoKeys (zaznaczanie na taśmie)
@@ -6615,7 +6812,7 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
                     ( substr_path(renderername).empty() ? // supply vehicle folder as path if none is provided
                         DynamicObject->asBaseDir + renderername :
                         renderername ),
-                    material );
+                    GfxRenderer.Material( material ).texture1 );
             }
             // btLampkaUnknown.Init("unknown",mdKabina,false);
         } while (token != "");
@@ -6945,6 +7142,9 @@ void TTrain::clear_cab_controls()
     ggWaterCircuitsLinkButton.Clear();
     ggFuelPumpButton.Clear();
     ggOilPumpButton.Clear();
+    ggMotorBlowersFrontButton.Clear();
+    ggMotorBlowersRearButton.Clear();
+    ggMotorBlowersAllOffButton.Clear();
 
     btLampkaPrzetw.Clear();
     btLampkaPrzetwB.Clear();
@@ -6964,6 +7164,7 @@ void TTrain::clear_cab_controls()
     btLampkaRadioStop.Clear();
     btLampkaHamulecReczny.Clear();
     btLampkaBlokadaDrzwi.Clear();
+    btLampkaDoorLockOff.Clear();
     btInstrumentLight.Clear();
     btDashboardLight.Clear();
     btTimetableLight.Clear();
@@ -7289,6 +7490,26 @@ void TTrain::set_cab_controls() {
             1.0 :
             0.0 );
     }
+    // traction motor fans
+    if( ggMotorBlowersFrontButton.type() != TGaugeType::push ) {
+        ggMotorBlowersFrontButton.PutValue(
+            mvControlled->MotorBlowers[side::front].is_enabled ?
+            1.0 :
+            0.0 );
+    }
+    if( ggMotorBlowersRearButton.type() != TGaugeType::push ) {
+        ggMotorBlowersRearButton.PutValue(
+            mvControlled->MotorBlowers[side::rear].is_enabled ?
+            1.0 :
+            0.0 );
+    }
+    if( ggMotorBlowersAllOffButton.type() != TGaugeType::push ) {
+        ggMotorBlowersAllOffButton.PutValue(
+            ( mvControlled->MotorBlowers[side::front].is_disabled
+           || mvControlled->MotorBlowers[ side::front ].is_disabled ) ?
+                1.0 :
+                0.0 );
+    }
     
     // we reset all indicators, as they're set during the update pass
     // TODO: when cleaning up break setting indicator state into a separate function, so we can reuse it
@@ -7305,6 +7526,7 @@ bool TTrain::initialize_button(cParser &Parser, std::string const &Label, int co
         { "i-radiostop:", btLampkaRadioStop },
         { "i-manual_brake:", btLampkaHamulecReczny },
         { "i-door_blocked:", btLampkaBlokadaDrzwi },
+        { "i-door_blockedoff:", btLampkaDoorLockOff },
         { "i-slippery:", btLampkaPoslizg },
         { "i-contactors:", btLampkaStyczn },
         { "i-conv_ovld:", btLampkaNadmPrzetw },
@@ -7483,6 +7705,9 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         { "fuelpump_sw:", ggFuelPumpButton },
         { "oilpump_sw:", ggOilPumpButton },
         { "oilpressb:", ggOilPressB },
+        { "motorblowersfront_sw:", ggMotorBlowersFrontButton },
+        { "motorblowersrear_sw:", ggMotorBlowersRearButton },
+        { "motorblowersalloff_sw:", ggMotorBlowersAllOffButton },
         { "radio_sw:", ggRadioButton },
         { "radiochannel_sw:", ggRadioChannelSelector },
         { "radiochannelprev_sw:", ggRadioChannelPrevious },
@@ -7648,7 +7873,7 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         // oil pressure
         auto &gauge = Cabine[ Cabindex ].Gauge( -1 ); // pierwsza wolna gałka
         gauge.Load( Parser, DynamicObject, DynamicObject->mdKabina, nullptr );
-        gauge.AssignFloat( &mvControlled->OilPump.pressure_present );
+        gauge.AssignFloat( &mvControlled->OilPump.pressure );
     }
     else if( Label == "oiltemp:" ) {
         // oil temperature
