@@ -39,19 +39,22 @@ class render_task {
 
 public:
 // constructors
-    render_task( PyObject *Renderer, PyObject *Input, texture_handle Target ) :
+    render_task( PyObject *Renderer, PyObject *Input, GLuint Target ) :
         m_renderer( Renderer ), m_input( Input ), m_target( Target )
     {}
 // methods
     void run();
-    const texture_handle get_target() const { return m_target; }
+    void cancel();
+    auto target() const -> texture_handle { return m_target; }
 
 private:
 // members
     PyObject *m_renderer {nullptr};
     PyObject *m_input { nullptr };
-    texture_handle m_target { null_handle };
+    GLuint m_target { 0 };
 };
+
+
 
 class python_taskqueue {
 
@@ -61,7 +64,7 @@ public:
 
         std::string const &renderer;
         PyObject *input;
-        texture_handle target;
+        GLuint target;
     };
 // constructors
     python_taskqueue() = default;
@@ -74,11 +77,15 @@ public:
     auto insert( task_request const &Task ) -> bool;
     // executes python script stored in specified file. returns true on success
     auto run_file( std::string const &File, std::string const &Path = "" ) -> bool;
+    // acquires the python gil and sets the main thread as current
+    void acquire_lock();
+    // releases the python gil and swaps the main thread out
+    void release_lock();
 
 private:
 // types
     static int const WORKERCOUNT { 1 };
-    using worker_array = std::array<std::unique_ptr<std::thread>, WORKERCOUNT >;
+    using worker_array = std::array<std::thread, WORKERCOUNT >;
     using rendertask_sequence = threading::lockable< std::deque<render_task *> >;
 // methods
     auto fetch_renderer( std::string const Renderer ) -> PyObject *;

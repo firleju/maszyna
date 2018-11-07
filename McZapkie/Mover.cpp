@@ -2064,6 +2064,16 @@ bool TMoverParameters::DecScndCtrl(int CtrlSpeed)
     return OK;
 }
 
+int TMoverParameters::GetVirtualScndPos()
+{
+	if (TrainType == dt_ET42)
+	{
+		if (DynamicBrakeFlag && !ScndCtrlPos)
+			return -1;
+	}
+	return ScndCtrlPos;
+}
+
 // *************************************************************************************************
 // Q: 20160710
 // załączenie rozrządu
@@ -4314,7 +4324,8 @@ double TMoverParameters::CouplerForce(int CouplerN, double dt)
     else if( ( Couplers[ CouplerN ].CouplingFlag != coupling::faux )
           && ( newdist > 0.001 )
           && ( Couplers[ CouplerN ].Dist <= 0.001 )
-          && ( absdV > 0.005 ) ) {
+          && ( absdV > 0.005 )
+          && ( Vel > 1.0 ) ) {
         // 090503: dzwieki pracy sprzegu
         SetFlag(
             Couplers[ CouplerN ].sounds,
@@ -7442,6 +7453,11 @@ bool TMoverParameters::LoadFIZ(std::string chkpath)
             // guard against malformed config files with leading spaces
             inputline.erase( 0, inputline.find_first_not_of( ' ' ) );
         }
+
+		// trim CR at end (mainly for linux)
+		if (!inputline.empty() && inputline.back() == '\r')
+			inputline.pop_back();
+
 		if( inputline.length() == 0 ) {
 			startBPT = false;
 			continue;
