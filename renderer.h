@@ -12,13 +12,13 @@ http://mozilla.org/MPL/2.0/.
 #include "GL/glew.h"
 #include "openglgeometrybank.h"
 #include "material.h"
+#include "light.h"
 #include "lightarray.h"
 #include "dumb3d.h"
 #include "frustum.h"
 #include "scene.h"
 #include "simulationenvironment.h"
 #include "MemCell.h"
-#include "light.h"
 
 #define EU07_USE_PICKING_FRAMEBUFFER
 //#define EU07_USE_DEBUG_SHADOWMAP
@@ -385,6 +385,7 @@ private:
 
     glm::vec4 m_baseambient { 0.0f, 0.0f, 0.0f, 1.0f };
     glm::vec4 m_shadowcolor { colors::shadow };
+    float m_fogrange { 2000.f };
 //    TEnvironmentType m_environment { e_flat };
     float m_specularopaquescalefactor { 1.f };
     float m_speculartranslucentscalefactor { 1.f };

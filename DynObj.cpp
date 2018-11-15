@@ -649,6 +649,22 @@ TDynamicObject::toggle_lights() {
     }
 }
 
+void
+TDynamicObject::set_cab_lights( float const Level ) {
+
+    if( Level == InteriorLightLevel ) { return; }
+
+    InteriorLightLevel = Level;
+
+    for( auto &section : Sections ) {
+        // cab compartments are placed at the beginning of the list, so we can bail out as soon as we find different compartment type
+        auto const sectionname { section.compartment->pName };
+        if( sectionname.find( "cab" ) != 0 ) { return; }
+
+        section.light_level = Level;
+    }
+}
+
 // ABu 29.01.05 przeklejone z render i renderalpha: *********************
 void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
 { // ABu290105: pozbierane i uporzadkowane powtarzajace
@@ -2094,6 +2110,10 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
 
     create_controller( DriverType, !TrainName.empty() );
 
+    ShakeSpring.Init( 125.0 );
+    BaseShake = baseshake_config {};
+    ShakeState = shake_state {};
+
     // McZapkie-250202
 /*
     iAxles = std::min( MoverParameters->NAxles, MaxAxles ); // ilość osi
@@ -2690,7 +2710,7 @@ void TDynamicObject::LoadUpdate() {
     }
     else if( MoverParameters->LoadAmount == 0 ) {
         // nie ma ładunku
-        MoverParameters->AssignLoad( "" );
+//        MoverParameters->AssignLoad( "" );
         mdLoad = nullptr;
         // erase bindings between lowpoly sections and potential load chunks placed inside them
         update_load_sections();
@@ -3933,6 +3953,13 @@ void TDynamicObject::RenderSounds() {
 
     if( Global.iPause != 0 ) { return; }
 
+    if( ( m_startjoltplayed )
+     && ( ( std::abs( MoverParameters->AccSVBased ) < 0.01 )
+       || ( GetVelocity() < 0.01 ) ) ) {
+        // if the vehicle comes to a stop set the movement jolt to play when it starts moving again
+        m_startjoltplayed = false;
+    }
+
     double const dt{ Timer::GetDeltaRenderTime() };
     double volume{ 0.0 };
     double frequency{ 1.0 };
@@ -4103,6 +4130,10 @@ void TDynamicObject::RenderSounds() {
         volume = rsPisk.m_amplitudeoffset + interpolate( -1.0, 1.0, brakeforceratio ) * rsPisk.m_amplitudefactor;
         if( volume > 0.075 ) {
             rsPisk
+                .pitch(
+                    true == rsPisk.is_combined() ?
+                        MoverParameters->Vel * 0.01f :
+                        rsPisk.m_frequencyoffset + rsPisk.m_frequencyfactor * 1.f )
                 .gain( volume )
                 .play( sound_flags::exclusive | sound_flags::looping );
         }
@@ -4132,19 +4163,22 @@ void TDynamicObject::RenderSounds() {
     }
     // NBMX sygnal odjazdu
     if( MoverParameters->DoorClosureWarning ) {
-        if( ( MoverParameters->DepartureSignal )
+        for( auto &door : m_doorsounds ) {
+            // TBD, TODO: per-location door state triggers?
+            if( ( MoverParameters->DepartureSignal )
 /*
-         || ( ( MoverParameters->DoorCloseCtrl = control::autonomous )
-           && ( ( ( false == MoverParameters->DoorLeftOpened )  && ( dDoorMoveL > 0.0 ) )
-             || ( ( false == MoverParameters->DoorRightOpened ) && ( dDoorMoveR > 0.0 ) ) ) )
+             || ( ( MoverParameters->DoorCloseCtrl = control::autonomous )
+               && ( ( ( false == MoverParameters->DoorLeftOpened )  && ( dDoorMoveL > 0.0 ) )
+                 || ( ( false == MoverParameters->DoorRightOpened ) && ( dDoorMoveR > 0.0 ) ) ) )
 */
-             ) {
-            // for the autonomous doors play the warning automatically whenever a door is closing
-            // MC: pod warunkiem ze jest zdefiniowane w chk
-            sDepartureSignal.play( sound_flags::exclusive | sound_flags::looping );
-        }
-        else {
-            sDepartureSignal.stop();
+                 ) {
+                // for the autonomous doors play the warning automatically whenever a door is closing
+                // MC: pod warunkiem ze jest zdefiniowane w chk
+                door.sDepartureSignal.play( sound_flags::exclusive | sound_flags::looping );
+            }
+            else {
+                door.sDepartureSignal.stop();
+            }
         }
     }
     // NBMX Obsluga drzwi, MC: zuniwersalnione
@@ -4374,7 +4408,8 @@ void TDynamicObject::RenderSounds() {
                 0.0, 1.0,
                 clamp(
                     MoverParameters->Vel / 40.0,
-                    0.0, 1.0 ) );
+                    0.0, 1.0 ) )
+            + ( MyTrack->eType == tt_Switch ? 0.25 : 0.0 );
     }
     else {
         volume = 0;
@@ -4386,6 +4421,17 @@ void TDynamicObject::RenderSounds() {
     }
     else {
         rscurve.stop();
+    }
+
+    // movement start jolt
+    if( false == m_startjoltplayed ) {
+        auto const velocity { GetVelocity() };
+        if( ( MoverParameters->V > 0.0 ? ( MoverParameters->AccSVBased > 0.1 ) : ( MoverParameters->AccSVBased < 0.1 ) )
+         && ( velocity >  1.0 )
+         && ( velocity < 15.0 ) ) {
+            m_startjolt.play( sound_flags::exclusive );
+            m_startjoltplayed = true;
+        }
     }
 
     // McZapkie! - to wazne - SoundFlag wystawiane jest przez moje moduly
@@ -5260,6 +5306,35 @@ void TDynamicObject::LoadMMediaFile( std::string const &TypeName, std::string co
                     }
                 }
 
+                else if( token == "motorblower:" ) {
+
+                    sound_source blowertemplate { sound_placement::engine };
+                    blowertemplate.deserialize( parser, sound_type::single, sound_parameters::range | sound_parameters::amplitude | sound_parameters::frequency );
+                    blowertemplate.owner( this );
+
+                    auto const amplitudedivisor = static_cast<float>(
+                        MoverParameters->MotorBlowers[ side::front ].speed > 0.f ?
+                            MoverParameters->MotorBlowers[ side::front ].speed * MoverParameters->nmax * 60 + MoverParameters->Power * 3 :
+                            MoverParameters->MotorBlowers[ side::front ].speed * -1 );
+                    blowertemplate.m_amplitudefactor /= amplitudedivisor;
+                    blowertemplate.m_frequencyfactor /= amplitudedivisor;
+
+                    if( true == m_powertrainsounds.motors.empty() ) {
+                        // fallback for cases without specified motor locations, convert sound template to a single sound source
+                        m_powertrainsounds.motorblowers.emplace_back( blowertemplate );
+                    }
+                    else {
+                        // apply configuration to all defined motor blowers
+                        for( auto &blower : m_powertrainsounds.motorblowers ) {
+                            // combine potential x- and y-axis offsets of the sound template with z-axis offsets of individual blowers
+                            auto bloweroffset { blowertemplate.offset() };
+                            bloweroffset.z = blower.offset().z;
+                            blower = blowertemplate;
+                            blower.offset( bloweroffset );
+                        }
+                    }
+                }
+
 				else if( token == "inverter:" ) {
 					// plik z dzwiekiem wentylatora, mnozniki i ofsety amp. i czest.
                     m_powertrainsounds.inverter.deserialize( parser, sound_type::single, sound_parameters::range | sound_parameters::amplitude | sound_parameters::frequency );
@@ -5370,12 +5445,6 @@ void TDynamicObject::LoadMMediaFile( std::string const &TypeName, std::string co
                     sHorn3.owner( this );
                 }
 
-				else if( token == "departuresignal:" ) {
-					// pliki z sygnalem odjazdu
-                    sDepartureSignal.deserialize( parser, sound_type::multipart, sound_parameters::range );
-                    sDepartureSignal.owner( this );
-                }
-
 				else if( token == "pantographup:" ) {
 					// pliki dzwiekow pantografow
                     sound_source pantographup { sound_placement::external };
@@ -5425,6 +5494,19 @@ void TDynamicObject::LoadMMediaFile( std::string const &TypeName, std::string co
 					// pliki z przetwornica
                     sSmallCompressor.deserialize( parser, sound_type::multipart, sound_parameters::range );
                     sSmallCompressor.owner( this );
+                }
+
+                else if( token == "departuresignal:" ) {
+					// pliki z sygnalem odjazdu
+                    sound_source soundtemplate { sound_placement::general, 25.f };
+                    soundtemplate.deserialize( parser, sound_type::multipart, sound_parameters::range );
+                    soundtemplate.owner( this );
+                    for( auto &door : m_doorsounds ) {
+                        // apply configuration to all defined doors, but preserve their individual offsets
+                        auto const dooroffset { door.lock.offset() };
+                        door.sDepartureSignal = soundtemplate;
+                        door.sDepartureSignal.offset( dooroffset );
+                    }
                 }
 
 				else if( token == "dooropen:" ) {
@@ -5576,6 +5658,7 @@ void TDynamicObject::LoadMMediaFile( std::string const &TypeName, std::string co
                          || ( sides == "left" ) ) {
                             // left...
                             auto const location { glm::vec3 { MoverParameters->Dim.W * 0.5f, MoverParameters->Dim.H * 0.5f, offset } };
+                            door.sDepartureSignal.offset( location );
                             door.rsDoorClose.offset( location );
                             door.rsDoorOpen.offset( location );
                             door.lock.offset( location );
@@ -5588,6 +5671,7 @@ void TDynamicObject::LoadMMediaFile( std::string const &TypeName, std::string co
                          || ( sides == "right" ) ) {
                             // ...and right
                             auto const location { glm::vec3 { MoverParameters->Dim.W * -0.5f, MoverParameters->Dim.H * 0.5f, offset } };
+                            door.sDepartureSignal.offset( location );
                             door.rsDoorClose.offset( location );
                             door.rsDoorOpen.offset( location );
                             door.lock.offset( location );
@@ -5607,10 +5691,13 @@ void TDynamicObject::LoadMMediaFile( std::string const &TypeName, std::string co
                         auto const offset { std::atof( token.c_str() ) * -1.f };
                         // NOTE: we skip setting owner of the sounds, it'll be done during individual sound deserialization
                         sound_source motor { sound_placement::external }; // generally traction motor
+                        sound_source motorblower { sound_placement::engine }; // associated motor blowers
                         // add entry to the list
                         auto const location { glm::vec3 { 0.f, 0.f, offset } };
                         motor.offset( location );
                         m_powertrainsounds.motors.emplace_back( motor );
+                        motorblower.offset( location );
+                        m_powertrainsounds.motorblowers.emplace_back( motorblower );
                     }
                 }
 
@@ -5770,6 +5857,51 @@ void TDynamicObject::LoadMMediaFile( std::string const &TypeName, std::string co
                         couplersounds.dsbBufferClamp_loud = bufferclash;
                     }
                 }
+                else if( token == "startjolt:" ) {
+                    // movement start jolt
+                    m_startjolt.deserialize( parser, sound_type::single );
+                    m_startjolt.owner( this );
+                }
+
+                else if (token == "mechspring:")
+                {
+                    // parametry bujania kamery:
+                    double ks, kd;
+                    parser.getTokens(2, false);
+                    parser
+                        >> ks
+                        >> kd;
+                    ShakeSpring.Init(ks, kd);
+                    parser.getTokens(6, false);
+                    parser
+                        >> BaseShake.jolt_scale.x
+                        >> BaseShake.jolt_scale.y
+                        >> BaseShake.jolt_scale.z
+                        >> BaseShake.jolt_limit
+                        >> BaseShake.angle_scale.x
+                        >> BaseShake.angle_scale.z;
+                }
+                else if( token == "enginespring:" ) {
+                    parser.getTokens( 5, false );
+                    parser
+                        >> EngineShake.scale
+                        >> EngineShake.fadein_offset
+                        >> EngineShake.fadein_factor
+                        >> EngineShake.fadeout_offset
+                        >> EngineShake.fadeout_factor;
+                    // offsets values are provided as rpm for convenience
+                    EngineShake.fadein_offset /= 60.f;
+                    EngineShake.fadeout_offset /= 60.f;
+                }
+                else if( token == "huntingspring:" ) {
+                    parser.getTokens( 4, false );
+                    parser
+                        >> HuntingShake.scale
+                        >> HuntingShake.frequency
+                        >> HuntingShake.fadein_begin
+                        >> HuntingShake.fadein_end;
+                }
+
 
             } while( token != "" );
 
@@ -6385,6 +6517,102 @@ TDynamicObject::ConnectedEnginePowerSource( TDynamicObject const *Caller ) const
     return MoverParameters->EnginePowerSource.SourceType;
 }
 
+void
+TDynamicObject::update_shake( double const Timedelta ) {
+    // Ra: mechanik powinien być telepany niezależnie od pozycji pojazdu
+    // Ra: trzeba zrobić model bujania głową i wczepić go do pojazdu
+
+    // Ra: tu by się przydało uwzględnić rozkład sił:
+    // - na postoju horyzont prosto, kabina skosem
+    // - przy szybkiej jeździe kabina prosto, horyzont pochylony
+
+    // McZapkie: najpierw policzę pozycję w/m kabiny
+
+    // ABu: rzucamy kabina tylko przy duzym FPS!
+    // Mala histereza, zeby bez przerwy nie przelaczalo przy FPS~17
+    // Granice mozna ustalic doswiadczalnie. Ja proponuje 14:20
+    if( false == Global.iSlowMotion ) { // musi być pełna prędkość
+
+        Math3D::vector3 shakevector;
+        if( ( MoverParameters->EngineType == TEngineType::DieselElectric )
+         || ( MoverParameters->EngineType == TEngineType::DieselEngine ) ) {
+            if( std::abs( MoverParameters->enrot ) > 0.0 ) {
+                // engine vibration
+                shakevector.x +=
+                    ( std::sin( MoverParameters->eAngle * 4.0 ) * Timedelta * EngineShake.scale )
+                    // fade in with rpm above threshold
+                    * clamp(
+                        ( MoverParameters->enrot - EngineShake.fadein_offset ) * EngineShake.fadein_factor,
+                        0.0, 1.0 )
+                    // fade out with rpm above threshold
+                    * interpolate(
+                        1.0, 0.0,
+                        clamp(
+                            ( MoverParameters->enrot - EngineShake.fadeout_offset ) * EngineShake.fadeout_factor,
+                            0.0, 1.0 ) );
+            }
+        }
+
+        if( ( HuntingShake.fadein_begin > 0.f )
+         && ( true == MoverParameters->TruckHunting ) ) {
+            // hunting oscillation
+            HuntingAngle = clamp_circular( HuntingAngle + 4.0 * HuntingShake.frequency * Timedelta * MoverParameters->Vel, 360.0 );
+            auto const huntingamount =
+                interpolate(
+                    0.0, 1.0,
+                    clamp(
+                        ( MoverParameters->Vel - HuntingShake.fadein_begin ) / ( HuntingShake.fadein_end - HuntingShake.fadein_begin ),
+                        0.0, 1.0 ) );
+            shakevector.x +=
+                ( std::sin( glm::radians( HuntingAngle ) ) * Timedelta * HuntingShake.scale )
+                * huntingamount;
+            IsHunting = ( huntingamount > 0.025 );
+        }
+
+        auto const iVel { std::min( GetVelocity(), 150.0 ) };
+        if( iVel > 0.5 ) {
+            // acceleration-driven base shake
+            shakevector += Math3D::vector3(
+                -MoverParameters->AccN * Timedelta * 5.0, // highlight side sway
+                -MoverParameters->AccVert * Timedelta,
+                -MoverParameters->AccSVBased * Timedelta * 1.25 ); // accent acceleration/deceleration
+        }
+
+        auto shake { 1.25 * ShakeSpring.ComputateForces( shakevector, ShakeState.offset ) };
+
+        if( Random( iVel ) > 25.0 ) {
+            // extra shake at increased velocity
+            shake += ShakeSpring.ComputateForces(
+                Math3D::vector3(
+                ( Random( iVel * 2 ) - iVel ) / ( ( iVel * 2 ) * 4 ) * BaseShake.jolt_scale.x,
+                ( Random( iVel * 2 ) - iVel ) / ( ( iVel * 2 ) * 4 ) * BaseShake.jolt_scale.y,
+                ( Random( iVel * 2 ) - iVel ) / ( ( iVel * 2 ) * 4 ) * BaseShake.jolt_scale.z )
+//                * (( 200 - DynamicObject->MyTrack->iQualityFlag ) * 0.0075 ) // scale to 75-150% based on track quality
+                * 1.25,
+                ShakeState.offset );
+        }
+        shake *= 0.85;
+
+        ShakeState.velocity -= ( shake + ShakeState.velocity * 100 ) * ( BaseShake.jolt_scale.x + BaseShake.jolt_scale.y + BaseShake.jolt_scale.z ) / ( 200 );
+
+        // McZapkie:
+        ShakeState.offset += ShakeState.velocity * Timedelta;
+        if( std::abs( ShakeState.offset.y ) >  std::abs( BaseShake.jolt_limit ) ) {
+            ShakeState.velocity.y = -ShakeState.velocity.y;
+        }
+    }
+    else { // hamowanie rzucania przy spadku FPS
+        ShakeState.offset -= ShakeState.offset * std::min( Timedelta, 1.0 ); // po tym chyba potrafią zostać jakieś ułamki, które powodują zjazd
+    }
+}
+
+std::pair<double, double>
+TDynamicObject::shake_angles() const {
+
+    return {
+        std::atan( ShakeState.velocity.x * BaseShake.angle_scale.x ),
+        std::atan( ShakeState.velocity.z * BaseShake.angle_scale.z ) };
+}
 
 void
 TDynamicObject::powertrain_sounds::position( glm::vec3 const Location ) {
@@ -6714,6 +6942,27 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
             motor.stop();
         }
     }
+    // motor blowers
+    if( false == motorblowers.empty() ) {
+        for( auto &blowersound : motorblowers ) {
+            // match the motor blower and the sound source based on whether they're located in the front or the back of the vehicle
+            auto const &blower { Vehicle.MotorBlowers[ ( blowersound.offset().z > 0 ? side::front : side::rear ) ] };
+            if( blower.revolutions > 1 ) {
+
+                blowersound
+                    .pitch(
+                        true == blowersound.is_combined() ?
+                            blower.revolutions * 0.01f :
+                            blowersound.m_frequencyoffset + blowersound.m_frequencyfactor * blower.revolutions )
+                    .gain( blowersound.m_amplitudeoffset + blowersound.m_amplitudefactor * blower.revolutions )
+                    .play( sound_flags::exclusive | sound_flags::looping );
+            }
+            else {
+                blowersound.stop();
+            }
+        }
+    }
+
     // inverter sounds
     if( Vehicle.EngineType == TEngineType::ElectricInductionMotor ) {
         if( Vehicle.InverterFrequency > 0.1 ) {
@@ -7020,7 +7269,7 @@ vehicle_table::erase_disabled() {
             if( ( simulation::Train != nullptr )
              && ( simulation::Train->Dynamic() == vehicle ) ) {
                 // clear potential train binding
-                // TBD, TODO: manually eject the driver first ?
+                // TBD, TODO: kill vehicle sounds
                 SafeDelete( simulation::Train );
             }
             // remove potential entries in the light array

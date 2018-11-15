@@ -11,7 +11,6 @@ file(GLOB HEADERS "*.h" "Console/*.h" "McZapkie/*.h")
 
 set(SOURCES
 "Texture.cpp"
-"TextureDDS.cpp"
 "Timer.cpp"
 "Track.cpp"
 "Traction.cpp"
@@ -77,14 +76,12 @@ set(SOURCES
 "audiorenderer.cpp"
 "motiontelemetry.cpp"
 "utilities.cpp"
-"light.cpp"
 "uitranscripts.cpp"
 "station.cpp"
 "application.cpp"
 "simulationtime.cpp"
 "sceneeditor.cpp"
 "screenshot.cpp"
-"combustionengine.cpp"
 "driverkeyboardinput.cpp"
 "drivermode.cpp"
 "driveruilayer.cpp"
@@ -104,10 +101,19 @@ set(SOURCES
 "imgui/imgui.cpp"
 "imgui/imgui_demo.cpp"
 "imgui/imgui_draw.cpp"
+"imgui/imgui_widgets.cpp"
 "imgui/imgui_impl_glfw.cpp"
-"imgui/imgui_impl_opengl3.cpp"
 "network.cpp"
 )
+
+option(USE_IMGUI_GL3 "Use OpenGL3+ imgui implementation" OFF)
+
+if (USE_IMGUI_GL3)
+	set(SOURCES ${SOURCES} "imgui/imgui_impl_opengl3.cpp")
+else()
+	add_definitions(-DEU07_USEIMGUIIMPLOPENGL2)
+	set(SOURCES ${SOURCES} "imgui/imgui_impl_opengl2.cpp")
+endif()
 
 set (PREFIX "")
 

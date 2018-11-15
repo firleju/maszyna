@@ -29,6 +29,7 @@ http://mozilla.org/MPL/2.0/.
 #include "mtable.h"
 #include "Console.h"
 #include "application.h"
+#include "renderer.h"
 
 namespace input {
 
@@ -266,6 +267,9 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::compressorenable, &TTrain::OnCommand_compressorenable },
     { user_command::compressordisable, &TTrain::OnCommand_compressordisable },
     { user_command::compressortogglelocal, &TTrain::OnCommand_compressortogglelocal },
+    { user_command::motorblowerstogglefront, &TTrain::OnCommand_motorblowerstogglefront },
+    { user_command::motorblowerstogglerear, &TTrain::OnCommand_motorblowerstogglerear },
+    { user_command::motorblowersdisableall, &TTrain::OnCommand_motorblowersdisableall },
     { user_command::motorconnectorsopen, &TTrain::OnCommand_motorconnectorsopen },
     { user_command::motorconnectorsclose, &TTrain::OnCommand_motorconnectorsclose },
     { user_command::motordisconnect, &TTrain::OnCommand_motordisconnect },
@@ -361,8 +365,6 @@ TTrain::TTrain() {
     fPPress = fNPress = 0;
 
     // asMessage="";
-    pMechShake = Math3D::vector3(0, 0, 0);
-    vMechMovement = Math3D::vector3(0, 0, 0);
     pMechOffset = Math3D::vector3(0, 0, 0);
     fBlinkTimer = 0;
     fHaslerTimer = 0;
@@ -415,15 +417,6 @@ bool TTrain::Init(TDynamicObject *NewDynamicObject, bool e3d)
 
     DynamicObject->MechInside = true;
 
-    MechSpring.Init(125.0);
-    vMechVelocity = Math3D::vector3(0, 0, 0);
-    pMechOffset = Math3D::vector3( 0, 0, 0 );
-    fMechSpringX = 0.2;
-    fMechSpringY = 0.2;
-    fMechSpringZ = 0.1;
-    fMechMaxSpring = 0.15;
-    fMechRoll = 0.05;
-    fMechPitch = 0.1;
     fMainRelayTimer = 0; // Hunter, do k...y nędzy, ustawiaj wartości początkowe zmiennych!
 
 	if( false == LoadMMediaFile( DynamicObject->asBaseDir + DynamicObject->MoverParameters->TypeName + ".mmd" ) ) {
@@ -448,9 +441,11 @@ bool TTrain::Init(TDynamicObject *NewDynamicObject, bool e3d)
 PyObject *TTrain::GetTrainState() {
 
     auto const *mover = DynamicObject->MoverParameters;
+    Application.acquire_python_lock();
     auto *dict = PyDict_New();
     if( ( dict == nullptr )
      || ( mover == nullptr ) ) {
+        Application.release_python_lock();
         return nullptr;
     }
 
@@ -580,6 +575,7 @@ PyObject *TTrain::GetTrainState() {
     PyDict_SetItemString( dict, "seconds", PyGetInt( simulation::Time.second() ) );
     PyDict_SetItemString( dict, "air_temperature", PyGetInt( Global.AirTemperature ) );
 
+    Application.release_python_lock();
     return dict;
 }
 
@@ -650,7 +646,6 @@ void TTrain::set_master_controller( double const Position ) {
 void TTrain::set_train_brake( double const Position ) {
 
     auto const originalbrakeposition { static_cast<int>( 100.0 * mvOccupied->fBrakeCtrlPos ) };
-
     mvOccupied->BrakeLevelSet( Position );
 
     if( static_cast<int>( 100.0 * mvOccupied->fBrakeCtrlPos ) == originalbrakeposition ) { return; }
@@ -891,14 +886,13 @@ void TTrain::OnCommand_secondcontrollerdecreasefast( TTrain *Train, command_data
 }
 
 void TTrain::OnCommand_secondcontrollerset( TTrain *Train, command_data const &Command ) {
-
     auto const targetposition { std::min<int>( Command.param1, Train->mvControlled->ScndCtrlPosNo ) };
-    while( ( targetposition < Train->mvControlled->ScndCtrlPos )
+    while( ( targetposition < Train->mvControlled->GetVirtualScndPos() )
         && ( true == Train->mvControlled->DecScndCtrl( 1 ) ) ) {
         // all work is done in the header
         ;
     }
-    while( ( targetposition > Train->mvControlled->ScndCtrlPos )
+    while( ( targetposition > Train->mvControlled->GetVirtualScndPos() )
         && ( true == Train->mvControlled->IncScndCtrl( 1 ) ) ) {
         // all work is done in the header
         ;
@@ -1014,14 +1008,14 @@ void TTrain::OnCommand_independentbrakebailoff( TTrain *Train, command_data cons
 
 void TTrain::OnCommand_trainbrakeincrease( TTrain *Train, command_data const &Command ) {
 	if (Command.action == GLFW_REPEAT && Train->mvOccupied->BrakeHandle == TBrakeHandle::FV4a)
-		Train->mvOccupied->BrakeLevelAdd( Global.brake_speed * Command.time_delta );
+		Train->mvOccupied->BrakeLevelAdd( Global.brake_speed * Command.time_delta * Train->mvOccupied->BrakeCtrlPosNo );
 	else if (Command.action == GLFW_PRESS && Train->mvOccupied->BrakeHandle != TBrakeHandle::FV4a)
 		Train->set_train_brake( Train->mvOccupied->fBrakeCtrlPos + Global.fBrakeStep );
 }
 
 void TTrain::OnCommand_trainbrakedecrease( TTrain *Train, command_data const &Command ) {
 	if (Command.action == GLFW_REPEAT && Train->mvOccupied->BrakeHandle == TBrakeHandle::FV4a)
-		Train->mvOccupied->BrakeLevelAdd( -Global.brake_speed * Command.time_delta );
+		Train->mvOccupied->BrakeLevelAdd( -Global.brake_speed * Command.time_delta * Train->mvOccupied->BrakeCtrlPosNo );
 	else if (Command.action == GLFW_PRESS && Train->mvOccupied->BrakeHandle != TBrakeHandle::FV4a)
 		Train->set_train_brake( Train->mvOccupied->fBrakeCtrlPos - Global.fBrakeStep );
 
@@ -2776,8 +2770,193 @@ void TTrain::OnCommand_compressortogglelocal( TTrain *Train, command_data const 
     }
 }
 
-void TTrain::OnCommand_motorconnectorsopen( TTrain *Train, command_data const &cmd ) {
-    command_data Command = cmd;
+void TTrain::OnCommand_motorblowerstogglefront( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersFrontButton.type() == TGaugeType::push ) {
+        // impulse switch
+        // currently there's no off button so we always try to turn it on
+        OnCommand_motorblowersenablefront( Train, Command );
+    }
+    else {
+        // two-state switch
+        if( Command.action == GLFW_RELEASE ) { return; }
+
+        if( false == Train->mvControlled->MotorBlowers[side::front].is_enabled ) {
+            // turn on
+            OnCommand_motorblowersenablefront( Train, Command );
+        }
+        else {
+            //turn off
+            OnCommand_motorblowersdisablefront( Train, Command );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersenablefront( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersFrontButton.type() == TGaugeType::push ) {
+        // impulse switch
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersFrontButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( true, side::front );
+        }
+        else if( Command.action == GLFW_RELEASE ) {
+            // visual feedback
+            Train->ggMotorBlowersFrontButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( false, side::front );
+        }
+    }
+    else {
+        // two-state switch, only cares about press events
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersFrontButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( true, side::front );
+            Train->mvControlled->MotorBlowersSwitchOff( false, side::front );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersdisablefront( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersFrontButton.type() == TGaugeType::push ) {
+        // impulse switch
+        // currently there's no disable return type switch
+        return;
+    }
+    else {
+        // two-state switch, only cares about press events
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersFrontButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( false, side::front );
+            Train->mvControlled->MotorBlowersSwitchOff( true, side::front );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowerstogglerear( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersRearButton.type() == TGaugeType::push ) {
+        // impulse switch
+        // currently there's no off button so we always try to turn it on
+        OnCommand_motorblowersenablerear( Train, Command );
+    }
+    else {
+        // two-state switch
+        if( Command.action == GLFW_RELEASE ) { return; }
+
+        if( false == Train->mvControlled->MotorBlowers[ side::rear ].is_enabled ) {
+            // turn on
+            OnCommand_motorblowersenablerear( Train, Command );
+        }
+        else {
+            //turn off
+            OnCommand_motorblowersdisablerear( Train, Command );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersenablerear( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersRearButton.type() == TGaugeType::push ) {
+        // impulse switch
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersRearButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( true, side::rear );
+        }
+        else if( Command.action == GLFW_RELEASE ) {
+            // visual feedback
+            Train->ggMotorBlowersRearButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( false, side::rear );
+        }
+    }
+    else {
+        // two-state switch, only cares about press events
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersRearButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( true, side::rear );
+            Train->mvControlled->MotorBlowersSwitchOff( false, side::rear );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersdisablerear( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersRearButton.type() == TGaugeType::push ) {
+        // impulse switch
+        // currently there's no disable return type switch
+        return;
+    }
+    else {
+        // two-state switch, only cares about press events
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersRearButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitch( false, side::rear );
+            Train->mvControlled->MotorBlowersSwitchOff( true, side::rear );
+        }
+    }
+}
+
+void TTrain::OnCommand_motorblowersdisableall( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_REPEAT ) { return; }
+
+    if( Train->ggMotorBlowersAllOffButton.type() == TGaugeType::push ) {
+        // impulse switch
+        if( Command.action == GLFW_PRESS ) {
+            // visual feedback
+            Train->ggMotorBlowersAllOffButton.UpdateValue( 1.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitchOff( true, side::front );
+            Train->mvControlled->MotorBlowersSwitchOff( true, side::rear );
+        }
+        else if( Command.action == GLFW_RELEASE ) {
+            // visual feedback
+            Train->ggMotorBlowersAllOffButton.UpdateValue( 0.f, Train->dsbSwitch );
+            Train->mvControlled->MotorBlowersSwitchOff( false, side::front );
+            Train->mvControlled->MotorBlowersSwitchOff( false, side::rear );
+        }
+    }
+    else {
+        // two-state switch, only cares about press events
+        // NOTE: generally this switch doesn't come in two-state form
+        if( Command.action == GLFW_PRESS ) {
+            if( Train->ggMotorBlowersAllOffButton.GetDesiredValue() < 0.5f ) {
+                // switch is off, activate
+                Train->mvControlled->MotorBlowersSwitchOff( true, side::front );
+                Train->mvControlled->MotorBlowersSwitchOff( true, side::rear );
+                // visual feedback
+                Train->ggMotorBlowersRearButton.UpdateValue( 1.f, Train->dsbSwitch );
+            }
+            else {
+                // deactivate
+                Train->mvControlled->MotorBlowersSwitchOff( false, side::front );
+                Train->mvControlled->MotorBlowersSwitchOff( false, side::rear );
+                // visual feedback
+                Train->ggMotorBlowersRearButton.UpdateValue( 0.f, Train->dsbSwitch );
+            }
+        }
+    }
+}
+
+void TTrain::OnCommand_motorconnectorsopen( TTrain *Train, command_data const &Command ) {
+
     // TODO: don't rely on presense of 3d model to determine presence of the switch
     if( Train->ggStLinOffButton.SubModel == nullptr ) {
         if( Command.action == GLFW_PRESS ) {
@@ -4528,144 +4707,25 @@ void TTrain::OnCommand_cabchangebackward( TTrain *Train, command_data const &Com
 }
 
 // cab movement update, fixed step part
-void TTrain::UpdateMechPosition(double dt)
-{ // Ra: mechanik powinien być
-    // telepany niezależnie od pozycji
-    // pojazdu
-    // Ra: trzeba zrobić model bujania głową i wczepić go do pojazdu
+void TTrain::UpdateCab() {
 
-    // DynamicObject->vFront=DynamicObject->GetDirection(); //to jest już
-    // policzone
+    // Ra: przesiadka, jeśli AI zmieniło kabinę (a człon?)...
+    if( ( DynamicObject->Mechanik ) // może nie być?
+     && ( DynamicObject->Mechanik->AIControllFlag ) ) { 
+        
+        if( iCabn != ( // numer kabiny (-1: kabina B)
+                DynamicObject->MoverParameters->ActiveCab == -1 ?
+                    2 :
+                    DynamicObject->MoverParameters->ActiveCab ) ) {
 
-    // Ra: tu by się przydało uwzględnić rozkład sił:
-    // - na postoju horyzont prosto, kabina skosem
-    // - przy szybkiej jeździe kabina prosto, horyzont pochylony
-
-    Math3D::vector3 shake;
-    // McZapkie: najpierw policzę pozycję w/m kabiny
-
-    // ABu: rzucamy kabina tylko przy duzym FPS!
-    // Mala histereza, zeby bez przerwy nie przelaczalo przy FPS~17
-    // Granice mozna ustalic doswiadczalnie. Ja proponuje 14:20
-    double const iVel = std::min( DynamicObject->GetVelocity(), 150.0 );
-
-    if( ( false == Global.iSlowMotion ) // musi być pełna prędkość
-     && ( pMechOffset.y < 4.0 ) ) // Ra 15-01: przy oglądaniu pantografu bujanie przeszkadza
-    {
-        Math3D::vector3 shakevector;
-        if( ( mvOccupied->EngineType == TEngineType::DieselElectric )
-         || ( mvOccupied->EngineType == TEngineType::DieselEngine ) ) {
-            if( std::abs( mvOccupied->enrot ) > 0.0 ) {
-                // engine vibration
-                shakevector.x +=
-                    ( std::sin( mvOccupied->eAngle * 4.0 ) * dt * EngineShake.scale )
-                    // fade in with rpm above threshold
-                    * clamp(
-                        ( mvOccupied->enrot - EngineShake.fadein_offset ) * EngineShake.fadein_factor,
-                        0.0, 1.0 )
-                    // fade out with rpm above threshold
-                    * interpolate(
-                        1.0, 0.0,
-                        clamp(
-                            ( mvOccupied->enrot - EngineShake.fadeout_offset ) * EngineShake.fadeout_factor,
-                            0.0, 1.0 ) );
-            }
+            InitializeCab(
+                DynamicObject->MoverParameters->ActiveCab,
+                DynamicObject->asBaseDir + DynamicObject->MoverParameters->TypeName + ".mmd" );
         }
-
-        if( ( HuntingShake.fadein_begin > 0.f )
-         && ( true == mvOccupied->TruckHunting ) ) {
-            // hunting oscillation
-            HuntingAngle = clamp_circular( HuntingAngle + 4.0 * HuntingShake.frequency * dt * mvOccupied->Vel, 360.0 );
-            auto const huntingamount =
-                interpolate(
-                    0.0, 1.0,
-                    clamp(
-                        ( mvOccupied->Vel - HuntingShake.fadein_begin ) / ( HuntingShake.fadein_end - HuntingShake.fadein_begin ),
-                        0.0, 1.0 ) );
-            shakevector.x +=
-                ( std::sin( glm::radians( HuntingAngle ) ) * dt * HuntingShake.scale )
-                * huntingamount;
-            IsHunting = ( huntingamount > 0.025 );
-        }
-
-        if( iVel > 0.5 ) {
-            // acceleration-driven base shake
-            shakevector += Math3D::vector3(
-                -mvOccupied->AccN * dt * 5.0, // highlight side sway
-                -mvOccupied->AccVert * dt,
-                -mvOccupied->AccSVBased * dt * 1.25 ); // accent acceleration/deceleration
-        }
-
-        shake += 1.25 * MechSpring.ComputateForces( shakevector, pMechShake );
-
-        if( Random( iVel ) > 25.0 ) {
-            // extra shake at increased velocity
-            shake += MechSpring.ComputateForces(
-                Math3D::vector3(
-                ( Random( iVel * 2 ) - iVel ) / ( ( iVel * 2 ) * 4 ) * fMechSpringX,
-                ( Random( iVel * 2 ) - iVel ) / ( ( iVel * 2 ) * 4 ) * fMechSpringY,
-                ( Random( iVel * 2 ) - iVel ) / ( ( iVel * 2 ) * 4 ) * fMechSpringZ )
-                * 1.25,
-                pMechShake );
-            //                    * (( 200 - DynamicObject->MyTrack->iQualityFlag ) * 0.0075 ); // scale to 75-150% based on track quality
-        }
-        shake *= 0.85;
-
-        vMechVelocity -= ( shake + vMechVelocity * 100 ) * ( fMechSpringX + fMechSpringY + fMechSpringZ ) / ( 200 );
-        //        shake *= 0.95 * dt; // shake damping
-
-        // McZapkie:
-        pMechShake += vMechVelocity * dt;
-        if( ( pMechShake.y >  fMechMaxSpring )
-         || ( pMechShake.y < -fMechMaxSpring ) ) {
-            vMechVelocity.y = -vMechVelocity.y;
-        }
-        // Ra 2015-01: dotychczasowe rzucanie
-        pMechOffset += vMechMovement * dt;
-        // ABu011104: 5*pMechShake.y, zeby ladnie pudlem rzucalo :)
-        pMechPosition = pMechOffset + Math3D::vector3( 1.5 * pMechShake.x, 2.0 * pMechShake.y, 1.5 * pMechShake.z );
-
-//        pMechShake = interpolate( pMechShake, Math3D::vector3(), clamp( dt, 0.0, 1.0 ) );
     }
-    else { // hamowanie rzucania przy spadku FPS
-        pMechShake -= pMechShake * std::min( dt, 1.0 ); // po tym chyba potrafią zostać jakieś ułamki, które powodują zjazd
-        pMechOffset += vMechMovement * dt;
-        vMechVelocity.y = 0.5 * vMechVelocity.y;
-        pMechPosition = pMechOffset + Math3D::vector3( pMechShake.x, 5 * pMechShake.y, pMechShake.z );
-    }
-    // numer kabiny (-1: kabina B)
-    if( DynamicObject->Mechanik ) // może nie być?
-        if( DynamicObject->Mechanik->AIControllFlag ) // jeśli prowadzi AI
-        { // Ra: przesiadka, jeśli AI zmieniło kabinę (a człon?)...
-            if( iCabn != ( DynamicObject->MoverParameters->ActiveCab == -1 ?
-                2 :
-                DynamicObject->MoverParameters->ActiveCab ) )
-                InitializeCab( DynamicObject->MoverParameters->ActiveCab,
-                DynamicObject->asBaseDir + DynamicObject->MoverParameters->TypeName +
-                ".mmd" );
-        }
     iCabn = ( DynamicObject->MoverParameters->ActiveCab == -1 ?
         2 :
         DynamicObject->MoverParameters->ActiveCab );
-    if( !DebugModeFlag ) { // sprawdzaj więzy //Ra: nie tu!
-
-        pMechPosition.x = clamp( pMechPosition.x, Cabine[ iCabn ].CabPos1.x, Cabine[ iCabn ].CabPos2.x );
-        pMechPosition.y = clamp( pMechPosition.y, Cabine[ iCabn ].CabPos1.y + 0.5, Cabine[ iCabn ].CabPos2.y + 1.8 );
-        pMechPosition.z = clamp( pMechPosition.z, Cabine[ iCabn ].CabPos1.z, Cabine[ iCabn ].CabPos2.z );
-
-        pMechOffset.x = clamp( pMechOffset.x, Cabine[ iCabn ].CabPos1.x, Cabine[ iCabn ].CabPos2.x );
-        pMechOffset.y = clamp( pMechOffset.y, Cabine[ iCabn ].CabPos1.y + 0.5, Cabine[ iCabn ].CabPos2.y + 1.8 );
-        pMechOffset.z = clamp( pMechOffset.z, Cabine[ iCabn ].CabPos1.z, Cabine[ iCabn ].CabPos2.z );
-    }
-};
-
-// returns position of the mechanic in the scene coordinates
-Math3D::vector3
-TTrain::GetWorldMechPosition() {
-
-    auto position = DynamicObject->mMatrix * pMechPosition; // położenie względem środka pojazdu w układzie scenerii
-    position += DynamicObject->GetPosition();
-    return position;
 }
 
 bool TTrain::Update( double const Deltatime )
@@ -4746,17 +4806,7 @@ bool TTrain::Update( double const Deltatime )
         }
     }
 
-    // update driver's position
-    {
-        auto Vec = Global.pCamera.Velocity * -2.0;// -7.5 * Timer::GetDeltaRenderTime();
-        Vec.y = -Vec.y;
-        if( mvOccupied->ActiveCab < 0 ) {
-            Vec *= -1.0f;
-            Vec.y = -Vec.y;
-        }
-        Vec.RotateY( Global.pCamera.Yaw );
-        vMechMovement = Vec;
-    }
+    UpdateCab();
 
     if (DynamicObject->mdKabina)
     { // Ra: TODO: odczyty klawiatury/pulpitu nie powinny być uzależnione od istnienia modelu kabiny
@@ -4779,18 +4829,6 @@ bool TTrain::Update( double const Deltatime )
                         // Ra 15-01: a to nie miało być tylko cofanie?
                         mvOccupied->IncMainCtrl( 1 );
                     }
-                }
-            }
-
-            if( ( mvOccupied->BrakeHandle == TBrakeHandle::FVel6 )
-             && ( mvOccupied->fBrakeCtrlPos < 0.0 )
-             && ( Global.iFeedbackMode < 3 ) ) {
-                // Odskakiwanie hamulce EP
-                if( false == (
-                    ( input::command == user_command::trainbrakeset )
-                 || ( input::command == user_command::trainbrakedecrease )
-                 || ( input::command == user_command::trainbrakecharging ) ) ) {
-                    set_train_brake( 0 );
                 }
             }
         }
@@ -5055,7 +5093,7 @@ bool TTrain::Update( double const Deltatime )
                         ggWater1TempB.Update();
                     }
                     if( ggOilPressB.SubModel ) {
-                        ggOilPressB.UpdateValue( tmp->MoverParameters->OilPump.pressure_present );
+                        ggOilPressB.UpdateValue( tmp->MoverParameters->OilPump.pressure );
                         ggOilPressB.Update();
                     }
                 }
@@ -5334,6 +5372,7 @@ bool TTrain::Update( double const Deltatime )
             btLampkaDoorLeft.Turn(mvOccupied->DoorLeftOpened);
             btLampkaDoorRight.Turn(mvOccupied->DoorRightOpened);
             btLampkaBlokadaDrzwi.Turn(mvOccupied->DoorBlockedFlag());
+            btLampkaDoorLockOff.Turn( false == mvOccupied->DoorLockEnabled );
             btLampkaDepartureSignal.Turn( mvControlled->DepartureSignal );
             btLampkaNapNastHam.Turn((mvControlled->ActiveDir != 0) && (mvOccupied->EpFuse)); // napiecie na nastawniku hamulcowym
             btLampkaForward.Turn(mvControlled->ActiveDir > 0); // jazda do przodu
@@ -5356,7 +5395,7 @@ bool TTrain::Update( double const Deltatime )
             btLampkaRearRightEndLight.Turn( ( mvOccupied->iLights[ side::rear ] & light::redmarker_right ) != 0 );
             // others
             btLampkaMalfunction.Turn( mvControlled->dizel_heat.PA );
-            btLampkaMotorBlowers.Turn( mvControlled->RventRot > 0.1 );
+            btLampkaMotorBlowers.Turn( ( mvControlled->MotorBlowers[ side::front ].is_active ) && ( mvControlled->MotorBlowers[ side::rear ].is_active ) );
         }
         else {
             // wylaczone
@@ -5392,6 +5431,7 @@ bool TTrain::Update( double const Deltatime )
             btLampkaDoorLeft.Turn( false );
             btLampkaDoorRight.Turn( false );
             btLampkaBlokadaDrzwi.Turn( false );
+            btLampkaDoorLockOff.Turn( false );
             btLampkaDepartureSignal.Turn( false );
             btLampkaNapNastHam.Turn( false );
             btLampkaForward.Turn( false );
@@ -5697,6 +5737,8 @@ bool TTrain::Update( double const Deltatime )
         ggHornLowButton.Update();
         ggHornHighButton.Update();
         ggWhistleButton.Update();
+		ggHelperButton.UpdateValue(DynamicObject->Mechanik->HelperState);
+		ggHelperButton.Update();
         for( auto &universal : ggUniversals ) {
             universal.Update();
         }
@@ -5715,6 +5757,9 @@ bool TTrain::Update( double const Deltatime )
         ggWaterCircuitsLinkButton.Update();
         ggFuelPumpButton.Update();
         ggOilPumpButton.Update();
+        ggMotorBlowersFrontButton.Update();
+        ggMotorBlowersRearButton.Update();
+        ggMotorBlowersAllOffButton.Update();
         //------
     }
     // wyprowadzenie sygnałów dla haslera na PoKeys (zaznaczanie na taśmie)
@@ -5723,11 +5768,12 @@ bool TTrain::Update( double const Deltatime )
 
     // calculate current level of interior illumination
     // TODO: organize it along with rest of train update in a more sensible arrangement
+    auto interiorlightlevel { 0.f };
     switch( iCabLightFlag ) // Ra: uzeleżnic od napięcia w obwodzie sterowania
     { // hunter-091012: uzaleznienie jasnosci od przetwornicy
         case 0: {
             //światło wewnętrzne zgaszone
-            DynamicObject->InteriorLightLevel = 0.0f;
+            interiorlightlevel = 0.0f;
             break;
         }
         case 1: {
@@ -5737,7 +5783,7 @@ bool TTrain::Update( double const Deltatime )
              || ( ( ( mvOccupied->Couplers[ side::front ].CouplingFlag & coupling::permanent ) != 0 ) && mvOccupied->Couplers[ side::front ].Connected->ConverterFlag )
              || ( ( ( mvOccupied->Couplers[ side::rear  ].CouplingFlag & coupling::permanent ) != 0 ) && mvOccupied->Couplers[ side::rear  ].Connected->ConverterFlag ) ) };
 
-            DynamicObject->InteriorLightLevel = (
+            interiorlightlevel = (
                 converteractive ?
                     0.4f :
                     0.2f );
@@ -5750,13 +5796,14 @@ bool TTrain::Update( double const Deltatime )
              || ( ( ( mvOccupied->Couplers[ side::front ].CouplingFlag & coupling::permanent ) != 0 ) && mvOccupied->Couplers[ side::front ].Connected->ConverterFlag )
              || ( ( ( mvOccupied->Couplers[ side::rear  ].CouplingFlag & coupling::permanent ) != 0 ) && mvOccupied->Couplers[ side::rear  ].Connected->ConverterFlag ) ) };
 
-            DynamicObject->InteriorLightLevel = (
+            interiorlightlevel = (
                 converteractive ?
                     1.0f :
                     0.5f );
             break;
         }
     }
+    DynamicObject->set_cab_lights( interiorlightlevel );
 
     // anti slip system activation, maintained while the control button is down
     if( mvOccupied->BrakeSystem != TBrakeSystem::ElectroPneumatic ) {
@@ -5807,7 +5854,7 @@ bool TTrain::Update( double const Deltatime )
      && ( false == FreeFlyModeFlag ) ) { // don't bother if we're outside
         fScreenTimer = 0.f;
         for( auto const &screen : m_screens ) {
-            Application.request( { screen.first, GetTrainState(), screen.second } );
+            Application.request( { screen.first, GetTrainState(), GfxRenderer.Texture( screen.second ).id } );
         }
     }
     // sounds
@@ -5985,7 +6032,7 @@ TTrain::update_sounds( double const Deltatime ) {
     if( ( false == FreeFlyModeFlag )
      && ( false == Global.CabWindowOpen )
      && ( DynamicObject->GetVelocity() > 0.5 )
-     && ( IsHunting ) ) {
+     && ( DynamicObject->IsHunting ) ) {
 
         update_sounds_runningnoise( rsHuntingNoise );
         // modify calculated sound volume by hunting amount
@@ -5993,7 +6040,7 @@ TTrain::update_sounds( double const Deltatime ) {
             interpolate(
                 0.0, 1.0,
                 clamp(
-                ( mvOccupied->Vel - HuntingShake.fadein_begin ) / ( HuntingShake.fadein_end - HuntingShake.fadein_begin ),
+                ( mvOccupied->Vel - DynamicObject->HuntingShake.fadein_begin ) / ( DynamicObject->HuntingShake.fadein_end - DynamicObject->HuntingShake.fadein_begin ),
                     0.0, 1.0 ) );
 
         rsHuntingNoise.gain( rsHuntingNoise.gain() * huntingamount );
@@ -6311,44 +6358,6 @@ bool TTrain::LoadMMediaFile(std::string const &asFileName)
                 rsHuntingNoise.m_amplitudefactor /= ( 1 + mvOccupied->Vmax );
                 rsHuntingNoise.m_frequencyfactor /= ( 1 + mvOccupied->Vmax );
             }
-            else if (token == "mechspring:")
-            {
-                // parametry bujania kamery:
-                double ks, kd;
-                parser.getTokens(2, false);
-                parser
-                    >> ks
-                    >> kd;
-                MechSpring.Init(ks, kd);
-                parser.getTokens(6, false);
-                parser
-                    >> fMechSpringX
-                    >> fMechSpringY
-                    >> fMechSpringZ
-                    >> fMechMaxSpring
-                    >> fMechRoll
-                    >> fMechPitch;
-            }
-            else if( token == "enginespring:" ) {
-                parser.getTokens( 5, false );
-                parser
-                    >> EngineShake.scale
-                    >> EngineShake.fadein_offset
-                    >> EngineShake.fadein_factor
-                    >> EngineShake.fadeout_offset
-                    >> EngineShake.fadeout_factor;
-                // offsets values are provided as rpm for convenience
-                EngineShake.fadein_offset /= 60.f;
-                EngineShake.fadeout_offset /= 60.f;
-            }
-            else if( token == "huntingspring:" ) {
-                parser.getTokens( 4, false );
-                parser
-                    >> HuntingShake.scale
-                    >> HuntingShake.frequency
-                    >> HuntingShake.fadein_begin
-                    >> HuntingShake.fadein_end;
-            }
 
         } while (token != "");
     }
@@ -6393,8 +6402,6 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
     }
     // reset view angles
     pMechViewAngle = { 0.0, 0.0 };
-    Global.pCamera.Pitch = pMechViewAngle.x;
-    Global.pCamera.Yaw = pMechViewAngle.y;
     bool parse = false;
     int cabindex = 0;
     DynamicObject->mdKabina = NULL; // likwidacja wskaźnika na dotychczasową kabinę
@@ -6492,9 +6499,10 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
                 >> viewangle.y // yaw first, then pitch
                 >> viewangle.x;
             pMechViewAngle = glm::radians( viewangle );
+/*
             Global.pCamera.Pitch = pMechViewAngle.x;
             Global.pCamera.Yaw = pMechViewAngle.y;
-
+*/
             parser.getTokens();
             parser >> token;
         }
@@ -6615,7 +6623,7 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
                     ( substr_path(renderername).empty() ? // supply vehicle folder as path if none is provided
                         DynamicObject->asBaseDir + renderername :
                         renderername ),
-                    material );
+                    GfxRenderer.Material( material ).texture1 );
             }
             // btLampkaUnknown.Init("unknown",mdKabina,false);
         } while (token != "");
@@ -6684,14 +6692,6 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
     }
     return (token == "none");
 }
-
-void TTrain::MechStop()
-{ // likwidacja ruchu kamery w kabinie (po powrocie przez [F4])
-    pMechPosition = Math3D::vector3(0, 0, 0);
-    pMechShake = Math3D::vector3(0, 0, 0);
-    vMechMovement = Math3D::vector3(0, 0, 0);
-    vMechVelocity = Math3D::vector3(0, 0, 0); // tu zostawały jakieś ułamki, powodujące uciekanie kamery
-};
 
 Math3D::vector3 TTrain::MirrorPosition(bool lewe)
 { // zwraca współrzędne widoku kamery z lusterka
@@ -6769,6 +6769,26 @@ void TTrain::DynamicSet(TDynamicObject *d)
                     (TMoverParameters *)mvOccupied->Couplers[0].Connected; // wskaźnik na drugiego
         }
 };
+
+// checks whether specified point is within boundaries of the active cab
+bool
+TTrain::point_inside( Math3D::vector3 const Point ) const {
+
+    return ( Point.x >= Cabine[ iCabn ].CabPos1.x )       && ( Point.x <= Cabine[ iCabn ].CabPos2.x )
+        && ( Point.y >= Cabine[ iCabn ].CabPos1.y + 0.5 ) && ( Point.y <= Cabine[ iCabn ].CabPos2.y + 1.8 )
+        && ( Point.z >= Cabine[ iCabn ].CabPos1.z )       && ( Point.z <= Cabine[ iCabn ].CabPos2.z );
+}
+
+Math3D::vector3
+TTrain::clamp_inside( Math3D::vector3 const &Point ) const {
+
+    if( DebugModeFlag ) { return Point; }
+
+    return {
+        clamp( Point.x, Cabine[ iCabn ].CabPos1.x, Cabine[ iCabn ].CabPos2.x ),
+        clamp( Point.y, Cabine[ iCabn ].CabPos1.y + 0.5, Cabine[ iCabn ].CabPos2.y + 1.8 ),
+        clamp( Point.z, Cabine[ iCabn ].CabPos1.z, Cabine[ iCabn ].CabPos2.z ) };
+}
 
 void
 TTrain::radio_message( sound_source *Message, int const Channel ) {
@@ -6875,6 +6895,7 @@ void TTrain::clear_cab_controls()
     ggHornLowButton.Clear();
     ggHornHighButton.Clear();
     ggWhistleButton.Clear();
+	ggHelperButton.Clear();
     ggNextCurrentButton.Clear();
     for( auto &universal : ggUniversals ) {
         universal.Clear();
@@ -6945,6 +6966,9 @@ void TTrain::clear_cab_controls()
     ggWaterCircuitsLinkButton.Clear();
     ggFuelPumpButton.Clear();
     ggOilPumpButton.Clear();
+    ggMotorBlowersFrontButton.Clear();
+    ggMotorBlowersRearButton.Clear();
+    ggMotorBlowersAllOffButton.Clear();
 
     btLampkaPrzetw.Clear();
     btLampkaPrzetwB.Clear();
@@ -6964,6 +6988,7 @@ void TTrain::clear_cab_controls()
     btLampkaRadioStop.Clear();
     btLampkaHamulecReczny.Clear();
     btLampkaBlokadaDrzwi.Clear();
+    btLampkaDoorLockOff.Clear();
     btInstrumentLight.Clear();
     btDashboardLight.Clear();
     btTimetableLight.Clear();
@@ -7289,6 +7314,26 @@ void TTrain::set_cab_controls() {
             1.0 :
             0.0 );
     }
+    // traction motor fans
+    if( ggMotorBlowersFrontButton.type() != TGaugeType::push ) {
+        ggMotorBlowersFrontButton.PutValue(
+            mvControlled->MotorBlowers[side::front].is_enabled ?
+            1.0 :
+            0.0 );
+    }
+    if( ggMotorBlowersRearButton.type() != TGaugeType::push ) {
+        ggMotorBlowersRearButton.PutValue(
+            mvControlled->MotorBlowers[side::rear].is_enabled ?
+            1.0 :
+            0.0 );
+    }
+    if( ggMotorBlowersAllOffButton.type() != TGaugeType::push ) {
+        ggMotorBlowersAllOffButton.PutValue(
+            ( mvControlled->MotorBlowers[side::front].is_disabled
+           || mvControlled->MotorBlowers[ side::front ].is_disabled ) ?
+                1.0 :
+                0.0 );
+    }
     
     // we reset all indicators, as they're set during the update pass
     // TODO: when cleaning up break setting indicator state into a separate function, so we can reuse it
@@ -7305,6 +7350,7 @@ bool TTrain::initialize_button(cParser &Parser, std::string const &Label, int co
         { "i-radiostop:", btLampkaRadioStop },
         { "i-manual_brake:", btLampkaHamulecReczny },
         { "i-door_blocked:", btLampkaBlokadaDrzwi },
+        { "i-door_blockedoff:", btLampkaDoorLockOff },
         { "i-slippery:", btLampkaPoslizg },
         { "i-contactors:", btLampkaStyczn },
         { "i-conv_ovld:", btLampkaNadmPrzetw },
@@ -7445,6 +7491,7 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         { "hornlow_bt:", ggHornLowButton },
         { "hornhigh_bt:", ggHornHighButton },
         { "whistle_bt:", ggWhistleButton },
+		{ "helper_bt:", ggHelperButton },
         { "fuse_bt:", ggFuseButton },
         { "converterfuse_bt:", ggConverterFuseButton },
         { "stlinoff_bt:", ggStLinOffButton },
@@ -7483,6 +7530,9 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         { "fuelpump_sw:", ggFuelPumpButton },
         { "oilpump_sw:", ggOilPumpButton },
         { "oilpressb:", ggOilPressB },
+        { "motorblowersfront_sw:", ggMotorBlowersFrontButton },
+        { "motorblowersrear_sw:", ggMotorBlowersRearButton },
+        { "motorblowersalloff_sw:", ggMotorBlowersAllOffButton },
         { "radio_sw:", ggRadioButton },
         { "radiochannel_sw:", ggRadioChannelSelector },
         { "radiochannelprev_sw:", ggRadioChannelPrevious },
@@ -7648,7 +7698,7 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         // oil pressure
         auto &gauge = Cabine[ Cabindex ].Gauge( -1 ); // pierwsza wolna gałka
         gauge.Load( Parser, DynamicObject, DynamicObject->mdKabina, nullptr );
-        gauge.AssignFloat( &mvControlled->OilPump.pressure_present );
+        gauge.AssignFloat( &mvControlled->OilPump.pressure );
     }
     else if( Label == "oiltemp:" ) {
         // oil temperature

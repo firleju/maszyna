@@ -19,7 +19,7 @@ http://mozilla.org/MPL/2.0/.
 #include "MdlMngr.h"
 #include "simulation.h"
 #include "simulationtime.h"
-#include "event.h"
+#include "Event.h"
 #include "Globals.h"
 #include "Timer.h"
 #include "Logs.h"
@@ -414,11 +414,9 @@ void TAnimContainer::EventAssign(basic_event *ev)
 //------------------------------------------------------------------------------
 
 TAnimModel::TAnimModel( scene::node_data const &Nodedata ) : basic_node( Nodedata ) {
-    // TODO: wrap these in a tuple and move to underlying model
-    for( int index = 0; index < iMaxNumLights; ++index ) {
-        LightsOn[ index ] = LightsOff[ index ] = nullptr; // normalnie nie ma
-        lsLights[ index ] = ls_Off; // a jeśli są, to wyłączone
-    }
+
+    m_lightcolors.fill( glm::vec3{ -1.f } );
+    m_lightopacities.fill( 1.f );
 }
 
 TAnimModel::~TAnimModel()
@@ -445,8 +443,9 @@ bool TAnimModel::Init(std::string const &asName, std::string const &asReplacable
         // tekstura nieprzezroczysta - nie renderować w cyklu przezroczystych
         m_materialdata.textures_alpha = 0x30300030;
     }
-    
-    fBlinkTimer = double( Random( 1000 * fOffTime ) ) / ( 1000 * fOffTime );
+
+// TODO: redo the random timer initialization
+//    fBlinkTimer = Random() * ( fOnTime + fOffTime );
 
     pModel = TModelsManager::GetModel( asName );
     return ( pModel != nullptr );
@@ -455,7 +454,7 @@ bool TAnimModel::Init(std::string const &asName, std::string const &asReplacable
 bool TAnimModel::Load(cParser *parser, bool ter)
 { // rozpoznanie wpisu modelu i ustawienie świateł
 	std::string name = parser->getToken<std::string>();
-    std::string texture = parser->getToken<std::string>(); // tekstura (zmienia na małe)
+    std::string texture = parser->getToken<std::string>( false ); // tekstura (zmienia na małe)
     replace_slashes( name );
     if (!Init( name, texture ))
     {
@@ -498,20 +497,44 @@ bool TAnimModel::Load(cParser *parser, bool ter)
         if (LightsOn[i] || LightsOff[i]) // Ra: zlikwidowałem wymóg istnienia obu
             iNumLights = i + 1;
 
-    if ( parser->getToken<std::string>() == "lights" )
-    {
-		int i = 0;
-		std::string token = parser->getToken<std::string>();
-		while( ( token != "" )
-			&& ( token != "endmodel" ) ) {
+    std::string token;
+    do {
+        token = parser->getToken<std::string>();
 
-			LightSet( i, std::stof( token ) ); // stan światła jest liczbą z ułamkiem
-            ++i;
+        if( token == "lights" ) {
+            auto i{ 0 };
+            while( ( false == ( token = parser->getToken<std::string>() ).empty() )
+                && ( token != "lightcolors" )
+                && ( token != "endmodel" ) ) {
 
-			token = "";
-			parser->getTokens(); *parser >> token;
-		}
-    }
+                if( i < iNumLights ) {
+                    // stan światła jest liczbą z ułamkiem
+                    LightSet( i, std::stof( token ) );
+                }
+                ++i;
+            }
+        }
+
+        if( token == "lightcolors" ) {
+            auto i{ 0 };
+            while( ( false == ( token = parser->getToken<std::string>() ).empty() )
+                && ( token != "lights" )
+                && ( token != "endmodel" ) ) {
+
+                if( ( i < iNumLights )
+                 && ( token != "-1" ) ) { // -1 leaves the default color intact
+                    auto const lightcolor { std::stoi( token, 0, 16 ) };
+                    m_lightcolors[i] = {
+                        ( ( lightcolor >> 16 ) & 0xff ) / 255.f,
+                        ( ( lightcolor >> 8 )  & 0xff ) / 255.f,
+                        ( ( lightcolor )       & 0xff ) / 255.f };
+                }
+                ++i;
+            }
+        }
+    } while( ( false == token.empty() )
+          && ( token != "endmodel" ) );
+
     return true;
 }
 
@@ -548,9 +571,73 @@ void TAnimModel::RaAnimate( unsigned int const Framestamp ) {
     
     if( Framestamp == m_framestamp ) { return; }
 
-    fBlinkTimer -= Timer::GetDeltaTime();
-    if( fBlinkTimer <= 0 )
-        fBlinkTimer += fOffTime;
+    auto const timedelta { Timer::GetDeltaTime() };
+
+    // interpretacja ułamka zależnie od typu
+    // case ls_Off: ustalenie czasu migotania, t<1s (f>1Hz), np. 0.1 => t=0.1 (f=10Hz)
+    // case ls_On: ustalenie wypełnienia ułamkiem, np. 1.25 => zapalony przez 1/4 okresu
+    // case ls_Blink: ustalenie częstotliwości migotania, f<1Hz (t>1s), np. 2.2 => f=0.2Hz (t=5s)
+    float modeintegral, modefractional;
+    for( int idx = 0; idx < iNumLights; ++idx ) {
+
+        modefractional = std::modf( std::abs( lsLights[ idx ] ), &modeintegral );
+
+        if( modeintegral >= ls_Dark ) {
+            // light threshold modes don't use timers
+            continue;
+        }
+        auto const mode { static_cast<int>( modeintegral ) };
+            
+        auto &opacity { m_lightopacities[ idx ] };
+        auto &timer { m_lighttimers[ idx ] };
+        if( ( modeintegral < ls_Blink ) && ( modefractional < 0.01f ) ) {
+            // simple flip modes
+            switch( mode ) {
+                case ls_Off: {
+                    // reduce to zero
+                    timer = std::max<float>( 0.f, timer - timedelta );
+                    break;
+                }
+                case ls_On: {
+                    // increase to max value
+                    timer = std::min<float>( fTransitionTime, timer + timedelta );
+                    break;
+                }
+                default: {
+                    break;
+                }
+            }
+            opacity = timer / fTransitionTime;
+        }
+        else {
+            // blink modes
+            auto const ontime { (
+                ( mode == ls_Blink ) ? ( ( modefractional < 0.01f ) ? fOnTime : ( 1.f / modefractional ) * 0.5f ) :
+                ( mode == ls_Off ) ? modefractional * 0.5f :
+                ( mode == ls_On ) ? modefractional * ( fOnTime + fOffTime ) :
+                fOnTime ) }; // fallback
+            auto const offtime { (
+                ( mode == ls_Blink ) ? ( ( modefractional < 0.01f ) ? fOffTime : ontime ) :
+                ( mode == ls_Off ) ? ontime :
+                ( mode == ls_On ) ? ( fOnTime + fOffTime ) - ontime :
+                fOffTime ) }; // fallback
+            auto const transitiontime {
+                std::min(
+                    1.f,
+                    std::min( ontime, offtime ) * 0.9f ) };
+
+            timer = clamp_circular<float>( timer + timedelta * ( lsLights[ idx ] > 0.f ? 1.f : -1.f ), ontime + offtime );
+            // set opacity depending on blink stage
+            if( timer < ontime ) {
+                // blink on
+                opacity = clamp( timer / transitiontime, 0.f, 1.f );
+            }
+            else {
+                // blink off
+                opacity = 1.f - clamp( ( timer - ontime ) / transitiontime, 0.f, 1.f );
+            }
+        }
+    }
 
     // Ra 2F1I: to by można pomijać dla modeli bez animacji, których jest większość
     TAnimContainer *pCurrent;
@@ -569,17 +656,19 @@ void TAnimModel::RaPrepare()
     bool state; // stan światła
     for (int i = 0; i < iNumLights; ++i)
     {
-        auto const lightmode { static_cast<int>( lsLights[ i ] ) };
+        auto const lightmode { static_cast<int>( std::abs( lsLights[ i ] ) ) };
         switch( lightmode ) {
             case ls_On:
-            case ls_Off: {
-                // zapalony albo zgaszony
-                state = ( lightmode == ls_On );
-                break;
-            }
+            case ls_Off:
             case ls_Blink: {
-                // migotanie
-                state = ( fBlinkTimer < fOnTime );
+                if (LightsOn[i]) {
+                    LightsOn[i]->iVisible = ( m_lightopacities[i] > 0.f );
+                    LightsOn[i]->SetVisibilityLevel( m_lightopacities[i], true, false );
+                }
+                if (LightsOff[i]) {
+                    LightsOff[i]->iVisible = ( m_lightopacities[i] < 1.f );
+                    LightsOff[i]->SetVisibilityLevel( 1.f, true, false );
+                }
                 break;
             }
             case ls_Dark: {
@@ -607,10 +696,20 @@ void TAnimModel::RaPrepare()
                 break;
             }
         }
-        if (LightsOn[i])
-            LightsOn[i]->iVisible = state;
-        if (LightsOff[i])
-            LightsOff[i]->iVisible = !state;
+        if( lightmode >= ls_Dark ) {
+            // crude as hell but for test will do :x
+            if (LightsOn[i]) {
+                LightsOn[i]->iVisible = state;
+                // TODO: set visibility for the entire submodel's children as well
+                LightsOn[i]->fVisible = m_lightopacities[i];
+            }
+            if (LightsOff[i])
+                LightsOff[i]->iVisible = !state;
+        }
+        // potentially modify freespot colors
+        if( LightsOn[i] ) {
+            LightsOn[i]->SetDiffuseOverride( m_lightcolors[i], true);
+        }
     }
     TSubModel::iInstance = reinterpret_cast<std::uintptr_t>( this ); //żeby nie robić cudzych animacji
     TSubModel::pasText = &asText; // przekazanie tekstu do wyświetlacza (!!!! do przemyślenia)
@@ -775,8 +874,9 @@ void TAnimModel::AnimationVND(void *pData, double a, double b, double c, double 
 //---------------------------------------------------------------------------
 void TAnimModel::LightSet(int const n, float const v)
 { // ustawienie światła (n) na wartość (v)
-    if (n >= iMaxNumLights)
+    if( n >= iMaxNumLights ) {
         return; // przekroczony zakres
+    }
     lsLights[ n ] = v;
 };
 

@@ -9,11 +9,13 @@ http://mozilla.org/MPL/2.0/.
 
 #include "stdafx.h"
 #include "MOVER.h"
+
 #include "Oerlikon_ESt.h"
 #include "utilities.h"
 #include "Globals.h"
 #include "Logs.h"
 #include "parser.h"
+//---------------------------------------------------------------------------
 
 // Ra: tu należy przenosić funcje z mover.pas, które nie są z niego wywoływane.
 // Jeśli jakieś zmienne nie są używane w mover.pas, też można je przenosić.
@@ -1436,6 +1438,8 @@ void TMoverParameters::compute_movement_( double const Deltatime ) {
             SetFlag( SoundFlag, sound::relay );
         }
     }
+    // traction motors
+    MotorBlowersCheck( Deltatime );
     // uklady hamulcowe:
     ConverterCheck( Deltatime );
     if (VeselVolume > 0)
@@ -1532,6 +1536,11 @@ void TMoverParameters::WaterPumpCheck( double const Timestep ) {
 // water heater status check
 void TMoverParameters::WaterHeaterCheck( double const Timestep ) {
 
+    WaterHeater.is_damaged = (
+        ( true == WaterHeater.is_damaged )
+     || ( ( true == WaterHeater.is_active )
+       && ( false == WaterPump.is_active ) ) );
+
     WaterHeater.is_active = (
         ( false == WaterHeater.is_damaged )
      && ( true == Battery )
@@ -1543,11 +1552,6 @@ void TMoverParameters::WaterHeaterCheck( double const Timestep ) {
      && ( dizel_heat.temperatura1 > WaterHeater.config.temp_max ) ) {
         WaterHeater.is_active = false;
     }
-
-    WaterHeater.is_damaged = (
-        ( true == WaterHeater.is_damaged )
-     || ( ( true == WaterHeater.is_active )
-       && ( false == WaterPump.is_active ) ) );
 }
 
 // fuel pump status update
@@ -1590,20 +1594,57 @@ void TMoverParameters::OilPumpCheck( double const Timestep ) {
         true == OilPump.is_active ? std::min( minpressure + 0.1f, OilPump.pressure_maximum ) : // slight pressure margin to give time to switch off the pump and start the engine
         0.f );
 
-    if( OilPump.pressure_present < OilPump.pressure_target ) {
+    if( OilPump.pressure < OilPump.pressure_target ) {
         // TODO: scale change rate from 0.01-0.05 with oil/engine temperature/idle time
-        OilPump.pressure_present =
+        OilPump.pressure =
             std::min<float>(
                 OilPump.pressure_target,
-                OilPump.pressure_present + ( enrot > 5.0 ? 0.05 : 0.035 ) * Timestep );
+                OilPump.pressure + ( enrot > 5.0 ? 0.05 : 0.035 ) * Timestep );
     }
-    if( OilPump.pressure_present > OilPump.pressure_target ) {
-        OilPump.pressure_present =
+    if( OilPump.pressure > OilPump.pressure_target ) {
+        OilPump.pressure =
             std::max<float>(
                 OilPump.pressure_target,
-                OilPump.pressure_present - 0.01 * Timestep );
+                OilPump.pressure - 0.01 * Timestep );
     }
-    OilPump.pressure_present = clamp( OilPump.pressure_present, 0.f, 1.5f );
+    OilPump.pressure = clamp( OilPump.pressure, 0.f, 1.5f );
+}
+
+void TMoverParameters::MotorBlowersCheck( double const Timestep ) {
+    // activation check
+    for( auto &blower : MotorBlowers ) {
+
+        blower.is_active = (
+            // TODO: bind properly power source when ld is in place
+            ( blower.start_type == start_t::battery ? Battery :
+              blower.start_type == start_t::converter ? ConverterFlag :
+              Mains ) // power source
+            // breaker condition disabled until it's implemented in the class data
+//         && ( true == blower.breaker )
+         && ( false == blower.is_disabled )
+         && ( ( true == blower.is_active )
+           || ( blower.start_type == start_t::manual ? blower.is_enabled : true ) ) );
+    }
+    // update
+    for( auto &fan : MotorBlowers ) {
+
+        auto const revolutionstarget { (
+            fan.is_active ?
+                ( fan.speed > 0.f ? fan.speed * static_cast<float>( enrot ) * 60 : fan.speed * -1 ) :
+                0.f ) };
+
+        if( std::abs( fan.revolutions - revolutionstarget ) < 0.01f ) {
+            fan.revolutions = revolutionstarget;
+            continue;
+        }
+        if( revolutionstarget > 0.f ) {
+            auto const speedincreasecap { std::max( 50.f, fan.speed * 0.05f * -1 ) }; // 5% of fixed revolution speed, or 50
+            fan.revolutions += clamp( revolutionstarget - fan.revolutions, speedincreasecap * -2, speedincreasecap ) * Timestep;
+        }
+        else {
+            fan.revolutions *= std::max( 0.0, 1.0 - Timestep );
+        }
+    }
 }
 
 
@@ -2021,6 +2062,16 @@ bool TMoverParameters::DecScndCtrl(int CtrlSpeed)
 	}
 
     return OK;
+}
+
+int TMoverParameters::GetVirtualScndPos()
+{
+	if (TrainType == dt_ET42)
+	{
+		if (DynamicBrakeFlag && !ScndCtrlPos)
+			return -1;
+	}
+	return ScndCtrlPos;
 }
 
 // *************************************************************************************************
@@ -2604,6 +2655,60 @@ bool TMoverParameters::OilPumpSwitchOff( bool State, range_t const Notify ) {
     }
 
     return ( OilPump.is_disabled != initialstate );
+}
+
+bool TMoverParameters::MotorBlowersSwitch( bool State, side const Side, range_t const Notify ) {
+
+    auto &fan { MotorBlowers[ Side ] };
+
+    if( ( fan.start_type != start_t::manual )
+     && ( fan.start_type != start_t::manualwithautofallback ) ) {
+        // automatic device ignores 'manual' state commands
+        return false;
+    }
+
+    bool const initialstate { fan.is_enabled };
+
+    fan.is_enabled = State;
+
+    if( Notify != range_t::local ) {
+        SendCtrlToNext(
+            ( Side == side::front ? "MotorBlowersFrontSwitch" : "MotorBlowersRearSwitch" ),
+            ( fan.is_enabled ? 1 : 0 ),
+            CabNo,
+            ( Notify == range_t::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return ( fan.is_enabled != initialstate );
+}
+
+bool TMoverParameters::MotorBlowersSwitchOff( bool State, side const Side, range_t const Notify ) {
+
+    auto &fan { MotorBlowers[ Side ] };
+
+    if( ( fan.start_type != start_t::manual )
+     && ( fan.start_type != start_t::manualwithautofallback ) ) {
+        // automatic device ignores 'manual' state commands
+        return false;
+    }
+
+    bool const initialstate { fan.is_disabled };
+
+    fan.is_disabled = State;
+
+    if( Notify != range_t::local ) {
+        SendCtrlToNext(
+            ( Side == side::front ? "MotorBlowersFrontSwitchOff" : "MotorBlowersRearSwitchOff" ),
+            ( fan.is_disabled ? 1 : 0 ),
+            CabNo,
+            ( Notify == range_t::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return ( fan.is_disabled != initialstate );
 }
 
 // *************************************************************************************************
@@ -3504,7 +3609,7 @@ void TMoverParameters::UpdatePipePressure(double dt)
                 Hamulec->PLC( MaxBrakePress[ LoadFlag ] );
             else
                 //(Hamulec as TWest).PLC(TotalMass);
-                Hamulec->PLC( TotalMass );
+                Hamulec->PLC( TotalMass-Mred );
             break;
         }
 
@@ -3534,7 +3639,7 @@ void TMoverParameters::UpdatePipePressure(double dt)
                 if( MBPM < 2 )
                     Hamulec->PLC( MaxBrakePress[ LoadFlag ] );
                 else
-                    Hamulec->PLC( TotalMass );
+                    Hamulec->PLC( TotalMass-Mred );
             break;
         }
 
@@ -3548,7 +3653,7 @@ void TMoverParameters::UpdatePipePressure(double dt)
 
         case TBrakeValve::EP2:
         {
-            Hamulec->PLC( TotalMass );
+            Hamulec->PLC( TotalMass-Mred );
             break;
         }
         case TBrakeValve::ESt3AL2:
@@ -3561,7 +3666,7 @@ void TMoverParameters::UpdatePipePressure(double dt)
                 Hamulec->PLC( MaxBrakePress[ LoadFlag ] );
             else
                 //(Hamulec as TNESt3).PLC(TotalMass);
-                Hamulec->PLC( TotalMass );
+                Hamulec->PLC( TotalMass-Mred );
             LocBrakePress = LocHandle->GetCP();
             //(Hamulec as TNESt3).SetLBP(LocBrakePress);
             Hamulec->SetLBP( LocBrakePress );
@@ -3577,7 +3682,7 @@ void TMoverParameters::UpdatePipePressure(double dt)
                 Hamulec->PLC( MaxBrakePress[ LoadFlag ] );
             else
                 //(Hamulec as TKE).PLC(TotalMass);
-                Hamulec->PLC( TotalMass );
+                Hamulec->PLC( TotalMass-Mred );
             break;
         }
         default:
@@ -4219,7 +4324,8 @@ double TMoverParameters::CouplerForce(int CouplerN, double dt)
     else if( ( Couplers[ CouplerN ].CouplingFlag != coupling::faux )
           && ( newdist > 0.001 )
           && ( Couplers[ CouplerN ].Dist <= 0.001 )
-          && ( absdV > 0.005 ) ) {
+          && ( absdV > 0.005 )
+          && ( Vel > 1.0 ) ) {
         // 090503: dzwieki pracy sprzegu
         SetFlag(
             Couplers[ CouplerN ].sounds,
@@ -6020,7 +6126,7 @@ bool TMoverParameters::dizel_StartupCheck() {
     }
     // test the oil pump
     if( ( false == OilPump.is_active )
-     || ( OilPump.pressure_present < OilPump.pressure_minimum ) ) {
+     || ( OilPump.pressure < OilPump.pressure_minimum ) ) {
         engineisready = false;
         if( OilPump.start_type == start_t::manual ) {
             // with manual pump control startup procedure is done only once per starter switch press
@@ -6545,15 +6651,14 @@ TMoverParameters::AssignLoad( std::string const &Name, float const Amount ) {
         }
     }
 
-    // can't mix load types, at least for the time being
-    if( ( LoadAmount > 0 ) && ( LoadType.name != Name ) ) { return false; }
-
     if( Name.empty() ) {
-        // empty the vehicle
+        // empty the vehicle if requested
         LoadType = load_attributes();
         LoadAmount = 0.f;
         return true;
     }
+    // can't mix load types, at least for the time being
+    if( ( LoadAmount > 0 ) && ( LoadType.name != Name ) ) { return false; }
 
     for( auto const &loadattributes : LoadAttributes ) {
         if( Name == loadattributes.name ) {
@@ -7348,6 +7453,11 @@ bool TMoverParameters::LoadFIZ(std::string chkpath)
             // guard against malformed config files with leading spaces
             inputline.erase( 0, inputline.find_first_not_of( ' ' ) );
         }
+
+		// trim CR at end (mainly for linux)
+		if (!inputline.empty() && inputline.back() == '\r')
+			inputline.pop_back();
+
 		if( inputline.length() == 0 ) {
 			startBPT = false;
 			continue;
@@ -8206,55 +8316,50 @@ void TMoverParameters::LoadFIZ_Cntrl( std::string const &line ) {
     }
     extract_value( ConverterStartDelay, "ConverterStartDelay", line, "" );
 
+    // devices
+    std::map<std::string, start_t> starts {
+        { "Manual", start_t::manual },
+        { "Automatic", start_t::automatic },
+        { "Mixed", start_t::manualwithautofallback },
+        { "Battery", start_t::battery },
+        { "Converter", start_t::converter } };
     // compressor
     {
-        std::map<std::string, start_t> starts {
-            { "Manual", start_t::manual },
-            { "Automatic", start_t::automatic }
-        };
         auto lookup = starts.find( extract_value( "CompressorStart", line ) );
         CompressorStart =
             lookup != starts.end() ?
                 lookup->second :
                 start_t::manual;
     }
-
     // fuel pump
     {
-        std::map<std::string, start_t> starts {
-            { "Manual", start_t::manual },
-            { "Automatic", start_t::automatic },
-            { "Mixed", start_t::manualwithautofallback }
-        };
         auto lookup = starts.find( extract_value( "FuelStart", line ) );
         FuelPump.start_type =
             lookup != starts.end() ?
                 lookup->second :
                 start_t::manual;
     }
-
     // oil pump
     {
-        std::map<std::string, start_t> starts {
-            { "Manual", start_t::manual },
-            { "Automatic", start_t::automatic },
-            { "Mixed", start_t::manualwithautofallback }
-        };
         auto lookup = starts.find( extract_value( "OilStart", line ) );
         OilPump.start_type =
             lookup != starts.end() ?
                 lookup->second :
                 start_t::manual;
     }
-
     // water pump
     {
-        std::map<std::string, start_t> starts {
-            { "Manual", start_t::manual },
-            { "Battery", start_t::battery }
-        };
         auto lookup = starts.find( extract_value( "WaterStart", line ) );
         WaterPump.start_type =
+            lookup != starts.end() ?
+                lookup->second :
+                start_t::manual;
+    }
+    // traction motor fans
+    {
+        auto lookup = starts.find( extract_value( "MotorBlowersStart", line ) );
+        MotorBlowers[side::front].start_type =
+        MotorBlowers[side::rear].start_type =
             lookup != starts.end() ?
                 lookup->second :
                 start_t::manual;
@@ -8511,6 +8616,10 @@ void TMoverParameters::LoadFIZ_Engine( std::string const &Input ) {
         extract_value( WaterHeater.config.temp_min, "HeaterMinTemperature", Input, "" );
         extract_value( WaterHeater.config.temp_max, "HeaterMaxTemperature", Input, "" );
     }
+
+    // traction motors
+    extract_value( MotorBlowers[ side::front ].speed, "MotorBlowersSpeed", Input, "" );
+    MotorBlowers[ side::rear ] = MotorBlowers[ side::front ];
 }
 
 void TMoverParameters::LoadFIZ_Switches( std::string const &Input ) {
@@ -9287,7 +9396,39 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
-	else if (Command == "MainSwitch")
+    else if( Command == "MotorBlowersFrontSwitch" ) {
+        if( ( MotorBlowers[ side::front ].start_type != start_t::manual )
+         && ( MotorBlowers[ side::front ].start_type != start_t::manualwithautofallback ) ) {
+            // automatic device ignores 'manual' state commands
+            MotorBlowers[side::front].is_enabled = ( CValue1 == 1 );
+        }
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+    }
+    else if( Command == "MotorBlowersFrontSwitchOff" ) {
+        if( ( MotorBlowers[ side::front ].start_type != start_t::manual )
+         && ( MotorBlowers[ side::front ].start_type != start_t::manualwithautofallback ) ) {
+            // automatic device ignores 'manual' state commands
+            MotorBlowers[side::front].is_disabled = ( CValue1 == 1 );
+        }
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+    }
+    else if( Command == "MotorBlowersRearSwitch" ) {
+        if( ( MotorBlowers[ side::rear ].start_type != start_t::manual )
+         && ( MotorBlowers[ side::rear ].start_type != start_t::manualwithautofallback ) ) {
+            // automatic device ignores 'manual' state commands
+            MotorBlowers[side::rear].is_enabled = ( CValue1 == 1 );
+        }
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+    }
+    else if( Command == "MotorBlowersRearSwitchOff" ) {
+        if( ( MotorBlowers[ side::rear ].start_type != start_t::manual )
+         && ( MotorBlowers[ side::rear ].start_type != start_t::manualwithautofallback ) ) {
+            // automatic device ignores 'manual' state commands
+            MotorBlowers[side::rear].is_disabled = ( CValue1 == 1 );
+        }
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+    }
+    else if (Command == "MainSwitch")
 	{
 		if (CValue1 == 1) {
 

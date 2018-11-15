@@ -100,13 +100,13 @@ private:
     int iNumVerts { -1 }; // ilość wierzchołków (1 dla FreeSpotLight)
 	int tVboPtr; // początek na liście wierzchołków albo indeksów
     int iTexture { 0 }; // numer nazwy tekstury, -1 wymienna, 0 brak
-    float fVisible { 0.0f }; // próg jasności światła do załączenia submodelu
     float fLight { -1.0f }; // próg jasności światła do zadziałania selfillum
 	glm::vec4
         f4Ambient { 1.0f,1.0f,1.0f,1.0f },
         f4Diffuse { 1.0f,1.0f,1.0f,1.0f },
         f4Specular { 0.0f,0.0f,0.0f,1.0f },
         f4Emision { 1.0f,1.0f,1.0f,1.0f };
+    glm::vec3 DiffuseOverride { -1.f };
     normalization m_normalizenormals { normalization::none }; // indicates vectors need to be normalized due to scaling etc
     float fWireSize { 0.0f }; // nie używane, ale wczytywane
     float fSquareMaxDist { 10000.0f * 10000.0f };
@@ -142,7 +142,8 @@ public: // chwilowo
     float4x4 *mAnimMatrix{ nullptr }; // macierz do animacji kwaternionowych (należy do AnimContainer)
     TSubModel **smLetter{ nullptr }; // wskaźnik na tablicę submdeli do generoania tekstu (docelowo zapisać do E3D)
     TSubModel *Parent{ nullptr }; // nadrzędny, np. do wymnażania macierzy
-    int iVisible{ 1 }; // roboczy stan widoczności
+    int iVisible { 1 }; // roboczy stan widoczności
+    float fVisible { 1.f }; // visibility level
 	std::string m_materialname; // robocza nazwa tekstury do zapisania w pliku binarnym
 	std::string pName; // robocza nazwa
 private:
@@ -195,6 +196,10 @@ public:
 	uint32_t Flags() const { return iFlags; };
 	void UnFlagNext() { iFlags &= 0x00FFFFFF; };
 	void ColorsSet( glm::vec3 const &Ambient, glm::vec3 const &Diffuse, glm::vec3 const &Specular );
+    // sets rgb components of diffuse color override to specified value
+    void SetDiffuseOverride( glm::vec3 const &Color, bool const Includechildren = false, bool const Includesiblings = false );
+    // sets visibility level (alpha component) to specified value
+    void SetVisibilityLevel( float const Level, bool const Includechildren = false, bool const Includesiblings = false );
     // sets light level (alpha component of illumination color) to specified value
     void SetLightLevel( float const Level, bool const Includechildren = false, bool const Includesiblings = false );
 	inline float3 Translation1Get() {

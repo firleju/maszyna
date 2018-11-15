@@ -20,6 +20,7 @@ http://mozilla.org/MPL/2.0/.
 #include "AirCoupler.h"
 #include "Texture.h"
 #include "sound.h"
+#include "Spring.h"
 
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
@@ -307,6 +308,7 @@ private:
     };
 
     struct door_sounds {
+        sound_source sDepartureSignal { sound_placement::general };
         sound_source rsDoorOpen { sound_placement::general }; // Ra: przeniesione z kabiny
         sound_source rsDoorClose { sound_placement::general };
         sound_source lock { sound_placement::general };
@@ -328,6 +330,7 @@ private:
 
     struct powertrain_sounds {
         sound_source inverter { sound_placement::engine };
+        std::vector<sound_source> motorblowers;
         std::vector<sound_source> motors; // generally traction motor(s)
         double motor_volume { 0.0 }; // MC: pomocnicze zeby gladziej silnik buczal
         float motor_momentum { 0.f }; // recent change in motor revolutions
@@ -426,11 +429,12 @@ private:
     sound_source rsSlippery { sound_placement::external, EU07_SOUND_BRAKINGCUTOFFRANGE }; // moved from cab
     sound_source sSand { sound_placement::external };
     // moving part and other external sounds
+    sound_source m_startjolt { sound_placement::general }; // movement start jolt, played once on initial acceleration at slow enough speed
+    bool m_startjoltplayed { false };
     std::array<coupler_sounds, 2> m_couplersounds; // always front and rear
     std::vector<pantograph_sounds> m_pantographsounds; // typically 2 but can be less (or more?)
     std::vector<door_sounds> m_doorsounds; // can expect symmetrical arrangement, but don't count on it
     bool m_doorlocks { false }; // sound helper, current state of door locks
-    sound_source sDepartureSignal { sound_placement::general };
     sound_source sHorn1 { sound_placement::external, 5 * EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
     sound_source sHorn2 { sound_placement::external, 5 * EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
     sound_source sHorn3 { sound_placement::external, 5 * EU07_SOUND_RUNNINGNOISECUTOFFRANGE };
@@ -441,8 +445,6 @@ private:
 
     exchange_data m_exchange; // state of active load exchange procedure, if any
     exchange_sounds m_exchangesounds; // sounds associated with the load exchange
-
-    Math3D::vector3 modelShake;
 
     bool renderme; // yB - czy renderowac
     float ModCamRot;
@@ -538,6 +540,9 @@ private:
     void RenderSounds();
     inline Math3D::vector3 GetPosition() const {
         return vPosition; };
+    // converts location from vehicle coordinates frame to world frame
+    inline Math3D::vector3 GetWorldPosition( Math3D::vector3 const &Location ) const {
+        return vPosition + mMatrix * Location; }
     // pobranie współrzędnych czoła
     inline Math3D::vector3 HeadPosition() {
         return vCoulpler[iDirection ^ 1]; };
@@ -610,8 +615,9 @@ private:
     void CouplersDettach(double MinDist, int MyScanDir);
     void RadioStop();
 	void Damage(char flag);
-	void RaLightsSet(int head, int rear);
+    void RaLightsSet(int head, int rear);
     int LightList( side const Side ) const { return iInventory[ Side ]; }
+    void set_cab_lights( float const Level );
     TDynamicObject * FirstFind(int &coupler_nr, int cf = 1);
     float GetEPP(); // wyliczanie sredniego cisnienia w PG
     int DirectionSet(int d); // ustawienie kierunku w składzie
@@ -635,6 +641,41 @@ private:
 	double MEDLogTime = 0;
 	double MEDLogInactiveTime = 0;
 	int MEDLogCount = 0;
+
+// vehicle shaking calculations
+// TBD, TODO: make an object out of it
+public:
+// methods
+    void update_shake( double const Timedelta );
+    std::pair<double, double> shake_angles() const;
+// members
+    struct baseshake_config {
+        Math3D::vector3 angle_scale { 0.05, 0.0, 0.1 }; // roll, yaw, pitch
+        Math3D::vector3 jolt_scale { 0.2, 0.2, 0.1 };
+        double jolt_limit { 0.15 };
+    } BaseShake;
+    struct engineshake_config {
+        float scale { 2.f };
+        float fadein_offset { 1.5f }; // 90 rpm
+        float fadein_factor { 0.3f };
+        float fadeout_offset { 10.f }; // 600 rpm
+        float fadeout_factor { 0.5f };
+    } EngineShake;
+    struct huntingshake_config {
+        float scale { 1.f };
+        float frequency { 1.f };
+        float fadein_begin { 0.f }; // effect start speed in km/h
+        float fadein_end { 0.f }; // full effect speed in km/h
+    } HuntingShake;
+    float HuntingAngle { 0.f }; // crude approximation of hunting oscillation; current angle of sine wave
+    bool IsHunting { false };
+    TSpring ShakeSpring;
+    struct shake_state {
+        Math3D::vector3 velocity {}; // current shaking vector
+        Math3D::vector3 offset {}; // overall shake-driven offset from base position
+    } ShakeState;
+
+    Math3D::vector3 modelShake;
 };
 
 

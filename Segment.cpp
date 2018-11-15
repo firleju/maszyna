@@ -112,9 +112,6 @@ bool TSegment::Init( Math3D::vector3 &NewPoint1, Math3D::vector3 NewCPointOut, M
 
         ErrorLog( "Bad track: zero length spline \"" + pOwner->name() + "\" (location: " + to_string( glm::dvec3{ Point1 } ) + ")" );
         fLength = 0.01; // crude workaround TODO: fix this properly
-/*
-        return false; // zerowe nie mogą być
-*/
     }
 
     fStoop = std::atan2((Point2.y - Point1.y), fLength); // pochylenie toru prostego, żeby nie liczyć wielokrotnie
@@ -126,13 +123,12 @@ bool TSegment::Init( Math3D::vector3 &NewPoint1, Math3D::vector3 NewCPointOut, M
         // NOTE: a workaround for too short switches (less than 3 segments) messing up animation/generation of blades
         fStep = fLength / ( 3.0 * Global.SplineFidelity );
     }
-    iSegCount = static_cast<int>( std::ceil( fLength / fStep ) ); // potrzebne do VBO
-/*
+//    iSegCount = static_cast<int>( std::ceil( fLength / fStep ) ); // potrzebne do VBO
     iSegCount = (
         pOwner->eType == tt_Switch ?
             6 * Global.SplineFidelity :
             static_cast<int>( std::ceil( fLength / fStep ) ) ); // potrzebne do VBO
-*/
+
     fStep = fLength / iSegCount; // update step to equalize size of individual pieces
 
     fTsBuffer.resize( iSegCount + 1 );
@@ -376,12 +372,10 @@ Math3D::vector3 TSegment::FastGetPoint(double const t) const
             interpolate( Point1, Point2, t ) );
 }
 
-bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Origin, const gfx::basic_vertex *ShapePoints, int iNumShapePoints, double fTextureLength, double Texturescale, int iSkip, int iEnd, float fOffsetX, glm::vec3 **p, bool bRender)
+bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Origin, const gfx::vertex_array &ShapePoints, int iNumShapePoints, double fTextureLength, double Texturescale, int iSkip, int iEnd, std::pair<float, float> fOffsetX, glm::vec3 **p, bool bRender)
 { // generowanie trójkątów dla odcinka trajektorii ruchu
     // standardowo tworzy triangle_strip dla prostego albo ich zestaw dla łuku
-    // po modyfikacji - dla ujemnego (iNumShapePoints) w dodatkowych polach tabeli
-    // podany jest przekrój końcowy
-    // podsypka toru jest robiona za pomocą 6 punktów, szyna 12, drogi i rzeki na 3+2+3
+    // po modyfikacji - dla ujemnego (iNumShapePoints) w dodatkowych polach tabeli podany jest przekrój końcowy
 
     if( fTsBuffer.empty() )
         return false; // prowizoryczne zabezpieczenie przed wysypem - ustalić faktyczną przyczynę
@@ -395,7 +389,7 @@ bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Ori
 
     float m1, jmm1, m2, jmm2; // pozycje względne na odcinku 0...1 (ale nie parametr Beziera)
     step = fStep;
-    tv1 = 0.0; // Ra: to by można było wyliczać dla odcinka, wyglądało by lepiej
+    tv1 = 1.0; // Ra: to by można było wyliczać dla odcinka, wyglądało by lepiej
     s = fStep * iSkip; // iSkip - ile odcinków z początku pominąć
     int i = iSkip; // domyślnie 0
     t = fTsBuffer[ i ]; // tabela wattości t dla segmentów
@@ -412,8 +406,12 @@ bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Ori
     if( iEnd == 0 )
         iEnd = iSegCount;
     fEnd = fLength * double( iEnd ) / double( iSegCount );
+/*
     m2 = s / fEnd;
-    jmm2 = 1.0 - m2;
+*/
+    m2 = static_cast<float>( i - iSkip ) / ( iEnd - iSkip );
+
+    jmm2 = 1.f - m2;
 
     while( i < iEnd ) {
 
@@ -421,19 +419,23 @@ bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Ori
         s += step; // końcowa pozycja segmentu [m]
         m1 = m2;
         jmm1 = jmm2; // stara pozycja
+/*
         m2 = s / fEnd;
-        jmm2 = 1.0 - m2; // nowa pozycja
+*/
+        m2 = static_cast<float>( i - iSkip ) / ( iEnd - iSkip );
+
+        jmm2 = 1.f - m2; // nowa pozycja
         if( i == iEnd ) { // gdy przekroczyliśmy koniec - stąd dziury w torach...
             step -= ( s - fEnd ); // jeszcze do wyliczenia mapowania potrzebny
             s = fEnd;
-            m2 = 1.0;
-            jmm2 = 0.0;
+            m2 = 1.f;
+            jmm2 = 0.f;
         }
 
         while( tv1 < 0.0 ) {
             tv1 += 1.0;
         }
-        tv2 = tv1 + step / texturelength; // mapowanie na końcu segmentu
+        tv2 = tv1 - step / texturelength; // mapowanie na końcu segmentu
 
         t = fTsBuffer[ i ]; // szybsze od GetTFromS(s);
         pos2 = glm::dvec3{ FastGetPoint( t ) - Origin };
@@ -445,11 +447,11 @@ bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Ori
         }
         parallel2 = glm::normalize( parallel2 );
 
+        // TODO: refactor the loop, there's no need to calculate starting points for each segment when we can copy the end points of the previous one
         if( trapez ) {
             for( int j = 0; j < iNumShapePoints; ++j ) {
-                pt = parallel1 * ( jmm1 * ( ShapePoints[ j ].position.x - fOffsetX ) + m1 * ShapePoints[ j + iNumShapePoints ].position.x ) + pos1;
+                pt = parallel1 * ( jmm1 * ( ShapePoints[ j ].position.x - fOffsetX.first ) + m1 * ( ShapePoints[ j + iNumShapePoints ].position.x - fOffsetX.second ) ) + pos1;
                 pt.y += jmm1 * ShapePoints[ j ].position.y + m1 * ShapePoints[ j + iNumShapePoints ].position.y;
-//                pt -= Origin;
                 norm = ( jmm1 * ShapePoints[ j ].normal.x + m1 * ShapePoints[ j + iNumShapePoints ].normal.x ) * parallel1;
                 norm.y += jmm1 * ShapePoints[ j ].normal.y + m1 * ShapePoints[ j + iNumShapePoints ].normal.y;
                 if( bRender ) {
@@ -467,11 +469,10 @@ bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Ori
                             ( *p )++;
                         } // zapamiętanie brzegu jezdni
                 // dla trapezu drugi koniec ma inne współrzędne
-                pt = parallel2 * ( jmm2 * ( ShapePoints[ j ].position.x - fOffsetX ) + m2 * ShapePoints[ j + iNumShapePoints ].position.x ) + pos2;
+                pt = parallel2 * ( jmm2 * ( ShapePoints[ j ].position.x - fOffsetX.first ) + m2 * ( ShapePoints[ j + iNumShapePoints ].position.x - fOffsetX.second ) ) + pos2;
                 pt.y += jmm2 * ShapePoints[ j ].position.y + m2 * ShapePoints[ j + iNumShapePoints ].position.y;
-//                pt -= Origin;
-                norm = ( jmm1 * ShapePoints[ j ].normal.x + m1 * ShapePoints[ j + iNumShapePoints ].normal.x ) * parallel2;
-                norm.y += jmm1 * ShapePoints[ j ].normal.y + m1 * ShapePoints[ j + iNumShapePoints ].normal.y;
+                norm = ( jmm2 * ShapePoints[ j ].normal.x + m2 * ShapePoints[ j + iNumShapePoints ].normal.x ) * parallel2;
+                norm.y += jmm2 * ShapePoints[ j ].normal.y + m2 * ShapePoints[ j + iNumShapePoints ].normal.y;
                 if( bRender ) {
                     // skrzyżowania podczas łączenia siatek mogą nie renderować poboczy, ale potrzebować punktów
                     Output.emplace_back(
@@ -492,9 +493,8 @@ bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Ori
             if( bRender  ) {
                 for( int j = 0; j < iNumShapePoints; ++j ) {
                     //łuk z jednym profilem
-                    pt = parallel1 * ( ShapePoints[ j ].position.x - fOffsetX ) + pos1;
+                    pt = parallel1 * ( jmm1 * ( ShapePoints[ j ].position.x - fOffsetX.first ) + m1 * ( ShapePoints[ j ].position.x - fOffsetX.second ) ) + pos1;
                     pt.y += ShapePoints[ j ].position.y;
-//                    pt -= Origin;
                     norm = ShapePoints[ j ].normal.x * parallel1;
                     norm.y += ShapePoints[ j ].normal.y;
 
@@ -503,9 +503,8 @@ bool TSegment::RenderLoft( gfx::vertex_array &Output, Math3D::vector3 const &Ori
                         glm::normalize( norm ),
                         glm::vec2 { ShapePoints[ j ].texture.x / texturescale, tv1 } );
 
-                    pt = parallel2 * ShapePoints[ j ].position.x + pos2;
+                    pt = parallel2 * ( jmm2 * ( ShapePoints[ j ].position.x - fOffsetX.first ) + m2 * ( ShapePoints[ j ].position.x - fOffsetX.second ) ) + pos2;
                     pt.y += ShapePoints[ j ].position.y;
-//                    pt -= Origin;
                     norm = ShapePoints[ j ].normal.x * parallel2;
                     norm.y += ShapePoints[ j ].normal.y;
 

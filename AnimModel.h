@@ -179,19 +179,22 @@ private:
 // members
     TAnimContainer *pRoot { nullptr }; // pojemniki sterujące, tylko dla aniomowanych submodeli
     TModel3d *pModel { nullptr };
-    double fBlinkTimer { 0.0 };
-    int iNumLights { 0 };
-    TSubModel *LightsOn[ iMaxNumLights ]; // Ra: te wskaźniki powinny być w ramach TModel3d
-    TSubModel *LightsOff[ iMaxNumLights ];
     glm::vec3 vAngle; // bazowe obroty egzemplarza względem osi
     material_data m_materialdata;
 
     std::string asText; // tekst dla wyświetlacza znakowego
     TAnimAdvanced *pAdvanced { nullptr };
-    float lsLights[ iMaxNumLights ];
-//    float fDark { DefaultDarkThresholdLevel }; // poziom zapalanie światła (powinno być chyba powiązane z danym światłem?)
-    float fOnTime { 0.66f };
-    float fOffTime { 0.66f + 0.66f }; // były stałymi, teraz mogą być zmienne dla każdego egzemplarza
+    // TODO: wrap into a light state struct, remove fixed element count
+    int iNumLights { 0 };
+    std::array<TSubModel *, iMaxNumLights> LightsOn {}; // Ra: te wskaźniki powinny być w ramach TModel3d
+    std::array<TSubModel *, iMaxNumLights> LightsOff {};
+    std::array<float, iMaxNumLights> lsLights {}; // ls_Off
+    std::array<glm::vec3, iMaxNumLights> m_lightcolors; // -1 in constructor
+    std::array<float, iMaxNumLights> m_lighttimers {};
+    std::array<float, iMaxNumLights> m_lightopacities; // {1} in constructor
+    float fOnTime { 1.f / 2 };// { 60.f / 45.f / 2 };
+    float fOffTime { 1.f / 2 };// { 60.f / 45.f / 2 }; // były stałymi, teraz mogą być zmienne dla każdego egzemplarza
+    float fTransitionTime { fOnTime * 0.9f }; // time
     unsigned int m_framestamp { 0 }; // id of last rendered gfx frame
 };
 
