@@ -110,9 +110,12 @@ TSubModel::SetVisibilityLevel( float const Level, bool const Includechildren, bo
 
 // sets light level (alpha component of illumination color) to specified value
 void
-TSubModel::SetLightLevel( float const Level, bool const Includechildren, bool const Includesiblings ) {
-
-    f4Emision.a = Level;
+TSubModel::SetLightLevel( glm::vec4 const &Level, bool const Includechildren, bool const Includesiblings ) {
+    /*
+    f4Emision = Level;
+    */
+    f4Diffuse = { Level.r, Level.g, Level.b, f4Diffuse.a };
+    f4Emision.a = Level.a;
     if( true == Includesiblings ) {
         auto sibling { this };
         while( ( sibling = sibling->Next ) != nullptr ) {
@@ -778,6 +781,8 @@ uint32_t TSubModel::FlagsCheck()
   // samo pomijanie glBindTexture() nie poprawi wydajności
   // ale można sprawdzić, czy można w ogóle pominąć kod do tekstur (sprawdzanie
   // replaceskin)
+	m_rotation_init_done = true;
+
 	uint32_t i = 0;
 	if (Child)
 	{ // Child jest renderowany po danym submodelu
@@ -1242,16 +1247,10 @@ TSubModel::offset( float const Geometrytestoffsetthreshold ) const {
         }
     }
 
-    if( true == TestFlag( iFlags, 0x0200 ) ) {
-        // flip coordinates for t3d file which wasn't yet initialized
-        if( ( false == simulation::is_ready )
-         || ( false == Vertices.empty() ) ) {
-            // NOTE, HACK: results require flipping if the model wasn't yet initialized, so we're using crude method to detect possible cases
-            // TODO: sort out this mess, either unify offset lookups to take place before (or after) initialization,
-            // or provide way to determine on submodel level whether the initialization took place
-            offset = { -offset.x, offset.z, offset.y };
-        }
-    }
+	if (!m_rotation_init_done)
+		    // NOTE, HACK: results require flipping if the model wasn't yet initialized,
+		    // TODO: sort out this mess, maybe try unify offset lookups to take place before (or after) initialization,
+		    offset = { -offset.x, offset.z, offset.y };
 
     return offset;
 }
@@ -1499,6 +1498,9 @@ void TSubModel::deserialize(std::istream &s)
 	fCosFalloffAngle = sn_utils::ld_float32(s);
 	fCosHotspotAngle = sn_utils::ld_float32(s);
 	fCosViewAngle = sn_utils::ld_float32(s);
+
+	// necessary rotations were already done during t3d->e3d conversion
+	m_rotation_init_done = true;
 }
 
 void TModel3d::deserialize(std::istream &s, size_t size, bool dynamic)
