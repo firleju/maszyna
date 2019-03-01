@@ -118,6 +118,7 @@ struct global_settings {
         float depth{ 250.f };
         float distance{ 500.f }; // no longer used
     } shadowtune;
+    int ReflectionUpdatesPerSecond{ static_cast<int>( 1000 / ( 1.0 / 300.0 ) ) };
     float AnisotropicFiltering{ 8.f }; // requested level of anisotropic filtering. TODO: move it to renderer object
     float FieldOfView{ 45.f }; // vertical field of view for the camera. TODO: move it to the renderer
     GLint iMaxTextureSize{ 4096 }; // maksymalny rozmiar tekstury
@@ -128,7 +129,6 @@ struct global_settings {
     bool ResourceMove{ false }; // gfx resources are moved between cpu and gpu side instead of sending a copy
     bool compress_tex{ true }; // all textures are compressed on gpu side
     std::string asSky{ "1" };
-    bool bGlutFont{ false }; // czy tekst generowany przez GLUT32.DLL
     double fFpsAverage{ 20.0 }; // oczekiwana wartosć FPS
     double fFpsDeviation{ 5.0 }; // odchylenie standardowe FPS
     double fFpsMin{ 30.0 }; // dolna granica FPS, przy której promień scenerii będzie zmniejszany

@@ -25,6 +25,7 @@ http://mozilla.org/MPL/2.0/.
 //#define EU07_USE_DEBUG_CABSHADOWMAP
 //#define EU07_USE_DEBUG_CAMERA
 //#define EU07_USE_DEBUG_SOUNDEMITTERS
+//#define EU07_DISABLECABREFLECTIONS
 
 struct opengl_light : public basic_light {
 
@@ -115,6 +116,12 @@ class opengl_renderer {
 
 public:
 // types
+    /// Renderer runtime settings.
+    struct Settings
+    {
+        /** Force normal render of traction, when user is in debug mode. */
+        bool force_normal_traction_render { false };
+    } settings;
 // constructors
     opengl_renderer() = default;
 // destructor
