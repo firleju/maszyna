@@ -316,12 +316,6 @@ ActiveCab( Cab )
         Couplers[b].DmaxC = 0.1;
         Couplers[b].FmaxC = 1000.0;
     }
-#ifdef EU07_USE_OLD_HVCOUPLERS
-    for( int side = 0; side < 2; ++side ) {
-        HVCouplers[ side ][ hvcoupler::current ] = 0.0;
-        HVCouplers[ side ][ hvcoupler::voltage ] = 0.0;
-    }
-#endif
     for( int b = 0; b < 3; ++b ) {
         BrakeCylMult[ b ] = 0.0;
     }
@@ -490,7 +484,7 @@ int TMoverParameters::DettachStatus(int ConnectNo)
     // if (CouplerType==Articulated) return false; //sprzęg nie do rozpięcia - może być tylko urwany
     // Couplers[ConnectNo].CoupleDist=Distance(Loc,Couplers[ConnectNo].Connected->Loc,Dim,Couplers[ConnectNo].Connected->Dim);
     CouplerDist(ConnectNo);
-    if (Couplers[ConnectNo].CouplerType == TCouplerType::Screw ? Couplers[ConnectNo].CoupleDist < 0.0 : true)
+    if (Couplers[ConnectNo].CouplerType == TCouplerType::Screw ? Couplers[ConnectNo].CoupleDist < 0.01 : true)
         return -Couplers[ConnectNo].CouplingFlag; // można rozłączać, jeśli dociśnięty
     return (Couplers[ConnectNo].CoupleDist > 0.2) ? -Couplers[ConnectNo].CouplingFlag :
                                                     Couplers[ConnectNo].CouplingFlag;
@@ -563,7 +557,7 @@ bool TMoverParameters::DirectionForward()
         SendCtrlToNext("Direction", ActiveDir, CabNo);
         return true;
     }
-    else if ((ActiveDir == 1) && (MainCtrlPos == 0) && (TrainType == dt_EZT))
+    else if ((ActiveDir == 1) && (MainCtrlPos == 0) && (TrainType == dt_EZT) && (EngineType != TEngineType::ElectricInductionMotor))
         return MinCurrentSwitch(true); //"wysoki rozruch" EN57
     return false;
 };
@@ -635,8 +629,9 @@ bool TMoverParameters::ChangeCab(int direction)
     {
         //  if (ActiveCab+direction=0) then LastCab:=ActiveCab;
         ActiveCab = ActiveCab + direction;
-        if ((BrakeSystem == TBrakeSystem::Pneumatic) && (BrakeCtrlPosNo > 0))
-        {
+        if( ( BrakeCtrlPosNo > 0 )
+         && ( ( BrakeSystem == TBrakeSystem::Pneumatic )
+           || ( BrakeSystem == TBrakeSystem::ElectroPneumatic ) ) ) {
             //    if (BrakeHandle==FV4a)   //!!!POBIERAĆ WARTOŚĆ Z KLASY ZAWORU!!!
             //     BrakeLevelSet(-2); //BrakeCtrlPos=-2;
             //    else if ((BrakeHandle==FVel6)||(BrakeHandle==St113))
@@ -815,13 +810,23 @@ void TMoverParameters::UpdateBatteryVoltage(double dt)
      && ( EngineType != TEngineType::WheelsDriven )
      && ( NominalBatteryVoltage > 0 ) ) {
 
+        // HACK: allow to draw power also from adjacent converter, applicable for EMUs
+        // TODO: expand power cables system to include low voltage power transfers
+        // HACK: emulate low voltage generator powered directly by the diesel engine
+        auto const converteractive{ (
+            ( ConverterFlag )
+         || ( ( ( Couplers[ end::front ].CouplingFlag & coupling::permanent ) != 0 ) && Couplers[ end::front ].Connected->ConverterFlag )
+         || ( ( ( Couplers[ end::rear ].CouplingFlag & coupling::permanent )  != 0 ) && Couplers[ end::rear ].Connected->ConverterFlag ) )
+         || ( ( EngineType == TEngineType::DieselElectric ) && ( true == Mains ) )
+         || ( ( EngineType == TEngineType::DieselEngine )   && ( true == Mains ) ) };
+
         if ((NominalBatteryVoltage / BatteryVoltage < 1.22) && Battery)
         { // 110V
-            if (!ConverterFlag)
+            if (!converteractive)
                 sn1 = (dt * 2.0); // szybki spadek do ok 90V
             else
                 sn1 = 0;
-            if (ConverterFlag)
+            if (converteractive)
                 sn2 = -(dt * 2.0); // szybki wzrost do 110V
             else
                 sn2 = 0;
@@ -845,7 +850,7 @@ void TMoverParameters::UpdateBatteryVoltage(double dt)
                 sn1 = (dt * 0.0046);
             else
                 sn1 = 0;
-            if (ConverterFlag)
+            if (converteractive)
                 sn2 = -(dt * 50); // szybki wzrost do 110V
             else
                 sn2 = 0;
@@ -1114,38 +1119,23 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
 
     for( int side = 0; side < 2; ++side ) {
         // przekazywanie napiec
-        auto const oppositeside = ( side == side::front ? side::rear : side::front );
+        auto const oppositeside = ( side == end::front ? end::rear : end::front );
 
         if( ( Couplers[ side ].CouplingFlag & ctrain_power )
          || ( ( Heating )
            && ( Couplers[ side ].CouplingFlag & ctrain_heating ) ) ) {
-#ifdef EU07_USE_OLD_HVCOUPLERS
-            HVCouplers[ oppositeside ][ hvcoupler::voltage ] =
-                std::max(
-                    std::abs( hvc ),
-                    Couplers[ side ].Connected->HVCouplers[ Couplers[ side ].ConnectedNr ][ hvcoupler::voltage ] - HVCouplers[ side ][ hvcoupler::current ] * 0.02 );
-#else
             auto const &connectedcoupler = Couplers[ side ].Connected->Couplers[ Couplers[ side ].ConnectedNr ];
             Couplers[ oppositeside ].power_high.voltage =
                 std::max(
                     std::abs( hvc ),
                     connectedcoupler.power_high.voltage - Couplers[ side ].power_high.current * 0.02 );
-#endif
         }
         else {
-#ifdef EU07_USE_OLD_HVCOUPLERS
-            HVCouplers[ oppositeside ][ hvcoupler::voltage ] = std::abs( hvc ) - HVCouplers[ side ][ hvcoupler::current ] * 0.02;
-#else
             Couplers[ oppositeside ].power_high.voltage = std::abs( hvc ) - Couplers[ side ].power_high.current * 0.02;
-#endif
         }
     }
 
-#ifdef EU07_USE_OLD_HVCOUPLERS
-    hvc = HVCouplers[ side::front ][ hvcoupler::voltage ] + HVCouplers[ side::rear ][ hvcoupler::voltage ];
-#else
-    hvc = Couplers[ side::front ].power_high.voltage + Couplers[ side::rear ].power_high.voltage;
-#endif
+    hvc = Couplers[ end::front ].power_high.voltage + Couplers[ end::rear ].power_high.voltage;
 
     if( std::abs( PantFrontVolt ) + std::abs( PantRearVolt ) < 1.0 ) {
         // bez napiecia...
@@ -1159,29 +1149,17 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
                 if( ( Couplers[ side ].CouplingFlag & ctrain_power )
                  || ( ( Heating )
                    && ( Couplers[ side ].CouplingFlag & ctrain_heating ) ) ) {
-#ifdef EU07_USE_OLD_HVCOUPLERS
-                    auto const oppositeside = ( Couplers[side].ConnectedNr == side::front ? side::rear : side::front );
-                    HVCouplers[ side ][ hvcoupler::current ] =
-					    Couplers[side].Connected->HVCouplers[oppositeside][hvcoupler::current] +
-					    Itot * HVCouplers[side][hvcoupler::voltage] / hvc; // obciążenie rozkladane stosownie do napiec
-#else
-                    auto const &connectedsothercoupler =
+                    auto const &connectedcoupler =
                         Couplers[ side ].Connected->Couplers[
-                            ( Couplers[ side ].ConnectedNr == side::front ?
-                                side::rear :
-                                side::front ) ];
+                            ( Couplers[ side ].ConnectedNr == end::front ?
+                                end::rear :
+                                end::front ) ];
                     Couplers[ side ].power_high.current =
-                        connectedsothercoupler.power_high.current
+                        connectedcoupler.power_high.current
                         + Itot * Couplers[ side ].power_high.voltage / hvc; // obciążenie rozkladane stosownie do napiec
-#endif
                 }
 			    else {
-#ifdef EU07_USE_OLD_HVCOUPLERS
-                    // pierwszy pojazd
-				    HVCouplers[side][hvcoupler::current] = Itot * HVCouplers[side][hvcoupler::voltage] / hvc;
-#else
                     Couplers[ side ].power_high.current = Itot * Couplers[ side ].power_high.voltage / hvc;
-#endif
                 }
             }
         }
@@ -1195,19 +1173,13 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
             if( ( Couplers[ side ].CouplingFlag & ctrain_power )
              || ( ( Heating )
                && ( Couplers[ side ].CouplingFlag & ctrain_heating ) ) ) {
-#ifdef EU07_USE_OLD_HVCOUPLERS
-                auto const oppositeside = ( Couplers[ side ].ConnectedNr == side::front ? side::rear : side::front );
-                TotalCurrent += Couplers[ side ].Connected->HVCouplers[ oppositeside ][ hvcoupler::current ];
-                HVCouplers[ side ][ hvcoupler::current ] = 0.0;
-#else
-                auto const &connectedsothercoupler =
+                auto const &connectedcoupler =
                     Couplers[ side ].Connected->Couplers[
-                        ( Couplers[ side ].ConnectedNr == side::front ?
-                            side::rear :
-                            side::front ) ];
-                TotalCurrent += connectedsothercoupler.power_high.current;
+                        ( Couplers[ side ].ConnectedNr == end::front ?
+                            end::rear :
+                            end::front ) ];
+                TotalCurrent += connectedcoupler.power_high.current;
                 Couplers[ side ].power_high.current = 0.0;
-#endif
             }
         }
 	}
@@ -1493,7 +1465,7 @@ void TMoverParameters::compute_movement_( double const Deltatime ) {
     }
     BrakeSlippingTimer += Deltatime;
     // automatic doors
-    update_autonomous_doors( Deltatime );
+    update_doors( Deltatime );
 }
 
 double TMoverParameters::ShowEngineRotation(int VehN)
@@ -1560,18 +1532,18 @@ void TMoverParameters::WaterPumpCheck( double const Timestep ) {
 // water heater status check
 void TMoverParameters::WaterHeaterCheck( double const Timestep ) {
 
-    WaterHeater.is_damaged = (
-        ( true == WaterHeater.is_damaged )
-     || ( ( true == WaterHeater.is_active )
-       && ( false == WaterPump.is_active ) ) );
-
     WaterHeater.is_active = (
         ( false == WaterHeater.is_damaged )
      && ( true == Battery )
      && ( true == WaterHeater.is_enabled )
      && ( true == WaterHeater.breaker )
      && ( ( WaterHeater.is_active ) || ( WaterHeater.config.temp_min < 0 ) || ( dizel_heat.temperatura1 < WaterHeater.config.temp_min ) ) );
-    
+
+    WaterHeater.is_damaged = (
+        ( true == WaterHeater.is_damaged )
+     || ( ( true == WaterHeater.is_active )
+       && ( false == WaterPump.is_active ) ) );
+
     if( ( WaterHeater.config.temp_max > 0 )
      && ( dizel_heat.temperatura1 > WaterHeater.config.temp_max ) ) {
         WaterHeater.is_active = false;
@@ -2399,7 +2371,7 @@ bool TMoverParameters::EpFuseSwitch(bool State)
 bool TMoverParameters::DirectionBackward(void)
 {
     bool DB = false;
-    if ((ActiveDir == 1) && (MainCtrlPos == 0) && (TrainType == dt_EZT))
+    if ((ActiveDir == 1) && (MainCtrlPos == 0) && (TrainType == dt_EZT) && (EngineType != TEngineType::ElectricInductionMotor))
         if (MinCurrentSwitch(false))
         {
             DB = true; //
@@ -2681,7 +2653,7 @@ bool TMoverParameters::OilPumpSwitchOff( bool State, range_t const Notify ) {
     return ( OilPump.is_disabled != initialstate );
 }
 
-bool TMoverParameters::MotorBlowersSwitch( bool State, side const Side, range_t const Notify ) {
+bool TMoverParameters::MotorBlowersSwitch( bool State, end const Side, range_t const Notify ) {
 
     auto &fan { MotorBlowers[ Side ] };
 
@@ -2697,7 +2669,7 @@ bool TMoverParameters::MotorBlowersSwitch( bool State, side const Side, range_t 
 
     if( Notify != range_t::local ) {
         SendCtrlToNext(
-            ( Side == side::front ? "MotorBlowersFrontSwitch" : "MotorBlowersRearSwitch" ),
+            ( Side == end::front ? "MotorBlowersFrontSwitch" : "MotorBlowersRearSwitch" ),
             ( fan.is_enabled ? 1 : 0 ),
             CabNo,
             ( Notify == range_t::unit ?
@@ -2708,7 +2680,7 @@ bool TMoverParameters::MotorBlowersSwitch( bool State, side const Side, range_t 
     return ( fan.is_enabled != initialstate );
 }
 
-bool TMoverParameters::MotorBlowersSwitchOff( bool State, side const Side, range_t const Notify ) {
+bool TMoverParameters::MotorBlowersSwitchOff( bool State, end const Side, range_t const Notify ) {
 
     auto &fan { MotorBlowers[ Side ] };
 
@@ -2724,7 +2696,7 @@ bool TMoverParameters::MotorBlowersSwitchOff( bool State, side const Side, range
 
     if( Notify != range_t::local ) {
         SendCtrlToNext(
-            ( Side == side::front ? "MotorBlowersFrontSwitchOff" : "MotorBlowersRearSwitchOff" ),
+            ( Side == end::front ? "MotorBlowersFrontSwitchOff" : "MotorBlowersRearSwitchOff" ),
             ( fan.is_disabled ? 1 : 0 ),
             CabNo,
             ( Notify == range_t::unit ?
@@ -2739,64 +2711,74 @@ bool TMoverParameters::MotorBlowersSwitchOff( bool State, side const Side, range
 // Q: 20160713
 // włączenie / wyłączenie obwodu głownego
 // *************************************************************************************************
-bool TMoverParameters::MainSwitch( bool const State, range_t const Notify )
-{
+bool TMoverParameters::MainSwitch( bool const State, range_t const Notify ) {
+
     bool const initialstate { Mains || dizel_startup };
 
-    if( ( Mains != State )
-     && ( MainCtrlPosNo > 0 ) ) {
+    MainSwitch_( State );
 
-        if( ( false == State )
-         || ( ( ( ScndCtrlPos == 0 ) || ( EngineType == TEngineType::ElectricInductionMotor ) )
-           && ( ( ConvOvldFlag == false ) || ( TrainType == dt_EZT ) )
-           && ( true == NoVoltRelay )
-           && ( true == OvervoltageRelay )
-           && ( LastSwitchingTime > CtrlDelay )
-           && ( false == TestFlag( DamageFlag, dtrain_out ) )
-           && ( false == TestFlag( EngDmgFlag, 1 ) ) ) ) {
-
-            if( true == State ) {
-                // switch on
-                if( ( EngineType == TEngineType::DieselEngine )
-                 || ( EngineType == TEngineType::DieselElectric ) ) {
-                    // launch diesel engine startup procedure
-                    dizel_startup = true;
-                }
-                else {
-                    Mains = true;
-                }
-            }
-            else {
-                Mains = false;
-                // potentially knock out the pumps if their switch doesn't force them on
-                WaterPump.is_active &= WaterPump.is_enabled;
-                FuelPump.is_active &= FuelPump.is_enabled;
-            }
-
-            if( ( TrainType == dt_EZT )
-             && ( false == State ) ) {
-
-                ConvOvldFlag = true;
-            }
-
-            if( Mains != initialstate ) {
-                LastSwitchingTime = 0;
-            }
-
-            if( Notify != range_t::local ) {
-                // pass the command to other vehicles
-                SendCtrlToNext(
-                    "MainSwitch",
-                    ( State ? 1 : 0 ),
-                    CabNo,
-                    ( Notify == range_t::unit ?
-                        coupling::control | coupling::permanent :
-                        coupling::control ) );
-            }
-        }
+    if( Notify != range_t::local ) {
+    // pass the command to other vehicles
+    // TBD: pass the requested state, or the actual state?
+    SendCtrlToNext(
+        "MainSwitch",
+        ( State ? 1 : 0 ),
+        CabNo,
+        ( Notify == range_t::unit ?
+            coupling::control | coupling::permanent :
+            coupling::control ) );
     }
 
     return ( ( Mains || dizel_startup ) != initialstate );
+}
+
+void TMoverParameters::MainSwitch_( bool const State ) {
+
+    if( ( Mains == State )
+     || ( MainCtrlPosNo == 0 ) ) {
+        // nothing to do
+        return;
+    }
+
+    bool const initialstate { Mains || dizel_startup };
+
+    if( ( false == State )
+     || ( ( ( ScndCtrlPos == 0 ) || ( EngineType == TEngineType::ElectricInductionMotor ) )
+       && ( ( ConvOvldFlag == false ) || ( TrainType == dt_EZT ) )
+       && ( true == NoVoltRelay )
+       && ( true == OvervoltageRelay )
+       && ( LastSwitchingTime > CtrlDelay )
+       && ( false == TestFlag( DamageFlag, dtrain_out ) )
+       && ( false == TestFlag( EngDmgFlag, 1 ) ) ) ) {
+
+        if( true == State ) {
+            // switch on
+            if( ( EngineType == TEngineType::DieselEngine )
+             || ( EngineType == TEngineType::DieselElectric ) ) {
+                // launch diesel engine startup procedure
+                dizel_startup = true;
+            }
+            else {
+                Mains = true;
+            }
+        }
+        else {
+            Mains = false;
+            // potentially knock out the pumps if their switch doesn't force them on
+            WaterPump.is_active &= WaterPump.is_enabled;
+            FuelPump.is_active &= FuelPump.is_enabled;
+        }
+
+        if( ( TrainType == dt_EZT )
+         && ( false == State ) ) {
+
+            ConvOvldFlag = true;
+        }
+
+        if( Mains != initialstate ) {
+            LastSwitchingTime = 0;
+        }
+    }
 }
 
 // *************************************************************************************************
@@ -3201,18 +3183,7 @@ bool TMoverParameters::DecBrakePress(double &brake, double PressLimit, double dp
 bool TMoverParameters::BrakeDelaySwitch(int BDS)
 {
     bool rBDS;
-    //  if (BrakeCtrlPosNo > 0)
-	if (BrakeHandle == TBrakeHandle::MHZ_EN57)
-	{
-		if ((BDS != BrakeOpModeFlag) && ((BDS & BrakeOpModes) > 0))
-		{
-			BrakeOpModeFlag = BDS;
-			rBDS = true;
-		}
-		else
-			rBDS = false;
-	}
-	else if (Hamulec->SetBDF(BDS))
+	if (Hamulec->SetBDF(BDS))
     {
         BrakeDelayFlag = BDS;
         rBDS = true;
@@ -3353,11 +3324,11 @@ void TMoverParameters::CompressorCheck(double dt)
         { // sprawdzić możliwe warunki wyłączenia sprężarki
             if (CompressorPower == 5) // jeśli zasilanie z sąsiedniego członu
             { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
-                if( Couplers[ side::rear ].Connected != NULL ) {
+                if( Couplers[ end::rear ].Connected != NULL ) {
                     CompressorFlag = (
-                        ( ( Couplers[ side::rear ].Connected->CompressorAllow ) || ( CompressorStart == start_t::automatic ) )
+                        ( ( Couplers[ end::rear ].Connected->CompressorAllow ) || ( CompressorStart == start_t::automatic ) )
                      && ( CompressorAllowLocal )
-                     && ( Couplers[ side::rear ].Connected->ConverterFlag ) );
+                     && ( Couplers[ end::rear ].Connected->ConverterFlag ) );
                 }
                 else {
                     // bez tamtego członu nie zadziała
@@ -3366,11 +3337,11 @@ void TMoverParameters::CompressorCheck(double dt)
             }
             else if (CompressorPower == 4) // jeśli zasilanie z poprzedniego członu
             { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
-                if( Couplers[ side::front ].Connected != NULL ) {
+                if( Couplers[ end::front ].Connected != NULL ) {
                     CompressorFlag = (
-                        ( ( Couplers[ side::front ].Connected->CompressorAllow ) || ( CompressorStart == start_t::automatic ) )
+                        ( ( Couplers[ end::front ].Connected->CompressorAllow ) || ( CompressorStart == start_t::automatic ) )
                      && ( CompressorAllowLocal )
-                     && ( Couplers[ side::front ].Connected->ConverterFlag ) );
+                     && ( Couplers[ end::front ].Connected->ConverterFlag ) );
                 }
                 else {
                     CompressorFlag = false; // bez tamtego członu nie zadziała
@@ -3429,11 +3400,11 @@ void TMoverParameters::CompressorCheck(double dt)
                     // or if the switch is on and the pressure isn't maxed
                 if( CompressorPower == 5 ) // jeśli zasilanie z następnego członu
                 { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
-                    if( Couplers[ side::rear ].Connected != NULL ) {
+                    if( Couplers[ end::rear ].Connected != NULL ) {
                         CompressorFlag = (
-                            ( ( Couplers[ side::rear ].Connected->CompressorAllow ) || ( CompressorStart == start_t::automatic ) )
+                            ( ( Couplers[ end::rear ].Connected->CompressorAllow ) || ( CompressorStart == start_t::automatic ) )
                          && ( CompressorAllowLocal )
-                         && ( Couplers[ side::rear ].Connected->ConverterFlag ) );
+                         && ( Couplers[ end::rear ].Connected->ConverterFlag ) );
                     }
                     else {
                         // bez tamtego członu nie zadziała
@@ -3442,11 +3413,11 @@ void TMoverParameters::CompressorCheck(double dt)
                 }
                 else if( CompressorPower == 4 ) // jeśli zasilanie z poprzedniego członu
                 { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
-                    if( Couplers[ side::front ].Connected != NULL ) {
+                    if( Couplers[ end::front ].Connected != NULL ) {
                         CompressorFlag = (
-                            ( ( Couplers[ side::front ].Connected->CompressorAllow ) || ( CompressorStart == start_t::automatic ) )
+                            ( ( Couplers[ end::front ].Connected->CompressorAllow ) || ( CompressorStart == start_t::automatic ) )
                          && ( CompressorAllowLocal )
-                         && ( Couplers[ side::front ].Connected->ConverterFlag ) );
+                         && ( Couplers[ end::front ].Connected->ConverterFlag ) );
                     }
                     else {
                         CompressorFlag = false; // bez tamtego członu nie zadziała
@@ -3555,9 +3526,8 @@ void TMoverParameters::UpdatePipePressure(double dt)
 
     dpMainValve = 0;
 
-    if ((BrakeCtrlPosNo > 1) /*&& (ActiveCab != 0)*/)
-    // with BrakePressureTable[BrakeCtrlPos] do
-    {
+    if( BrakeCtrlPosNo > 1 ) {
+
 		if ((EngineType != TEngineType::ElectricInductionMotor))
 			dpLocalValve = LocHandle->GetPF(std::max(LocalBrakePosA, LocalBrakePosAEIM), Hamulec->GetBCP(), ScndPipePress, dt, 0);
 		else
@@ -3573,13 +3543,21 @@ void TMoverParameters::UpdatePipePressure(double dt)
             temp = ScndPipePress;
         }
         Handle->SetReductor(BrakeCtrlPos2);
+                
+        if( ( ( BrakeOpModes & bom_PS ) == 0 )
+         || ( ( ActiveCab != 0 )
+           && ( BrakeOpModeFlag != bom_PS ) ) ) {
 
-		if ((BrakeOpModeFlag != bom_PS))
-			if ((BrakeOpModeFlag < bom_EP) || ((Handle->GetPos(bh_EB) - 0.5) < BrakeCtrlPosR) ||
-				(BrakeHandle != TBrakeHandle::MHZ_EN57))
-				dpMainValve = Handle->GetPF(BrakeCtrlPosR, PipePress, temp, dt, EqvtPipePress);
-			else
-				dpMainValve = Handle->GetPF(0, PipePress, temp, dt, EqvtPipePress);
+            if( ( BrakeOpModeFlag < bom_EP )
+             || ( ( Handle->GetPos( bh_EB ) - 0.5 ) < BrakeCtrlPosR )
+             || ( ( BrakeHandle != TBrakeHandle::MHZ_EN57 )
+               && ( BrakeHandle != TBrakeHandle::MHZ_K8P ) ) ) {
+                dpMainValve = Handle->GetPF( BrakeCtrlPosR, PipePress, temp, dt, EqvtPipePress );
+            }
+            else {
+                dpMainValve = Handle->GetPF( 0, PipePress, temp, dt, EqvtPipePress );
+            }
+        }
 		
 		if (dpMainValve < 0) // && (PipePressureVal > 0.01)           //50
             if (Compressor > ScndPipePress)
@@ -3993,17 +3971,15 @@ void TMoverParameters::ComputeTotalForce(double dt, double dt1, bool FullVer)
                 Voltage = RunningTraction.TractionVoltage * DirAbsolute; // ActiveDir*CabNo;
         } // bo nie dzialalo
         else if( ( EngineType == TEngineType::ElectricInductionMotor )
-              || ( ( ( Couplers[ side::front ].CouplingFlag & ctrain_power ) == ctrain_power )
-                || ( ( Couplers[ side::rear ].CouplingFlag & ctrain_power ) == ctrain_power ) ) ) {
+              || ( ( ( Couplers[ end::front ].CouplingFlag & ctrain_power ) == ctrain_power )
+                || ( ( Couplers[ end::rear ].CouplingFlag & ctrain_power ) == ctrain_power ) ) ) {
             // potem ulepszyc! pantogtrafy!
             Voltage =
                 std::max(
                     RunningTraction.TractionVoltage,
-#ifdef EU07_USE_OLD_HVCOUPLERS
-                    std::max( HVCouplers[side::front][hvcoupler::voltage], HVCouplers[side::rear][hvcoupler::voltage] ) );
-#else
-                    std::max( Couplers[ side::front ].power_high.voltage, Couplers[ side::rear ].power_high.voltage ) );
-#endif
+                    std::max(
+                        Couplers[ end::front ].power_high.voltage,
+                        Couplers[ end::rear ].power_high.voltage ) );
         }
         else {
             Voltage = 0;
@@ -4627,22 +4603,31 @@ double TMoverParameters::TractionForce( double dt ) {
     switch( EngineType ) {
 
         case TEngineType::ElectricSeriesMotor: {
-/*
-			if ((Mains)) // nie wchodzić w funkcję bez potrzeby
-				if ( (std::max(GetTrainsetVoltage(), std::abs(Voltage)) < EnginePowerSource.CollectorParameters.MinV) ||
-					(std::max(GetTrainsetVoltage(), std::abs(Voltage)) * EnginePowerSource.CollectorParameters.OVP >
-						EnginePowerSource.CollectorParameters.MaxV))
-                        if( MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ) ) // TODO: check whether we need to send this EMU-wide
-						EventFlag = true; // wywalanie szybkiego z powodu niewłaściwego napięcia
-*/
             // update the state of voltage relays
             auto const voltage { std::max( GetTrainsetVoltage(), std::abs( RunningTraction.TractionVoltage ) ) };
-            NoVoltRelay = ( voltage >= EnginePowerSource.CollectorParameters.MinV );
-            OvervoltageRelay = ( voltage <= EnginePowerSource.CollectorParameters.MaxV ) || ( false == EnginePowerSource.CollectorParameters.OVP );
+            NoVoltRelay =
+                ( EnginePowerSource.SourceType != TPowerSource::CurrentCollector )
+             || ( voltage >= EnginePowerSource.CollectorParameters.MinV );
+            OvervoltageRelay =
+                ( EnginePowerSource.SourceType != TPowerSource::CurrentCollector )
+             || ( voltage <= EnginePowerSource.CollectorParameters.MaxV )
+             || ( false == EnginePowerSource.CollectorParameters.OVP );
             // wywalanie szybkiego z powodu niewłaściwego napięcia
             EventFlag |= ( ( true == Mains )
                         && ( ( false == NoVoltRelay ) || ( false == OvervoltageRelay ) )
                         && ( MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ) ) ); // TODO: check whether we need to send this EMU-wide
+            break;
+        }
+
+        case TEngineType::ElectricInductionMotor: {
+            // TODO: check if we can use instead the code for electricseriesmotor
+            if( ( Mains ) ) {
+                // nie wchodzić w funkcję bez potrzeby
+                if( ( std::max( GetTrainsetVoltage(), std::abs( RunningTraction.TractionVoltage ) ) < EnginePowerSource.CollectorParameters.MinV )
+                 || ( std::max( GetTrainsetVoltage(), std::abs( RunningTraction.TractionVoltage ) ) > EnginePowerSource.CollectorParameters.MaxV + 200 ) ) {
+                    MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ); // TODO: check whether we need to send this EMU-wide
+                }
+            }
             break;
         }
 
@@ -5062,13 +5047,6 @@ double TMoverParameters::TractionForce( double dt ) {
 
         case TEngineType::ElectricInductionMotor:
         {
-            if( ( Mains ) ) {
-                // nie wchodzić w funkcję bez potrzeby
-                if( ( std::max( std::abs( Voltage ), GetTrainsetVoltage() ) < EnginePowerSource.CollectorParameters.MinV )
-                 || ( std::max( std::abs( Voltage ), GetTrainsetVoltage() ) > EnginePowerSource.CollectorParameters.MaxV + 200 ) ) {
-                    MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ); // TODO: check whether we need to send this EMU-wide
-                }
-            }
             if( true == Mains ) {
 				//tempomat
 				if (ScndCtrlPosNo > 1)
@@ -5095,8 +5073,10 @@ double TMoverParameters::TractionForce( double dt ) {
 				}
 
                 dtrans = Hamulec->GetEDBCP();
-                if (((DoorLeftOpened) || (DoorRightOpened)))
+                if( ( ( false == Doors.instances[ side::left ].is_closed )
+                   || ( false == Doors.instances[ side::right ].is_closed ) ) ) {
                     DynamicBrakeFlag = true;
+                }
                 else if (((dtrans < 0.25) && (LocHandle->GetCP() < 0.25) && (AnPos < 0.01)) ||
                          ((dtrans < 0.25) && (ShuntModeAllow) && (LocalBrakePosA < 0.01)))
                     DynamicBrakeFlag = false;
@@ -5531,8 +5511,9 @@ bool TMoverParameters::MaxCurrentSwitch(bool State)
 bool TMoverParameters::MinCurrentSwitch(bool State)
 {
     bool MCS = false;
-    if (((EngineType == TEngineType::ElectricSeriesMotor) && (IminHi > IminLo)) || (TrainType == dt_EZT))
-    {
+    if( ( ( EngineType == TEngineType::ElectricSeriesMotor ) && ( IminHi > IminLo ) )
+     || ( ( TrainType == dt_EZT ) && ( EngineType != TEngineType::ElectricInductionMotor ) ) ) {
+
         if (State && (Imin == IminLo))
         {
             Imin = IminHi;
@@ -5616,10 +5597,10 @@ bool TMoverParameters::AutoRelayCheck(void)
 
     // sprawdzenie wszystkich warunkow (AutoRelayFlag, AutoSwitch, Im<Imin)
     auto const ARFASI2 { (
-        ( !AutoRelayFlag )
+        ( false == AutoRelayFlag )
      || ( ( MotorParam[ ScndCtrlActualPos ].AutoSwitch ) && ( abs( Im ) < Imin ) ) ) };
     auto const ARFASI { (
-        ( !AutoRelayFlag )
+        ( false == AutoRelayFlag )
      || ( ( RList[ MainCtrlActualPos ].AutoSwitch ) && ( abs( Im ) < Imin ) )
      || ( ( !RList[ MainCtrlActualPos ].AutoSwitch ) && ( RList[ MainCtrlActualPos ].Relay < MainCtrlPos ) ) ) };
     // brak PSR                   na tej pozycji działa PSR i prąd poniżej progu
@@ -6692,7 +6673,7 @@ TMoverParameters::AssignLoad( std::string const &Name, float const Amount ) {
     for( auto const &loadattributes : LoadAttributes ) {
         if( Name == loadattributes.name ) {
             LoadType = loadattributes;
-            LoadAmount = Amount;
+            LoadAmount = clamp( Amount, 0.f, MaxLoad ) ;
             return true;
         }
     }
@@ -6730,7 +6711,7 @@ bool TMoverParameters::LoadingDone(double const LSpeed, std::string const &Loadn
             if( ( LoadAmount <= 0 ) || ( CommandIn.Value1 <= 0 ) ) {
                 // pusto lub rozładowano żądaną ilość
                 LoadStatus = 4; // skończony rozładunek
-                LoadAmount = std::max( 0.f, LoadAmount ); //ładunek nie może być ujemny
+                LoadAmount = clamp( LoadAmount, 0.f, MaxLoad); //ładunek nie może być ujemny
             }
             if( LoadAmount == 0.f ) {
                 AssignLoad(""); // jak nic nie ma, to nie ma też nazwy
@@ -6755,49 +6736,84 @@ bool TMoverParameters::LoadingDone(double const LSpeed, std::string const &Loadn
     return ( LoadStatus >= 4 );
 }
 
-// *************************************************************************************************
-// Q: 20160713
-// Zwraca informacje o działającej blokadzie drzwi
-// *************************************************************************************************
-bool TMoverParameters::DoorBlockedFlag( void ) {
-    // TBD: configurable lock activation threshold?
-    return (
-        ( true == DoorBlocked )
-     && ( true == DoorLockEnabled )
-     && ( Vel >= 10.0 ) );
+bool TMoverParameters::ChangeDoorPermitPreset( int const Change, range_t const Notify ) {
+
+    auto const initialstate { Doors.permit_preset };
+
+    if( false == Doors.permit_presets.empty() ) {
+
+        Doors.permit_preset = clamp<int>( Doors.permit_preset + Change, 0, Doors.permit_presets.size() - 1 );
+        auto const doors { Doors.permit_presets[ Doors.permit_preset ] };
+        auto const permitleft  = doors & 1;
+        auto const permitright = doors & 2;
+
+        PermitDoors( ( CabNo > 0 ? side::left : side::right ), permitleft, Notify );
+        PermitDoors( ( CabNo > 0 ? side::right : side::left ), permitright, Notify );
+    }
+
+    return ( Doors.permit_preset != initialstate );
 }
 
-// *************************************************************************************************
-// Q: 20160713
-// Otwiera / zamyka lewe drzwi
-// *************************************************************************************************
-// NOTE: door methods work regardless of vehicle door control type,
-// but commands issued through the command system work only for vehicles which accept remote door control
-bool TMoverParameters::DoorLeft(bool State, range_t const Notify ) {
+bool TMoverParameters::PermitDoors( side const Door, bool const State, range_t const Notify ) {
 
-    if( DoorLeftOpened == State ) {
+    bool const initialstate { Doors.instances[Door].open_permit };
+
+    if( ( false == Doors.permit_presets.empty() ) // HACK: for cases where preset switch is used before battery
+     || ( ( true == Battery )
+       && ( false == Doors.is_locked ) ) ) {
+
+        Doors.instances[ Door ].open_permit = State;
+    }
+
+    if( Notify != range_t::local ) {
+
+        SendCtrlToNext(
+            "DoorPermit",
+            ( State ? 1 : -1 ) // positive: grant, negative: revoke
+            * ( Door == ( CabNo > 0 ? side::left : side::right ) ? // 1=lewe, 2=prawe (swap if reversed)
+                1 :
+                2 ),
+            CabNo,
+            ( Notify == range_t::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return ( Doors.instances[ Door ].open_permit != initialstate );
+}
+
+bool TMoverParameters::OperateDoors( side const Door, bool const State, range_t const Notify ) {
+
+    auto &door { Doors.instances[ Door ] };
+/*
+    if( ( State == true ? door.is_open : door.is_closed ) ) {
         // TBD: should the command be passed to other vehicles regardless of whether it affected the primary target?
         // (for the time being no, methods are often invoked blindly which would lead to commands spam)
         return false;
     }
-
+*/
     bool result { false };
 
-    if( ( Battery == true )
-     && ( ( State == false ) // closing door works always, but if the lock is engaged they can't be opened
-       || ( DoorBlockedFlag() == false ) ) ) {
+    if( Battery == true ) {
 
-        DoorLeftOpened = State;
-        result = true;
-
-        if( DoorCloseCtrl == control_t::autonomous ) {
-            // activate or disable the door timer depending on whether door were open or closed
-            // NOTE: this it a local-only operation but shouldn't be an issue as automatic door are operated locally anyway
-            DoorLeftOpenTimer = (
-                State == true ?
-                    DoorStayOpen :
-                    -1.0 );
+        if( Notify != range_t::local ) {
+            door.remote_open = State;
+            door.remote_close = ( false == State );
         }
+        else {
+            door.local_open = State;
+            door.local_close = ( false == State );
+        }
+
+        result = true;
+/*
+        // activate or disable the door timer depending on whether door were open or closed
+        // NOTE: this is a local-only operation but shouldn't be an issue as automatic door are operated locally anyway
+        door.auto_timer = (
+            ( ( State == true ) && ( Notify == range_t::local ) ) ?
+                Doors.auto_duration :
+                -1.0 );
+*/
     }
     if( Notify != range_t::local ) {
 
@@ -6805,7 +6821,7 @@ bool TMoverParameters::DoorLeft(bool State, range_t const Notify ) {
             ( State == true ?
                 "DoorOpen" :
                 "DoorClose" ),
-            ( CabNo > 0 ? // 1=lewe, 2=prawe (swap if reversed)
+            ( Door == ( CabNo > 0 ? side::left : side::right ) ? // 1=lewe, 2=prawe (swap if reversed)
                 1 :
                 2 ),
             CabNo,
@@ -6817,54 +6833,24 @@ bool TMoverParameters::DoorLeft(bool State, range_t const Notify ) {
     return result;
 }
 
-// *************************************************************************************************
-// Q: 20160713
-// Otwiera / zamyka prawe drzwi
-// *************************************************************************************************
-// NOTE: door methods work regardless of vehicle door control type,
-// but commands issued through the command system work only for vehicles which accept remote door control
-bool TMoverParameters::DoorRight(bool State, range_t const Notify ) {
+// toggle door lock
+bool TMoverParameters::LockDoors( bool const State, range_t const Notify ) {
 
-    if( DoorRightOpened == State ) {
-        // TBD: should the command be passed to other vehicles regardless of whether it affected the primary target?
-        // (for the time being no, methods are often invoked blindly which would lead to commands spam)
-        return false;
-    }
-
-    bool result { false };
-
-    if( ( Battery == true )
-     && ( ( State == false )
-       || ( DoorBlockedFlag() == false ) ) ) {
-
-        DoorRightOpened = State;
-        result = true;
-
-        if( DoorCloseCtrl == control_t::autonomous ) {
-            // activate or disable the door timer depending on whether door were open or closed
-            // NOTE: this it a local-only operation but shouldn't be an issue as automatic door are operated locally anyway
-            DoorRightOpenTimer = (
-                State == true ?
-                    DoorStayOpen :
-                    -1.0 );
-        }
-    }
+    Doors.lock_enabled = State;
     if( Notify != range_t::local ) {
-
+        // wysłanie wyłączenia do pozostałych?
         SendCtrlToNext(
+            "DoorLock",
             ( State == true ?
-                "DoorOpen" :
-                "DoorClose" ),
-            ( CabNo > 0 ? // 1=lewe, 2=prawe (swap if reversed)
-                2 :
-                1 ),
+                1 :
+                0 ),
             CabNo,
             ( Notify == range_t::unit ?
                 coupling::control | coupling::permanent :
                 coupling::control ) );
     }
 
-    return result;
+    return true;
 }
 
 // toggles departure warning
@@ -6895,39 +6881,178 @@ TMoverParameters::signal_departure( bool const State, range_t const Notify ) {
 
 // automatic door controller update
 void
-TMoverParameters::update_autonomous_doors( double const Deltatime ) {
+TMoverParameters::update_doors( double const Deltatime ) {
 
-    if( DoorCloseCtrl != control_t::autonomous ) { return; }
-    if( ( false == DoorLeftOpened )
-     && ( false == DoorRightOpened ) ) { return; }
+    if( Doors.range == 0.f ) { return; } // HACK: crude way to distinguish vehicles with actual doors
 
-    if( DoorStayOpen > 0.0 ) {
+    // NBMX Obsluga drzwi, MC: zuniwersalnione
+    auto const localopencontrol {
+        ( Doors.open_control == control_t::passenger )
+     || ( Doors.open_control == control_t::mixed ) };
+    auto const remoteopencontrol {
+        ( Doors.open_control == control_t::driver )
+     || ( Doors.open_control == control_t::conductor )
+     || ( Doors.open_control == control_t::mixed ) };
+    auto const localclosecontrol {
+        ( Doors.close_control == control_t::passenger )
+     || ( Doors.close_control == control_t::mixed ) };
+    auto const remoteclosecontrol {
+        ( Doors.close_control == control_t::driver )
+     || ( Doors.close_control == control_t::conductor )
+     || ( Doors.close_control == control_t::mixed ) };
+
+    Doors.is_locked =
+        ( true == Doors.has_lock )
+     && ( true == Doors.lock_enabled )
+     && ( Vel >= 10.0 );
+
+    for( auto &door : Doors.instances ) {
+        // revoke permit if...
+        door.open_permit =
+            ( true == door.open_permit ) // ...we already have one...
+         && ( ( false == Doors.permit_presets.empty() ) // ...there's no permit preset switch...
+           || ( ( false == Doors.is_locked ) // ...and the door lock is engaged...
+             && ( false == door.remote_close ) ) );// ...or about to be closed
+
+        door.is_open =
+            ( door.position >= Doors.range )
+         && ( door.step_position >= ( Doors.step_range != 0.f ? 1.f : 0.f ) );
+        door.is_closed =
+            ( door.position <= 0.f )
+         && ( door.step_position <= 0.f );
+
+        door.local_open  = door.local_open  && ( false == door.is_open ) && ( ( false == Doors.permit_needed ) || door.open_permit );
+        door.remote_open = door.remote_open && ( false == door.is_open ) && ( ( false == Doors.permit_needed ) || door.open_permit );
+        door.local_close  = door.local_close  && ( false == door.is_closed );
+        door.remote_close = door.remote_close && ( false == door.is_closed );
+
+        auto const openrequest {
+            ( localopencontrol && door.local_open )
+         || ( remoteopencontrol && door.remote_open ) };
+
+        auto const autocloserequest {
+            ( ( Doors.auto_velocity != -1.f ) && ( Vel > Doors.auto_velocity ) )
+         || ( ( door.auto_timer != -1.f ) && ( door.auto_timer <= 0.f ) )
+         || ( ( Doors.permit_needed ) && ( false == door.open_permit ) ) };
+        auto const closerequest {
+            ( door.remote_close && remoteclosecontrol )
+         || ( door.local_close && localclosecontrol )
+         || ( autocloserequest && door.is_open ) };
+        door.is_opening =
+            ( false == door.is_open )
+         && ( true == Battery )
+         && ( false == closerequest )
+         && ( ( true == door.is_opening )
+           || ( ( true == openrequest )
+             && ( false == Doors.is_locked ) ) );
+        door.is_closing =
+            ( false == door.is_closed )
+         && ( true == Battery )
+         && ( false == openrequest )
+         && ( door.is_closing || closerequest );
+
+        if( true == door.is_opening ) {
+            door.auto_timer = (
+                ( localopencontrol && door.local_open ) ? Doors.auto_duration :
+                ( remoteopencontrol && door.remote_open && Doors.auto_include_remote ) ? Doors.auto_duration :
+                -1.f );
+        }
+
+        // doors
+        if( ( true == door.is_opening )
+         && ( door.position < Doors.range ) ) {
+            // open door
+            if( ( TrainType == dt_EZT )
+             || ( TrainType == dt_DMU ) ) {
+                // multi-unit vehicles typically open door only after unfolding the doorstep
+                if( ( Doors.step_range == 0.f ) // no wait if no doorstep
+                 || ( Doors.step_type == 2 ) // no wait for rotating doorstep
+                 || ( door.step_position == 1.f ) ) {
+                    door.position = std::min<float>(
+                        Doors.range,
+                        door.position + Doors.open_rate * Deltatime );
+                }
+            }
+            else {
+                door.position = std::min<float>(
+                    Doors.range,
+                    door.position + Doors.open_rate * Deltatime );
+            }
+            door.close_delay = 0.f;
+        }
+        if( ( true == door.is_closing )
+         && ( door.position > 0.f ) ) {
+            // close door
+            door.close_delay += Deltatime;
+            if( door.close_delay > Doors.close_delay ) {
+                door.position = std::max<float>(
+                    0.f,
+                    door.position - Doors.close_rate * Deltatime );
+            }
+        }
+        // doorsteps
+        if( ( true == door.is_opening )
+         && ( Doors.step_range != 0.f )
+         && ( door.step_position < 1.f ) ) {
+            // unfold left doorstep
+            door.step_position = std::min<float>(
+                1.f,
+                door.step_position + Doors.step_rate * Deltatime );
+        }
+        if( ( true == door.is_closing )
+         && ( door.step_position > 0.f )
+         && ( door.close_delay > Doors.close_delay ) ) {
+            // fold left doorstep
+            if( ( TrainType == dt_EZT )
+             || ( TrainType == dt_DMU ) ) {
+                // multi-unit vehicles typically fold the doorstep only after closing the door
+                if( door.position == 0.f ) {
+                    door.step_position = std::max<float>(
+                        0.f,
+                        door.step_position - Doors.step_rate * Deltatime );
+                }
+            }
+            else {
+                door.step_position = std::max<float>(
+                    0.f,
+                    door.step_position - Doors.step_rate * Deltatime );
+            }
+        }
+    }
+
+    if( ( false == Doors.instances[side::right].is_open )
+     && ( false == Doors.instances[side::left].is_open ) ) { return; }
+
+    if( Doors.auto_duration > 0.f ) {
         // update door timers if the door close after defined time
-        if( DoorLeftOpenTimer  >= 0.0 ) { DoorLeftOpenTimer  -= Deltatime; }
-        if( DoorRightOpenTimer >= 0.0 ) { DoorRightOpenTimer -= Deltatime; }
-    }
-    if( ( LoadStatus & ( 2 | 1 ) ) != 0 ) {
-        // if there's load exchange in progress, reset the timer(s) for already open doors
-        if( true == DoorLeftOpened )  { DoorLeftOpenTimer  = DoorStayOpen; }
-        if( true == DoorRightOpened ) { DoorRightOpenTimer = DoorStayOpen; }
-    }
-    // the door are closed if their timer goes below 0, or if the vehicle is moving at > 10 km/h
-    auto const closingspeed { 10.0 };
-    // NOTE: timer value of 0 is 'special' as it means the door will stay open until vehicle is moving
-    if( true == DoorLeftOpened ) {
-        if( ( ( DoorStayOpen > 0.0 ) && ( DoorLeftOpenTimer < 0.0 ) )
-         || ( Vel > closingspeed ) ) {
-            // close the door and set the timer to expired state (closing may happen sooner if vehicle starts moving)
-            DoorLeft( false, range_t::local );
+        for( auto &door : Doors.instances ) {
+
+            if( false == door.is_open ) { continue; }
+
+            if( door.auto_timer > 0.f ) {
+                door.auto_timer -= Deltatime;
+            }
+            // if there's load exchange in progress, reset the timer(s) for already open doors
+            if( ( door.auto_timer != -1.f )
+             && ( ( LoadStatus & ( 2 | 1 ) ) != 0 ) ) {
+                door.auto_timer = Doors.auto_duration;
+            }
         }
     }
-    if( true == DoorRightOpened ) {
-        if( ( ( DoorStayOpen > 0.0 ) && ( DoorRightOpenTimer < 0.0 ) )
-         || ( Vel > closingspeed ) ) {
-            // close the door and set the timer to expired state (closing may happen sooner if vehicle starts moving)
-            DoorRight( false, range_t::local );
+/*
+    // the door are closed if their timer goes below 0, or if the vehicle is moving faster than defined threshold
+    std::array<side, 2> const doorids { side::right, side::left };
+    for( auto const doorid : doorids ) {
+        auto const &door { Doors.instances[ doorid ] };
+        if( true == door.is_open ) {
+            if( ( ( Doors.auto_velocity != -1.f ) && ( Vel > Doors.auto_velocity ) )
+             || ( ( door.auto_timer != -1.f ) && ( door.auto_timer <= 0.f ) ) ) {
+                // close the door and set the timer to expired state (closing may happen sooner if vehicle starts moving)
+                OperateDoors( doorid, false, range_t::local );
+            }
         }
     }
+*/
 }
 
 // *************************************************************************************************
@@ -7017,30 +7142,19 @@ std::string TMoverParameters::EngineDescription(int what) const
 // *************************************************************************************************
 double TMoverParameters::GetTrainsetVoltage(void)
 {//ABu: funkcja zwracajaca napiecie dla calego skladu, przydatna dla EZT
-#ifdef EU07_USE_OLD_HVCOUPLERS
     return std::max(
-        HVCouplers[ side::front ][ hvcoupler::voltage ],
-        HVCouplers[ side::rear ][ hvcoupler::voltage ] );
-#else
-/*
-    return std::max(
-        Couplers[ side::front ].power_high.voltage,
-        Couplers[ side::rear ].power_high.voltage );
-*/
-    return std::max(
-        ( ( ( Couplers[side::front].Connected )
-         && ( ( Couplers[ side::front ].CouplingFlag & ctrain_power )
+        ( ( ( Couplers[end::front].Connected )
+         && ( ( Couplers[ end::front ].CouplingFlag & ctrain_power )
            || ( ( Heating )
-             && ( Couplers[ side::front ].CouplingFlag & ctrain_heating ) ) ) ) ?
-            Couplers[side::front].Connected->Couplers[ Couplers[side::front].ConnectedNr ].power_high.voltage :
+             && ( Couplers[ end::front ].CouplingFlag & ctrain_heating ) ) ) ) ?
+            Couplers[end::front].Connected->Couplers[ Couplers[end::front].ConnectedNr ].power_high.voltage :
             0.0 ),
-        ( ( ( Couplers[side::rear].Connected )
-         && ( ( Couplers[ side::rear ].CouplingFlag & ctrain_power )
+        ( ( ( Couplers[end::rear].Connected )
+         && ( ( Couplers[ end::rear ].CouplingFlag & ctrain_power )
            || ( ( Heating )
-             && ( Couplers[ side::rear ].CouplingFlag & ctrain_heating ) ) ) ) ?
-            Couplers[ side::rear ].Connected->Couplers[ Couplers[ side::rear ].ConnectedNr ].power_high.voltage :
+             && ( Couplers[ end::rear ].CouplingFlag & ctrain_heating ) ) ) ) ?
+            Couplers[ end::rear ].Connected->Couplers[ Couplers[ end::rear ].ConnectedNr ].power_high.voltage :
             0.0 ) );
-#endif
 }
 
 // *************************************************************************************************
@@ -8028,7 +8142,7 @@ void TMoverParameters::LoadFIZ_Brake( std::string const &line ) {
 
 void TMoverParameters::LoadFIZ_Doors( std::string const &line ) {
 
-    std::map<std::string, int> doorcontrols {
+    std::map<std::string, control_t> doorcontrols {
         { "Passenger", control_t::passenger },
         { "AutomaticCtrl", control_t::autonomous },
         { "DriverCtrl", control_t::driver },
@@ -8038,7 +8152,7 @@ void TMoverParameters::LoadFIZ_Doors( std::string const &line ) {
     // opening method
     {
         auto lookup = doorcontrols.find( extract_value( "OpenCtrl", line ) );
-        DoorOpenCtrl =
+        Doors.open_control =
             lookup != doorcontrols.end() ?
                 lookup->second :
                 control_t::passenger;
@@ -8046,37 +8160,72 @@ void TMoverParameters::LoadFIZ_Doors( std::string const &line ) {
     // closing method
     {
         auto lookup = doorcontrols.find( extract_value( "CloseCtrl", line ) );
-        DoorCloseCtrl =
+        Doors.close_control =
             lookup != doorcontrols.end() ?
                 lookup->second :
                 control_t::passenger;
+
+        if( Doors.close_control == control_t::autonomous ) {
+            // convert legacy method
+            Doors.close_control = control_t::passenger;
+            Doors.auto_velocity = 10.0;
+        }
     }
-    // automatic closing timer
-    if( DoorCloseCtrl == control_t::autonomous ) { extract_value( DoorStayOpen, "DoorStayOpen", line, "" ); }
+    // automatic closing conditions
+    extract_value( Doors.auto_duration, "DoorStayOpen", line, "" );
+    extract_value( Doors.auto_velocity, "DoorAutoCloseVel", line, "" );
+    extract_value( Doors.auto_include_remote, "DoorAutoCloseRemote", line, "" );
+    // operation permit
+    extract_value( Doors.permit_needed, "DoorNeedPermit", line, "" );
+    {
+        auto permitpresets = Split( extract_value( "DoorPermitList", line ), '|' );
+        for( auto const &permit : permitpresets ) {
+            Doors.permit_presets.emplace_back( std::stoi( permit ) );
+        }
+        if( false == Doors.permit_presets.empty() ) {
+            // HACK: legacy position indices start from 1, so we deduct 1 to arrive at proper index into the array
+            extract_value( Doors.permit_preset, "DoorPermitListDefault", line, "1" );
+            Doors.permit_preset =
+                std::min<int>(
+                    Doors.permit_presets.size(),
+                    Doors.permit_preset )
+                - 1;
+        }
+    }
 
-    extract_value( DoorOpenSpeed, "OpenSpeed", line, "" );
-    extract_value( DoorCloseSpeed, "CloseSpeed", line, "" );
-    extract_value( DoorCloseDelay, "DoorCloseDelay", line, "" );
-    extract_value( DoorMaxShiftL, "DoorMaxShiftL", line, "" );
-    extract_value( DoorMaxShiftR, "DoorMaxShiftR", line, "" );
-    extract_value( DoorMaxPlugShift, "DoorMaxShiftPlug", line, "" );
+    extract_value( Doors.open_rate, "OpenSpeed", line, "" );
+    extract_value( Doors.close_rate, "CloseSpeed", line, "" );
+    extract_value( Doors.close_delay, "DoorCloseDelay", line, "" );
+    extract_value( Doors.range, "DoorMaxShiftL", line, "" );
+    extract_value( Doors.range, "DoorMaxShiftR", line, "" );
+    extract_value( Doors.range_out, "DoorMaxShiftPlug", line, "" );
 
-    std::string openmethod; extract_value( openmethod, "DoorOpenMethod", line, "" );
-    if( openmethod == "Shift" ) { DoorOpenMethod = 1; } //przesuw
-    else if( openmethod == "Fold" ) { DoorOpenMethod = 3; } //3 submodele się obracają
-    else if( openmethod == "Plug" ) { DoorOpenMethod = 4; } //odskokowo-przesuwne
+    std::map<std::string, int> doortypes {
+        { "Shift", 1 },
+        { "Rotate", 2 },
+        { "Fold", 3 },
+        { "Plug", 4 },
+    };
+    // opening method
+    {
+        auto lookup = doortypes.find( extract_value( "DoorOpenMethod", line ) );
+        Doors.type =
+            lookup != doortypes.end() ?
+                lookup->second :
+                2; // default type is plain, rotating door
+    }
 
-    extract_value( DoorClosureWarning, "DoorClosureWarning", line, "" );
-    extract_value( DoorClosureWarningAuto, "DoorClosureWarningAuto", line, "" );
-    extract_value( DoorBlocked, "DoorBlocked", line, "" );
+    extract_value( Doors.has_warning, "DoorClosureWarning", line, "" );
+    extract_value( Doors.has_autowarning, "DoorClosureWarningAuto", line, "" );
+    extract_value( Doors.has_lock, "DoorBlocked", line, "" );
 
-    extract_value( PlatformSpeed, "PlatformSpeed", line, "" );
-    extract_value( PlatformMaxShift, "PlatformMaxShift", line, "" );
-
-    extract_value( MirrorMaxShift, "MirrorMaxShift", line, "" );
+    extract_value( Doors.step_rate, "PlatformSpeed", line, "" );
+    extract_value( Doors.step_range, "PlatformMaxShift", line, "" );
 
     std::string platformopenmethod; extract_value( platformopenmethod, "PlatformOpenMethod", line, "" );
-    if( platformopenmethod == "Shift" ) { PlatformOpenMethod = 1; } // przesuw
+    if( platformopenmethod == "Shift" ) { Doors.step_type = 1; } // przesuw
+
+    extract_value( MirrorMaxShift, "MirrorMaxShift", line, "" );
 }
 
 void TMoverParameters::LoadFIZ_BuffCoupl( std::string const &line, int const Index ) {
@@ -8388,8 +8537,8 @@ void TMoverParameters::LoadFIZ_Cntrl( std::string const &line ) {
     // traction motor fans
     {
         auto lookup = starts.find( extract_value( "MotorBlowersStart", line ) );
-        MotorBlowers[side::front].start_type =
-        MotorBlowers[side::rear].start_type =
+        MotorBlowers[end::front].start_type =
+        MotorBlowers[end::rear].start_type =
             lookup != starts.end() ?
                 lookup->second :
                 start_t::manual;
@@ -8648,8 +8797,8 @@ void TMoverParameters::LoadFIZ_Engine( std::string const &Input ) {
     }
 
     // traction motors
-    extract_value( MotorBlowers[ side::front ].speed, "MotorBlowersSpeed", Input, "" );
-    MotorBlowers[ side::rear ] = MotorBlowers[ side::front ];
+    extract_value( MotorBlowers[ end::front ].speed, "MotorBlowersSpeed", Input, "" );
+    MotorBlowers[ end::rear ] = MotorBlowers[ end::front ];
 }
 
 void TMoverParameters::LoadFIZ_Switches( std::string const &Input ) {
@@ -8849,7 +8998,8 @@ TPowerSource TMoverParameters::LoadFIZ_SourceDecode( std::string const &Source )
     std::map<std::string, TPowerSource> powersources{
         { "Transducer", TPowerSource::Transducer },
         { "Generator", TPowerSource::Generator },
-        { "Accu", TPowerSource::Accumulator },
+        { "Accu", TPowerSource::Accumulator }, // legacy compatibility leftover. TODO: check if we can get rid of it
+        { "Accumulator", TPowerSource::Accumulator },
         { "CurrentCollector", TPowerSource::CurrentCollector },
         { "PowerCable", TPowerSource::PowerCable },
         { "Heater", TPowerSource::Heater },
@@ -9084,8 +9234,8 @@ bool TMoverParameters::CheckLocomotiveParameters(bool ReadyFlag, int Dir)
         CompressedVolume = VeselVolume * MinCompressor * ( 9.8 ) / 10.0;
         ScndPipePress = (
             VeselVolume > 0.0 ? CompressedVolume / VeselVolume :
-            ( Couplers[ side::front ].AllowedFlag & coupling::mainhose ) != 0 ? 5.0 :
-            ( Couplers[ side::rear ].AllowedFlag & coupling::mainhose ) != 0 ? 5.0 :
+            ( Couplers[ end::front ].AllowedFlag & coupling::mainhose ) != 0 ? 5.0 :
+            ( Couplers[ end::rear ].AllowedFlag & coupling::mainhose ) != 0 ? 5.0 :
             0.0 );
         PipePress = CntrlPipePress;
         BrakePress = 0.0;
@@ -9114,8 +9264,8 @@ bool TMoverParameters::CheckLocomotiveParameters(bool ReadyFlag, int Dir)
 */
         ScndPipePress = (
             VeselVolume > 0.0 ? CompressedVolume / VeselVolume :
-            ( Couplers[ side::front ].AllowedFlag & coupling::mainhose ) != 0 ? 5.1 :
-            ( Couplers[ side::rear ].AllowedFlag & coupling::mainhose ) != 0 ? 5.1 :
+            ( Couplers[ end::front ].AllowedFlag & coupling::mainhose ) != 0 ? 5.1 :
+            ( Couplers[ end::rear ].AllowedFlag & coupling::mainhose ) != 0 ? 5.1 :
             0.0 );
         PipePress = LowPipePress;
         PipeBrakePress = MaxBrakePress[ 3 ] * 0.5;
@@ -9164,10 +9314,12 @@ bool TMoverParameters::CheckLocomotiveParameters(bool ReadyFlag, int Dir)
 		BrakeDelayFlag = bdelay_G;
 	if ((TestFlag(BrakeDelays, bdelay_R)) && !(TestFlag(BrakeDelays, bdelay_G)))
 		BrakeDelayFlag = bdelay_R;
-
+/*
+// disabled, as test mode is used in specific situations and not really a default
 	if (BrakeOpModes & bom_PS)
 		BrakeOpModeFlag = bom_PS;
 	else
+*/
 		BrakeOpModeFlag = bom_PN;
 
 	// yB: jesli pojazdy nie maja zadeklarowanych czasow, to wsadz z przepisow +-16,(6)%
@@ -9428,55 +9580,40 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
     else if( Command == "MotorBlowersFrontSwitch" ) {
-        if( ( MotorBlowers[ side::front ].start_type != start_t::manual )
-         && ( MotorBlowers[ side::front ].start_type != start_t::manualwithautofallback ) ) {
+        if( ( MotorBlowers[ end::front ].start_type != start_t::manual )
+         && ( MotorBlowers[ end::front ].start_type != start_t::manualwithautofallback ) ) {
             // automatic device ignores 'manual' state commands
-            MotorBlowers[side::front].is_enabled = ( CValue1 == 1 );
+            MotorBlowers[end::front].is_enabled = ( CValue1 == 1 );
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
     }
     else if( Command == "MotorBlowersFrontSwitchOff" ) {
-        if( ( MotorBlowers[ side::front ].start_type != start_t::manual )
-         && ( MotorBlowers[ side::front ].start_type != start_t::manualwithautofallback ) ) {
+        if( ( MotorBlowers[ end::front ].start_type != start_t::manual )
+         && ( MotorBlowers[ end::front ].start_type != start_t::manualwithautofallback ) ) {
             // automatic device ignores 'manual' state commands
-            MotorBlowers[side::front].is_disabled = ( CValue1 == 1 );
+            MotorBlowers[end::front].is_disabled = ( CValue1 == 1 );
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
     }
     else if( Command == "MotorBlowersRearSwitch" ) {
-        if( ( MotorBlowers[ side::rear ].start_type != start_t::manual )
-         && ( MotorBlowers[ side::rear ].start_type != start_t::manualwithautofallback ) ) {
+        if( ( MotorBlowers[ end::rear ].start_type != start_t::manual )
+         && ( MotorBlowers[ end::rear ].start_type != start_t::manualwithautofallback ) ) {
             // automatic device ignores 'manual' state commands
-            MotorBlowers[side::rear].is_enabled = ( CValue1 == 1 );
+            MotorBlowers[end::rear].is_enabled = ( CValue1 == 1 );
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
     }
     else if( Command == "MotorBlowersRearSwitchOff" ) {
-        if( ( MotorBlowers[ side::rear ].start_type != start_t::manual )
-         && ( MotorBlowers[ side::rear ].start_type != start_t::manualwithautofallback ) ) {
+        if( ( MotorBlowers[ end::rear ].start_type != start_t::manual )
+         && ( MotorBlowers[ end::rear ].start_type != start_t::manualwithautofallback ) ) {
             // automatic device ignores 'manual' state commands
-            MotorBlowers[side::rear].is_disabled = ( CValue1 == 1 );
+            MotorBlowers[end::rear].is_disabled = ( CValue1 == 1 );
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
     }
     else if (Command == "MainSwitch")
 	{
-		if (CValue1 == 1) {
-
-            if( ( EngineType == TEngineType::DieselEngine )
-             || ( EngineType == TEngineType::DieselElectric ) ) {
-                dizel_startup = true;
-            }
-            else {
-                Mains = true;
-            }
-		}
-        else {
-            Mains = false;
-            // potentially knock out the pumps if their switch doesn't force them on
-            WaterPump.is_active &= WaterPump.is_enabled;
-            FuelPump.is_active &= FuelPump.is_enabled;
-        }
+        MainSwitch_( CValue1 > 0.0 );
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
 	else if (Command == "Direction")
@@ -9559,40 +9696,38 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
+    else if (Command == "DoorPermit") {
+
+        auto const left { CValue2 > 0 ? 1 : 2 };
+        auto const right { 3 - left };
+
+        if( std::abs( static_cast<int>( CValue1 ) ) & right ) {
+            Doors.instances[ side::right ].open_permit = (CValue1 > 0);
+        }
+        if( std::abs( static_cast<int>( CValue1 ) ) & left ) {
+            Doors.instances[ side::left ].open_permit = (CValue1 > 0);
+        }
+
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+	}
 	else if (Command == "DoorOpen") /*NBMX*/
 	{ // Ra: uwzględnić trzeba jeszcze zgodność sprzęgów
-        if( ( DoorOpenCtrl == control_t::conductor )
-         || ( DoorOpenCtrl == control_t::driver ) 
-         || ( DoorOpenCtrl == control_t::mixed ) ) {
+        if( ( Doors.open_control == control_t::conductor )
+         || ( Doors.open_control == control_t::driver ) 
+         || ( Doors.open_control == control_t::mixed ) ) {
             // ignore remote command if the door is only operated locally
-            if( CValue2 > 0 ) {
-                // normalne ustawienie pojazdu
-                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) ) {
-                    DoorLeftOpened = (
-                        ( ( true == Battery ) && ( false == DoorBlockedFlag() ) ) ?
-                            true :
-                            DoorLeftOpened );
+            if( true == Battery ) {
+
+                auto const left{ CValue2 > 0 ? 1 : 2 };
+                auto const right { 3 - left };
+
+                if( static_cast<int>( CValue1 ) & right ) {
+                    Doors.instances[ side::right ].remote_open = true;
+                    Doors.instances[ side::right ].remote_close = false;
                 }
-                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) ) {
-                    DoorRightOpened = (
-                        ( ( true == Battery ) && ( false == DoorBlockedFlag() ) ) ?
-                            true :
-                            DoorRightOpened );
-                }
-            }
-            else {
-                // odwrotne ustawienie pojazdu
-                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) ) {
-                    DoorLeftOpened = (
-                        ( ( true == Battery ) && ( false == DoorBlockedFlag() ) ) ?
-                            true :
-                            DoorLeftOpened );
-                }
-                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) ) {
-                    DoorRightOpened = (
-                        ( ( true == Battery ) && ( false == DoorBlockedFlag() ) ) ?
-                            true :
-                            DoorRightOpened );
+                if( static_cast<int>( CValue1 ) & left ) {
+                    Doors.instances[ side::left ].remote_open = true;
+                    Doors.instances[ side::left ].remote_close = false;
                 }
             }
         }
@@ -9600,43 +9735,34 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
 	}
 	else if (Command == "DoorClose") /*NBMX*/
 	{ // Ra: uwzględnić trzeba jeszcze zgodność sprzęgów
-        if( ( DoorCloseCtrl == control_t::conductor )
-         || ( DoorCloseCtrl == control_t::driver ) 
-         || ( DoorCloseCtrl == control_t::mixed ) ) {
+        if( ( Doors.close_control == control_t::conductor )
+         || ( Doors.close_control == control_t::driver ) 
+         || ( Doors.close_control == control_t::mixed ) ) {
             // ignore remote command if the door is only operated locally
-            if( CValue2 > 0 ) {
-                // normalne ustawienie pojazdu
-                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) ) {
-                    DoorLeftOpened = (
-                        true == Battery ?
-                            false :
-                            DoorLeftOpened );
+            if( true == Battery ) {
+
+                auto const left{ CValue2 > 0 ? 1 : 2 };
+                auto const right { 3 - left };
+
+                if( static_cast<int>( CValue1 ) & right ) {
+                    Doors.instances[ side::right ].remote_close = true;
+                    Doors.instances[ side::right ].remote_open = false;
                 }
-                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) ) {
-                    DoorRightOpened = (
-                        true == Battery ?
-                            false :
-                            DoorRightOpened );
-                }
-            }
-            else {
-                // odwrotne ustawienie pojazdu
-                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) ) {
-                    DoorLeftOpened = (
-                        true == Battery ?
-                            false :
-                            DoorLeftOpened );
-                }
-                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) ) {
-                    DoorRightOpened = (
-                        true == Battery ?
-                            false :
-                            DoorRightOpened );
+                if( static_cast<int>( CValue1 ) & left ) {
+                    Doors.instances[ side::left ].remote_close = true;
+                    Doors.instances[ side::left ].remote_open = false;
                 }
             }
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
+    else if( Command == "DoorLock" ) {
+        Doors.lock_enabled = (
+            CValue1 == 1 ?
+                true :
+                false );
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+    }
     else if( Command == "DepartureSignal" ) {
         DepartureSignal = (
             CValue1 == 1 ?

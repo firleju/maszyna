@@ -174,6 +174,7 @@ opengl_vbogeometrybank::draw_( gfx::geometry_handle const &Geometry, gfx::stream
         // try to set up the buffer we need
         ::glGenBuffers( 1, &m_buffer );
         bind_buffer();
+        if( m_buffer == 0 ) { return; } // if we didn't get a buffer we'll try again during the next draw call
         // NOTE: we're using static_draw since it's generally true for all we have implemented at the moment
         // TODO: allow to specify usage hint at the object creation, and pass it here
         ::glBufferData(
@@ -190,11 +191,13 @@ opengl_vbogeometrybank::draw_( gfx::geometry_handle const &Geometry, gfx::stream
         m_buffercapacity = datasize;
     }
     // actual draw procedure starts here
+    auto &chunkrecord { m_chunkrecords[ Geometry.chunk - 1 ] };
+    // sanity check; shouldn't be needed but, eh
+    if( chunkrecord.size == 0 ) { return; }
     // setup...
     if( m_activebuffer != m_buffer ) {
         bind_buffer();
     }
-    auto &chunkrecord = m_chunkrecords[ Geometry.chunk - 1 ];
     auto const &chunk = gfx::geometry_bank::chunk( Geometry );
     if( false == chunkrecord.is_good ) {
         // we may potentially need to upload new buffer data before we can draw it
