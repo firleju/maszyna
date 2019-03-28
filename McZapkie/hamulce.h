@@ -381,7 +381,7 @@ class TEStED : public TLSt {  //zawor z EP09 - Est4 z oddzielnym przekladnikiem,
 
 class TEStEP2 : public TLSt {
 
-private:
+protected:
     double TareM = 0.0;  //masa proznego
     double LoadM = 0.0;  //masa pelnego
     double TareBP = 0.0;  //cisnienie dla proznego
@@ -394,10 +394,21 @@ public:
     void PLC( double const mass );  //wspolczynnik cisnienia przystawki wazacej
     void SetEPS( double const nEPS )/*override*/;  //stan hamulca EP
     void SetLP( double const TM, double const LM, double const TBP );  //parametry przystawki wazacej
+	void virtual EPCalc(double dt);
 
 		inline TEStEP2(double i_mbp, double i_bcr, double i_bcd, double i_brc, int i_bcn, int i_BD, int i_mat, int i_ba, int i_nbpa) :
                TLSt(          i_mbp,        i_bcr,        i_bcd,        i_brc,     i_bcn,     i_BD,     i_mat,     i_ba,     i_nbpa)
 		{}
+};
+
+class TEStEP1 : public TEStEP2 {
+
+public:
+	void EPCalc(double dt);
+
+	inline TEStEP1(double i_mbp, double i_bcr, double i_bcd, double i_brc, int i_bcn, int i_BD, int i_mat, int i_ba, int i_nbpa) :
+		TEStEP2(i_mbp, i_bcr, i_bcd, i_brc, i_bcn, i_BD, i_mat, i_ba, i_nbpa)
+	{}
 };
 
 class TCV1 : public TBrake {
@@ -502,9 +513,11 @@ class TKE : public TBrake { //Knorr Einheitsbauart — jeden do wszystkiego
 //klasa obejmujaca krany
 class TDriverHandle {
 
-  private:
+  protected:
     //        BCP: integer;
-
+	  bool AutoOvrld = false; //czy jest asymilacja automatyczna na pozycji -1
+	  bool ManualOvrld = false; //czy jest asymilacja reczna przyciskiem
+	  bool ManualOvrldActive = false; //czy jest wcisniety przycisk asymilacji
   public:
 		bool Time = false;
 		bool TimeEP = false;
@@ -513,10 +526,12 @@ class TDriverHandle {
     virtual double GetPF(double i_bcp, double PP, double HP, double dt, double ep);
     virtual void Init(double Press);
     virtual double GetCP();
-    virtual void SetReductor(double nAdj);
-    virtual double GetSound(int i);
-    virtual double GetPos(int i);
-    virtual double GetEP(double pos);
+    virtual void SetReductor(double nAdj); //korekcja pozycji reduktora cisnienia
+    virtual double GetSound(int i); //pobranie glosnosci wybranego dzwieku
+    virtual double GetPos(int i); //pobranie numeru pozycji o zadanym kodzie (funkcji)
+    virtual double GetEP(double pos); //pobranie sily hamulca ep
+	virtual void SetParams(bool AO, bool MO, double, double) {}; //ustawianie jakichs parametrów dla zaworu
+	virtual void OvrldButton(bool Active);  //przycisk recznego przeladowania/asymilacji
 
     inline TDriverHandle() { memset( Sounds, 0, sizeof( Sounds ) ); }
 };
@@ -598,7 +613,7 @@ private:
 	double TP = 0.0; //zbiornik czasowy
 	double RP = 0.0; //zbiornik redukcyjny
 	double RedAdj = 0.0; //dostosowanie reduktora cisnienia (krecenie kapturkiem)
-	bool Fala = false;
+	bool Fala = false; //czy jest napelnianie uderzeniowe
 	static double const pos_table[11]; //= { -2, 10, -1, 0, 0, 2, 9, 10, 0, 0, 0 };
 
 	bool EQ(double pos, double i_pos);
@@ -610,8 +625,36 @@ public:
 	double GetSound(int i)/*override*/;
 	double GetPos(int i)/*override*/;
 	double GetCP()/*override*/;
+	void SetParams(bool AO, bool MO, double, double); /*ovveride*/
 
 	inline TMHZ_K5P(void) :
+		TDriverHandle()
+	{}
+};
+
+class TMHZ_6P : public TDriverHandle {
+
+private:
+	double CP = 0.0; //zbiornik sterujący
+	double TP = 0.0; //zbiornik czasowy
+	double RP = 0.0; //zbiornik redukcyjny
+	double RedAdj = 0.0; //dostosowanie reduktora cisnienia (krecenie kapturkiem)
+	bool Fala = false; //czy jest napelnianie uderzeniowe
+	double UnbrakeOverPressure = 0.0; //wartosc napelniania uderzeniowego
+	static double const pos_table[11]; //= { -2, 10, -1, 0, 0, 2, 9, 10, 0, 0, 0 };
+
+	bool EQ(double pos, double i_pos);
+
+public:
+	double GetPF(double i_bcp, double PP, double HP, double dt, double ep)/*override*/;
+	void Init(double Press)/*override*/;
+	void SetReductor(double nAdj)/*override*/;
+	double GetSound(int i)/*override*/;
+	double GetPos(int i)/*override*/;
+	double GetCP()/*override*/;
+	void SetParams(bool AO, bool MO, double, double); /*ovveride*/
+
+	inline TMHZ_6P(void) :
 		TDriverHandle()
 	{}
 };
@@ -773,6 +816,24 @@ class TFVel6 : public TDriverHandle {
 		inline TFVel6(void) :
 			TDriverHandle()
 		{}
+};
+
+class TFVE408 : public TDriverHandle {
+
+private:
+	double EPS = 0.0;
+	static double const pos_table[11]; // = {-1, 6, -1, 0, 6, 4, 4.7, 5, -1, 0, 1};
+
+public:
+	double GetPF(double i_bcp, double PP, double HP, double dt, double ep)/*override*/;
+	double GetCP()/*override*/;
+	double GetPos(int i)/*override*/;
+	double GetSound(int i)/*override*/;
+	void Init(double Press)/*override*/;
+
+	inline TFVE408(void) :
+		TDriverHandle()
+	{}
 };
 
 

@@ -24,6 +24,7 @@ static double const DPL = 0.25;
 double const TFV4aM::pos_table[11] = {-2, 6, -1, 0, -2, 1, 4, 6, 0, 0, 0};
 double const TMHZ_EN57::pos_table[11] = {-1, 10, -1, 0, 0, 2, 9, 10, 0, 0, 0};
 double const TMHZ_K5P::pos_table[11] = { -1, 3, -1, 0, 1, 1, 2, 3, 0, 0, 0 };
+double const TMHZ_6P::pos_table[11] = { -1, 4, -1, 0, 2, 2, 3, 4, 0, 0, 0 };
 double const TM394::pos_table[11] = {-1, 5, -1, 0, 1, 2, 4, 5, 0, 0, 0};
 double const TH14K1::BPT_K[6][2] = {{10, 0}, {4, 1}, {0, 1}, {4, 0}, {4, -1}, {15, -1}};
 double const TH14K1::pos_table[11] = {-1, 4, -1, 0, 1, 2, 3, 4, 0, 0, 0};
@@ -31,6 +32,7 @@ double const TSt113::BPT_K[6][2] = {{10, 0}, {4, 1}, {0, 1}, {4, 0}, {4, -1}, {1
 double const TSt113::BEP_K[7] = {0, -1, 1, 0, 0, 0, 0};
 double const TSt113::pos_table[11] = {-1, 5, -1, 0, 2, 3, 4, 5, 0, 0, 1};
 double const TFVel6::pos_table[11] = {-1, 6, -1, 0, 6, 4, 4.7, 5, -1, 0, 1};
+double const TFVE408::pos_table[11] = { 0, 10, 0, 0, 10, 7, 8, 9, 0, 1, 5 };
 
 double PR(double P1, double P2)
 {
@@ -131,6 +133,11 @@ double PFVd( double PH, double PL, double const S, double LIM, double const DP )
     }
     else
         return 0;
+}
+
+bool is_EQ(double pos, double i_pos)
+{
+	return (pos <= i_pos + 0.5) && (pos > i_pos - 0.5);
 }
 
 //---ZBIORNIKI---
@@ -339,7 +346,7 @@ double TBrake::GetVRP()
 // cisnienie zbiornika sterujacego
 double TBrake::GetCRP()
 {
-    return 0;
+    return GetBRP();
 }
 
 // przeplyw z przewodu glowneg
@@ -473,6 +480,12 @@ double TWest::GetPF( double const PP, double const dt, double const Vel )
     else
         dv = 0;
     BrakeCyl->Flow(-dv);
+
+	if ((BrakeStatus & b_rls) == b_rls) //odluzniacz
+		dv = PF(0, CVP, 0.1 * SizeBC) * dt;
+	else
+		dv = 0;
+	BrakeCyl->Flow(-dv);
 
     // hamulec EP
     temp = BVP * int(EPS > 0);
@@ -863,10 +876,7 @@ double TEStEP2::GetPF( double const PP, double const dt, double const Vel )
     dV1 = dV1 - 0.96 * dv;
 
     // hamulec EP
-    temp = BVP * int(EPS > 0);
-    dv = PF(temp, LBP, 0.00053 + 0.00060 * int(EPS < 0)) * dt * EPS * EPS *
-         int(LBP * EPS < MaxBP * LoadC);
-    LBP = LBP - dv;
+	EPCalc(dt);
 
     // luzowanie KI
     if ((BrakeStatus & b_hld) == b_off)
@@ -934,6 +944,24 @@ void TEStEP2::SetLP( double const TM, double const LM, double const TBP )
     TareM = TM;
     LoadM = LM;
     TareBP = TBP;
+}
+
+void TEStEP2::EPCalc(double dt)
+{
+	double temp = BrakeRes->P() * int(EPS > 0);
+	double dv = PF(temp, LBP, 0.00053 + 0.00060 * int(EPS < 0)) * dt * EPS * EPS *
+		int(LBP * EPS < MaxBP * LoadC);
+	LBP = LBP - dv;
+}
+
+
+void TEStEP1::EPCalc(double dt)
+{
+	double temp = EPS - std::floor(EPS); //część ułamkowa jest hamulcem EP
+	double LBPLim = Min0R(MaxBP * LoadC * temp, BrakeRes->P()); //do czego dążymy
+	double S = 10 * clamp(LBPLim - LBP, -0.1, 0.1); //przymykanie zaworku
+	double dv = PF(( S > 0 ? BrakeRes->P() : 0 ), LBP, abs(S)*(0.00053 + 0.00060 * int(S < 0))) * dt; //przepływ
+	LBP = LBP - dv;
 }
 
 //---EST3--
@@ -2253,6 +2281,11 @@ double TDriverHandle::GetEP(double pos)
 {
     return 0;
 }
+
+void TDriverHandle::OvrldButton(bool Active)
+{
+	ManualOvrldActive = Active;
+}
 //---FV4a---
 
 double TFV4a::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
@@ -2662,7 +2695,7 @@ bool TMHZ_EN57::EQ(double pos, double i_pos)
 double TMHZ_K5P::GetPF(double i_bcp, double PP, double HP, double dt, double ep) {
 	static int const LBDelay = 100;
 
-	double LimPP;
+	double LimCP;
 	double dpPipe;
 	double dpMainValve;
 	double ActFlowSpeed;
@@ -2689,29 +2722,28 @@ double TMHZ_K5P::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
 	}
 	
 	if (EQ(i_bcp, 1)) //odcięcie - nie rób nic
-		LimPP = CP;
+		LimCP = CP;
 	else if (i_bcp > 1) //hamowanie
-		LimPP = 3.4;
+		LimCP = 3.4;
 	else //luzowanie
-		LimPP = 5.0;
+		LimCP = 5.0;
 	pom = CP;
-	LimPP = Min0R(LimPP + TP + RedAdj, HP); // pozycja + czasowy lub zasilanie
+	LimCP = Min0R(LimCP, HP); // pozycja + czasowy lub zasilanie
 	ActFlowSpeed = 4;
 
-	if ((LimPP > CP)) // podwyzszanie szybkie
-		CP = CP + 9 * Min0R(abs(LimPP - CP), 0.05) * PR(CP, LimPP) * dt; // zbiornik sterujacy;
+	if ((LimCP > CP)) // podwyzszanie szybkie
+		CP = CP + 9 * Min0R(abs(LimCP - CP), 0.05) * PR(CP, LimCP) * dt; // zbiornik sterujacy;
 	else
-		CP = CP + 9 * Min0R(abs(LimPP - CP), 0.05) * PR(CP, LimPP) * dt; // zbiornik sterujacy
+		CP = CP + 9 * Min0R(abs(LimCP - CP), 0.05) * PR(CP, LimCP) * dt; // zbiornik sterujacy
 
-	LimPP = pom; // cp
-    dpPipe = Min0R(HP, LimPP);
+    dpPipe = Min0R(HP, CP + TP + RedAdj);
 
 	if (dpPipe > PP)
 		dpMainValve = -PFVa(HP, PP, ActFlowSpeed / LBDelay, dpPipe, 0.4);
 	else
 		dpMainValve = PFVd(PP, 0, ActFlowSpeed / LBDelay, dpPipe, 0.4);
 
-	if (EQ(i_bcp, -1))
+	if ((EQ(i_bcp, -1)&&(AutoOvrld))||(ManualOvrld && ManualOvrldActive))
 	{
 		if ((TP < 1))
 			TP = TP + 0.03  * dt;
@@ -2762,10 +2794,145 @@ double TMHZ_K5P::GetPos(int i)
 
 double TMHZ_K5P::GetCP()
 {
-	return RP;
+	return CP;
+}
+
+void TMHZ_K5P::SetParams(bool AO, bool MO, double, double)
+{
+	AutoOvrld = AO;
+	ManualOvrld = MO;
 }
 
 bool TMHZ_K5P::EQ(double pos, double i_pos)
+{
+	return (pos <= i_pos + 0.5) && (pos > i_pos - 0.5);
+}
+
+//---MHZ_6P--- manipulator hamulca zespolonego 6-ciopozycyjny
+
+double TMHZ_6P::GetPF(double i_bcp, double PP, double HP, double dt, double ep) {
+	static int const LBDelay = 100;
+
+	double LimCP;
+	double dpPipe;
+	double dpMainValve;
+	double ActFlowSpeed;
+	double DP;
+	double pom;
+
+	for (int idx = 0; idx < 5; ++idx) {
+		Sounds[idx] = 0;
+	}
+
+	DP = 0;
+
+	i_bcp = Max0R(Min0R(i_bcp, 3.999), -0.999); // na wszelki wypadek, zeby nie wyszlo poza zakres
+
+	if ((TP > 0))
+	{
+		DP = 0.004;
+		TP = TP - DP * dt;
+		Sounds[s_fv4a_t] = DP;
+	}
+	else
+	{
+		TP = 0;
+	}
+
+	if (EQ(i_bcp, 2)) //odcięcie - nie rób nic
+		LimCP = CP;
+	else if (i_bcp > 2.5) //hamowanie
+		LimCP = 3.4;
+	else //luzowanie
+		LimCP = 5.0;
+	pom = CP;
+	LimCP = Min0R(LimCP, HP); // pozycja + czasowy lub zasilanie
+	ActFlowSpeed = 4;
+
+	if ((LimCP > CP)) // podwyzszanie szybkie
+		CP = CP + 9 * Min0R(abs(LimCP - CP), 0.05) * PR(CP, LimCP) * dt; // zbiornik sterujacy;
+	else
+		CP = CP + 9 * Min0R(abs(LimCP - CP), 0.05) * PR(CP, LimCP) * dt; // zbiornik sterujacy
+
+	dpPipe = Min0R(HP, CP + TP + RedAdj);
+
+	if (Fala && EQ(i_bcp, -1))
+	{
+		dpPipe = 5.0 + TP + RedAdj + UnbrakeOverPressure;
+		ActFlowSpeed = 12;
+	}
+
+	if (dpPipe > PP)
+		dpMainValve = -PFVa(HP, PP, ActFlowSpeed / LBDelay, dpPipe, 0.4);
+	else
+		dpMainValve = PFVd(PP, 0, ActFlowSpeed / LBDelay, dpPipe, 0.4);
+
+	if ((EQ(i_bcp, -1) && (AutoOvrld)) || (ManualOvrld && ManualOvrldActive))
+	{
+		if ((TP < 1))
+			TP = TP + 0.03  * dt;
+	}
+
+	if (EQ(i_bcp, 4))
+	{
+		DP = PF(0, PP, 2 * ActFlowSpeed / LBDelay);
+		dpMainValve = DP;
+		Sounds[s_fv4a_e] = DP;
+		Sounds[s_fv4a_u] = 0;
+		Sounds[s_fv4a_b] = 0;
+		Sounds[s_fv4a_x] = 0;
+	}
+	else
+	{
+		if (dpMainValve > 0)
+			Sounds[s_fv4a_b] = dpMainValve;
+		else
+			Sounds[s_fv4a_u] = -dpMainValve;
+	}
+
+	return dpMainValve * dt;
+}
+
+void TMHZ_6P::Init(double Press)
+{
+	CP = Press;
+	Time = true;
+	TimeEP = true;
+}
+
+void TMHZ_6P::SetReductor(double nAdj)
+{
+	RedAdj = nAdj;
+}
+
+double TMHZ_6P::GetSound(int i)
+{
+	if (i > 4)
+		return 0;
+	else
+		return Sounds[i];
+}
+
+double TMHZ_6P::GetPos(int i)
+{
+	return pos_table[i];
+}
+
+double TMHZ_6P::GetCP()
+{
+	return CP;
+}
+
+void TMHZ_6P::SetParams(bool AO, bool MO, double OverP, double)
+{
+	AutoOvrld = AO;
+	ManualOvrld = MO;
+	UnbrakeOverPressure = std::max(0.0, OverP);
+	Fala = (OverP > 0.01);
+
+}
+
+bool TMHZ_6P::EQ(double pos, double i_pos)
 {
 	return (pos <= i_pos + 0.5) && (pos > i_pos - 0.5);
 }
@@ -3133,4 +3300,71 @@ void TFVel6::Init(double Press)
     TimeEP = true;
 }
 
+//---FVE408---
+
+double TFVE408::GetPF(double i_bcp, double PP, double HP, double dt, double ep)
+{
+	static int const LBDelay = 100;
+
+	double LimPP;
+	double dpMainValve;
+	double ActFlowSpeed;
+
+	LimPP = Min0R(5 * int(i_bcp < 6.5), HP);
+	if ((i_bcp >= 6.5) && ((i_bcp < 7.5) || (i_bcp > 9.5)))
+		ActFlowSpeed = 0;
+	else if ((i_bcp > 7.5) && (i_bcp < 8.5))
+		ActFlowSpeed = 2; // konsultacje wawa1 - bylo 8;
+	else if ((i_bcp < 6.5))
+		ActFlowSpeed = 2;
+	else
+		ActFlowSpeed = 4;
+	dpMainValve = PF(LimPP, PP, ActFlowSpeed / LBDelay) * dt;
+
+	Sounds[s_fv4a_e] = 0;
+	Sounds[s_fv4a_u] = 0;
+	Sounds[s_fv4a_b] = 0;
+	if ((i_bcp < 6.5))
+		Sounds[s_fv4a_u] = -dpMainValve;
+	else if ((i_bcp < 8.5))
+		Sounds[s_fv4a_b] = dpMainValve;
+	else if ((i_bcp < 9.5))
+		Sounds[s_fv4a_e] = dpMainValve;
+
+	if (is_EQ(i_bcp, 1)) EPS = 1.15; else
+	if (is_EQ(i_bcp, 2)) EPS = 1.40; else
+	if (is_EQ(i_bcp, 3)) EPS = 2.64; else
+	if (is_EQ(i_bcp, 4)) EPS = 3.84; else
+	if (is_EQ(i_bcp, 5)) EPS = 3.99; else
+						 EPS = 0;
+
+	return dpMainValve;
+}
+
+double TFVE408::GetCP()
+{
+	return EPS;
+}
+
+double TFVE408::GetPos(int i)
+{
+	return pos_table[i];
+}
+
+double TFVE408::GetSound(int i)
+{
+	if (i > 2)
+		return 0;
+	else
+		return Sounds[i];
+}
+
+void TFVE408::Init(double Press)
+{
+	Time = true;
+	TimeEP = false;
+}
+
 // END
+
+
