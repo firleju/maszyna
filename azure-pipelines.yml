@@ -30,12 +30,12 @@ jobs:
     displayName: 'MacOS 10.13'
     steps:
     - script: |
-        HOMEBREW_NO_AUTO_UPDATE=1 brew install glew glfw python2 libpng glm luajit libserialport libsndfile
+        HOMEBREW_NO_AUTO_UPDATE=1 brew install glew glfw python2 libpng glm luajit libserialport libsndfile pkg-config
       displayName: 'Install dependencies'
     - script: |
         mkdir build
         cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DWITH_UART=OFF
         cmake --build .
       displayName: 'Build'
     - task: PublishBuildArtifacts@1

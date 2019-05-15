@@ -13,7 +13,7 @@ if (APPLE)
 endif()
 
 option(USE_IMGUI_GL3 "Use OpenGL3+ imgui implementation" OFF)
-option(WITH_UART "Compile with libserialport" OFF)
+option(WITH_UART "Compile with libserialport" ON)
 
 set(SOURCES
 "Texture.cpp"
@@ -102,6 +102,7 @@ set(SOURCES
 "simulationstateserializer.cpp"
 "precipitation.cpp"
 "openglcolor.cpp"
+"dictionary.cpp"
 
 "imgui/imgui.cpp"
 "imgui/imgui_demo.cpp"
@@ -119,6 +120,7 @@ else()
 endif()
 
 if (WITH_UART)
+	add_definitions(-DWITH_UART)
 	set(SOURCES ${SOURCES} "uart.cpp")
 endif()
 
@@ -126,12 +128,12 @@ set (PREFIX "")
 
 if (WIN32)
 	add_definitions(-DHAVE_ROUND) # to make pymath to not redefine round
-	add_definitions(-DEU07_BUILD_STATIC) # to make pymath to not redefine round
+	add_definitions(-DGLFW_DLL)
 
 	set(SOURCES ${SOURCES} "windows.cpp" "Console.cpp" "Console/LPT.cpp" "Console/PoKeys55.cpp")
 	set(GLEW_INCLUDE_DIR ${GLEW_INCLUDE_DIR} "${DEPS_DIR}/glew/include/")
 	set(GLFW3_INCLUDE_DIR ${GLFW3_INCLUDE_DIR} "${DEPS_DIR}/glfw/include/")
-	set(PNG_PNG_INCLUDE_DIR ${PNG_PNG_INCLUDE_DIR} "${DEPS_DIR}/libpng/include/")
+	set(PNG_INCLUDE_DIRS ${PNG_INCLUDE_DIRS} "${DEPS_DIR}/libpng/include/")
 	set(ZLIB_INCLUDE_DIR ${ZLIB_INCLUDE_DIR} "${DEPS_DIR}/zlib/")
 	set(GLM_INCLUDE_DIR ${GLM_INCLUDE_DIR} "${DEPS_DIR}/glm/")
 	set(OPENAL_INCLUDE_DIR ${OPENAL_INCLUDE_DIR} "${DEPS_DIR}/openal/include")
@@ -150,9 +152,9 @@ if (WIN32)
 
 	set (PREFIX "-${ARCH}")
 
-	set(GLEW_LIBRARY ${GLEW_LIBRARY} "${DEPS_DIR}/glew/lib/${ARCH}/glew32s.lib")
-	set(GLFW3_LIBRARIES ${GLFW3_LIBRARIES} "${DEPS_DIR}/glfw/lib/${ARCH}/glfw3.lib")
-	set(PNG_LIBRARY ${PNG_LIBRARY} "${DEPS_DIR}/libpng/lib/${ARCH}/libpng16.lib")
+	set(GLEW_LIBRARY ${GLEW_LIBRARY} "${DEPS_DIR}/glew/lib/${ARCH}/glew32.lib")
+	set(GLFW3_LIBRARIES ${GLFW3_LIBRARIES} "${DEPS_DIR}/glfw/lib/${ARCH}/glfw3dll.lib")
+	set(PNG_LIBRARIES ${PNG_LIBRARIES} "${DEPS_DIR}/libpng/lib/${ARCH}/libpng16.lib")
 	set(OPENAL_LIBRARY ${OPENAL_LIBRARY} "${DEPS_DIR}/openal/lib/${ARCH}/OpenAL32.lib")
 	set(LIBSNDFILE_LIBRARY ${LIBSNDFILE_LIBRARY} "${DEPS_DIR}/libsndfile/lib/${ARCH}/libsndfile-1.lib")
 	set(LUAJIT_LIBRARIES ${LUAJIT_LIBRARIES} "${DEPS_DIR}/luajit/lib/${ARCH}/lua51.lib")
@@ -206,10 +208,12 @@ find_package(PythonLibs 2 REQUIRED)
 include_directories(${PYTHON_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} ${PYTHON_LIBRARIES})
 
-find_package(PNG REQUIRED)
-include_directories(${PNG_INCLUDE_DIRS} ${PNG_PNG_INCLUDE_DIR})
+if (NOT WIN32)
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(PNG libpng16 REQUIRED)
+endif()
+include_directories(${PNG_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} ${PNG_LIBRARIES})
-target_link_libraries(${PROJECT_NAME} ${PNG_LIBRARY})
 
 find_package(Threads REQUIRED)
 target_link_libraries(${PROJECT_NAME} Threads::Threads)
