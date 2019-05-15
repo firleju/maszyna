@@ -6,6 +6,12 @@
 #ifndef STDAFX_H
 #define STDAFX_H
 
+#ifdef __APPLE__
+#ifndef __unix__
+#define __unix__ 1
+#endif
+#endif
+
 #define _USE_MATH_DEFINES
 #include <cmath>
 #ifdef _MSC_VER
@@ -29,7 +35,7 @@
 #include <shlobj.h>
 #undef NOMINMAX
 #endif
-#ifdef __linux__
+#ifdef __unix__
 #include <sys/stat.h>
 #endif
 // stl
@@ -75,12 +81,7 @@
 #define GLFW_DLL
 #endif // _windows
 #endif // build_static
-#ifndef __ANDROID__
-#include "GL/glew.h"
-#else
-#include <GL/gl.h>
-#include <GL/glu.h>
-#endif
+#include <GL/glew.h>
 #ifdef _WIN32
 #include "GL/wglew.h"
 #endif

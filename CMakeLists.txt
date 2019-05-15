@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.0)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/CMake_modules/")
-#include(PrecompiledHeader)
 include(cotire)
 set(DEPS_DIR ${DEPS_DIR} "${CMAKE_SOURCE_DIR}/ref")
 project("eu07")
@@ -8,6 +7,13 @@ project("eu07")
 set(CMAKE_CXX_STANDARD 14)
 include_directories("." "Console" "McZapkie")
 file(GLOB HEADERS "*.h" "Console/*.h" "McZapkie/*.h")
+
+if (APPLE)
+	set (CMAKE_EXE_LINKER_FLAGS "-pagezero_size 10000 -image_base 100000000")
+endif()
+
+option(USE_IMGUI_GL3 "Use OpenGL3+ imgui implementation" OFF)
+option(WITH_UART "Compile with libserialport" OFF)
 
 set(SOURCES
 "Texture.cpp"
@@ -66,7 +72,6 @@ set(SOURCES
 "material.cpp"
 "lua.cpp"
 "stdafx.cpp"
-"uart.cpp"
 "messaging.cpp"
 "scene.cpp"
 "scenenode.cpp"
@@ -106,13 +111,15 @@ set(SOURCES
 "network.cpp"
 )
 
-option(USE_IMGUI_GL3 "Use OpenGL3+ imgui implementation" OFF)
-
 if (USE_IMGUI_GL3)
 	set(SOURCES ${SOURCES} "imgui/imgui_impl_opengl3.cpp")
 else()
 	add_definitions(-DEU07_USEIMGUIIMPLOPENGL2)
 	set(SOURCES ${SOURCES} "imgui/imgui_impl_opengl2.cpp")
+endif()
+
+if (WITH_UART)
+	set(SOURCES ${SOURCES} "uart.cpp")
 endif()
 
 set (PREFIX "")
@@ -149,10 +156,9 @@ if (WIN32)
 	set(OPENAL_LIBRARY ${OPENAL_LIBRARY} "${DEPS_DIR}/openal/lib/${ARCH}/OpenAL32.lib")
 	set(LIBSNDFILE_LIBRARY ${LIBSNDFILE_LIBRARY} "${DEPS_DIR}/libsndfile/lib/${ARCH}/libsndfile-1.lib")
 	set(LUAJIT_LIBRARIES ${LUAJIT_LIBRARIES} "${DEPS_DIR}/luajit/lib/${ARCH}/lua51.lib")
-	set(PYTHON_LIBRARY ${PYTHON_LIBRARY} "${DEPS_DIR}/python/lib/${ARCH}/python27.lib")	
-	set(libserialport_LIBRARY ${LIBSERIALPORT_LIBRARY} "${DEPS_DIR}/libserialport/lib/${ARCH}/libserialport-0.lib")	
+	set(PYTHON_LIBRARY ${PYTHON_LIBRARY} "${DEPS_DIR}/python/lib/${ARCH}/python27.lib")
+	set(libserialport_LIBRARY ${LIBSERIALPORT_LIBRARY} "${DEPS_DIR}/libserialport/lib/${ARCH}/libserialport-0.lib")
 	set(ZEROMQ_LIBRARY ${ZEROMQ_LIBRARY} "${DEPS_DIR}/zeromq/lib/${ARCH}/libzmq.lib")	
-
 endif()
 
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL MSVC)
@@ -161,11 +167,6 @@ if (${CMAKE_CXX_COMPILER_ID} STREQUAL MSVC)
 endif()
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
-
-set_target_properties(${PROJECT_NAME} PROPERTIES COTIRE_CXX_PREFIX_HEADER_INIT "stdafx.h")
-set_target_properties(${PROJECT_NAME} PROPERTIES COTIRE_ADD_UNITY_BUILD FALSE)
-cotire(${PROJECT_NAME})
-#add_precompiled_header(${PROJECT_NAME} stdafx.h FORCEINCLUDE SOURCE_CXX stdafx.cpp)
 
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL MSVC)
 	# /wd4996: disable "deprecation" warnings
@@ -195,8 +196,7 @@ include_directories(${OPENGL_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} ${OPENGL_LIBRARIES})
 
 find_package(GLEW REQUIRED)
-include_directories(${GLEW_INCLUDE_DIRS})
-target_link_libraries(${PROJECT_NAME} ${GLEW_LIBRARIES})
+target_link_libraries(${PROJECT_NAME} GLEW::GLEW)
 
 find_package(GLFW3 REQUIRED)
 include_directories(${GLFW3_INCLUDE_DIR})
@@ -229,9 +229,11 @@ find_package(LuaJIT REQUIRED)
 include_directories(${LUAJIT_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} ${LUAJIT_LIBRARIES})
 
-find_package(libserialport REQUIRED)
-include_directories(${libserialport_INCLUDE_DIR})
-target_link_libraries(${PROJECT_NAME} ${libserialport_LIBRARY})
+if (WITH_UART)
+	find_package(libserialport REQUIRED)
+	include_directories(${libserialport_INCLUDE_DIR})
+	target_link_libraries(${PROJECT_NAME} ${libserialport_LIBRARY})
+endif()
 
 find_package(ZeroMQ REQUIRED)
 include_directories(${ZEROMQ_INCLUDE_DIR})
@@ -243,3 +245,7 @@ include_directories(${CPPEROMQ_INCLUDE_DIR})
 if (WIN32)
 	target_link_libraries(${PROJECT_NAME} ws2_32)
 endif()
+
+set_target_properties(${PROJECT_NAME} PROPERTIES COTIRE_CXX_PREFIX_HEADER_INIT "stdafx.h")
+set_target_properties(${PROJECT_NAME} PROPERTIES COTIRE_ADD_UNITY_BUILD FALSE)
+cotire(${PROJECT_NAME})
