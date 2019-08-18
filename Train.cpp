@@ -17,8 +17,9 @@ http://mozilla.org/MPL/2.0/.
 
 #include "Globals.h"
 #include "simulation.h"
-#include "Camera.h"
+#include "Event.h"
 #include "simulationtime.h"
+#include "Camera.h"
 #include "Logs.h"
 #include "MdlMngr.h"
 #include "Model3d.h"
@@ -327,6 +328,7 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::dooropenall, &TTrain::OnCommand_dooropenall },
     { user_command::doorcloseall, &TTrain::OnCommand_doorcloseall },
     { user_command::doorsteptoggle, &TTrain::OnCommand_doorsteptoggle },
+    { user_command::doormodetoggle, &TTrain::OnCommand_doormodetoggle },
     { user_command::carcouplingincrease, &TTrain::OnCommand_carcouplingincrease },
     { user_command::carcouplingdisconnect, &TTrain::OnCommand_carcouplingdisconnect },
     { user_command::departureannounce, &TTrain::OnCommand_departureannounce },
@@ -338,6 +340,7 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::radiochanneldecrease, &TTrain::OnCommand_radiochanneldecrease },
     { user_command::radiostopsend, &TTrain::OnCommand_radiostopsend },
     { user_command::radiostoptest, &TTrain::OnCommand_radiostoptest },
+    { user_command::radiocall3send, &TTrain::OnCommand_radiocall3send },
     { user_command::cabchangeforward, &TTrain::OnCommand_cabchangeforward },
     { user_command::cabchangebackward, &TTrain::OnCommand_cabchangebackward },
     { user_command::generictoggle0, &TTrain::OnCommand_generictoggle },
@@ -388,8 +391,11 @@ TTrain::TTrain() {
         bHeat[ i ] = false;
     }
     for( int i = 0; i < 9; ++i )
-        for( int j = 0; j < 10; ++j )
-            fEIMParams[ i ][ j ] = 0.0;
+		for (int j = 0; j < 10; ++j)
+		{
+			fEIMParams[i][j] = 0.0;
+			fDieselParams[i][j] = 0.0;
+		}
 
     for( int i = 0; i < 20; ++i )
         for( int j = 0; j < 3; ++j )
@@ -448,16 +454,18 @@ dictionary_source *TTrain::GetTrainState() {
     // basic systems state data
     dict->insert( "battery", mvControlled->Battery );
     dict->insert( "linebreaker", mvControlled->Mains );
+    dict->insert( "main_init", ( mvControlled->MainsInitTimeCountdown < mvControlled->MainsInitTime ) && ( mvControlled->MainsInitTimeCountdown > 0.0 ) );
+    dict->insert( "main_ready", ( false == mvControlled->Mains ) && ( fHVoltage > 0.0 ) && ( mvControlled->MainsInitTimeCountdown <= 0.0 ) );
     dict->insert( "converter", mvControlled->ConverterFlag );
     dict->insert( "converter_overload", mvControlled->ConvOvldFlag );
     dict->insert( "compress", mvControlled->CompressorFlag );
     // reverser
     dict->insert( "direction", mover->ActiveDir );
     // throttle
-    dict->insert( "mainctrl_pos", mover->MainCtrlPos );
-    dict->insert( "main_ctrl_actual_pos", mover->MainCtrlActualPos );
-    dict->insert( "scndctrl_pos", mover->ScndCtrlPos );
-    dict->insert( "scnd_ctrl_actual_pos", mover->ScndCtrlActualPos );
+    dict->insert( "mainctrl_pos", mvControlled->MainCtrlPos );
+    dict->insert( "main_ctrl_actual_pos", mvControlled->MainCtrlActualPos );
+    dict->insert( "scndctrl_pos", mvControlled->ScndCtrlPos );
+    dict->insert( "scnd_ctrl_actual_pos", mvControlled->ScndCtrlActualPos );
 	dict->insert( "new_speed", mover->NewSpeed);
     // brakes
     dict->insert( "manual_brake", ( mvOccupied->ManualBrakePos > 0 ) );
@@ -496,12 +504,16 @@ dictionary_source *TTrain::GetTrainState() {
     // induction motor state data
     char const *TXTT[ 10 ] = { "fd", "fdt", "fdb", "pd", "pdt", "pdb", "itothv", "1", "2", "3" };
     char const *TXTC[ 10 ] = { "fr", "frt", "frb", "pr", "prt", "prb", "im", "vm", "ihv", "uhv" };
+	char const *TXTD[ 10 ] = { "enrot", "nrot", "fill_des", "fill_real", "clutch_des", "clutch_real", "water_temp", "oil_press", "res1", "res2" };
     char const *TXTP[ 3 ] = { "bc", "bp", "sp" };
     for( int j = 0; j < 10; ++j )
         dict->insert( ( "eimp_t_" + std::string( TXTT[ j ] ) ), fEIMParams[ 0 ][ j ] );
     for( int i = 0; i < 8; ++i ) {
         for( int j = 0; j < 10; ++j )
             dict->insert( ( "eimp_c" + std::to_string( i + 1 ) + "_" + std::string( TXTC[ j ] ) ), fEIMParams[ i + 1 ][ j ] );
+
+		for (int j = 0; j < 10; ++j)
+			dict->insert(("diesel_param_" + std::to_string(i + 1) + "_" + std::string(TXTD[j])), fDieselParams[i + 1][j]);
 
         dict->insert( ( "eimp_c" + std::to_string( i + 1 ) + "_ms" ), bMains[ i ] );
         dict->insert( ( "eimp_c" + std::to_string( i + 1 ) + "_cv" ), fCntVol[ i ] );
@@ -648,7 +660,8 @@ void TTrain::zero_charging_train_brake() {
      && ( DynamicObject->Controller != AIdriver )
      && ( Global.iFeedbackMode < 3 )
      && ( ( mvOccupied->BrakeHandle == TBrakeHandle::FVel6 )
-       || ( mvOccupied->BrakeHandle == TBrakeHandle::MHZ_EN57 ) ) ) {
+		 || (mvOccupied->BrakeHandle == TBrakeHandle::MHZ_EN57)
+		 || (mvOccupied->BrakeHandle == TBrakeHandle::MHZ_K8P)) ) {
         // Odskakiwanie hamulce EP
         set_train_brake( 0 );
     }
@@ -781,7 +794,7 @@ void TTrain::OnCommand_mastercontrollerincrease( TTrain *Train, command_data con
     if( Command.action != GLFW_RELEASE ) {
         // on press or hold
         if( ( Train->ggJointCtrl.SubModel != nullptr )
-         && ( Train->mvControlled->LocalBrakePosA > 0.0 ) ) {
+         && ( Train->mvOccupied->LocalBrakePosA > 0.0 ) ) {
             OnCommand_independentbrakedecrease( Train, Command );
         }
         else {
@@ -801,7 +814,7 @@ void TTrain::OnCommand_mastercontrollerincreasefast( TTrain *Train, command_data
     if( Command.action != GLFW_RELEASE ) {
         // on press or hold
         if( ( Train->ggJointCtrl.SubModel != nullptr )
-         && ( Train->mvControlled->LocalBrakePosA > 0.0 ) ) {
+         && ( Train->mvOccupied->LocalBrakePosA > 0.0 ) ) {
             OnCommand_independentbrakedecreasefast( Train, Command );
         }
         else {
@@ -1026,10 +1039,11 @@ void TTrain::OnCommand_secondcontrollerset( TTrain *Train, command_data const &C
 
 void TTrain::OnCommand_independentbrakeincrease( TTrain *Train, command_data const &Command ) {
 
-    if( Command.action == GLFW_REPEAT ) {
-
-        if( Train->mvOccupied->LocalBrake != TLocalBrake::ManualBrake ) {
-            Train->mvOccupied->IncLocalBrakeLevel( Global.brake_speed * Command.time_delta * LocalBrakePosNo );
+	if( Command.action != GLFW_RELEASE ) {
+		if( Train->mvOccupied->LocalBrake != TLocalBrake::ManualBrake ) {
+			Train->mvOccupied->IncLocalBrakeLevel(
+			        (Train->ggJointCtrl.SubModel == nullptr) ?
+			        (Global.brake_speed * Command.time_delta * LocalBrakePosNo) : 1);
         }
     }
 }
@@ -1046,13 +1060,15 @@ void TTrain::OnCommand_independentbrakeincreasefast( TTrain *Train, command_data
 
 void TTrain::OnCommand_independentbrakedecrease( TTrain *Train, command_data const &Command ) {
 
-    if( Command.action == GLFW_REPEAT ) {
+	if( Command.action != GLFW_RELEASE ) {
 
         if( ( Train->mvOccupied->LocalBrake != TLocalBrake::ManualBrake )
             // Ra 1014-06: AI potrafi zahamować pomocniczym mimo jego braku - odhamować jakoś trzeba
             // TODO: sort AI out so it doesn't do things it doesn't have equipment for
          || ( Train->mvOccupied->LocalBrakePosA > 0 ) ) {
-            Train->mvOccupied->DecLocalBrakeLevel( Global.brake_speed * Command.time_delta * LocalBrakePosNo );
+			Train->mvOccupied->DecLocalBrakeLevel(
+			            (Train->ggJointCtrl.SubModel == nullptr) ?
+			            (Global.brake_speed * Command.time_delta * LocalBrakePosNo) : 1);
         }
     }
 }
@@ -1712,10 +1728,11 @@ void TTrain::OnCommand_alerteracknowledge( TTrain *Train, command_data const &Co
     }
 }
 
-void TTrain::OnCommand_batterytoggle( TTrain *Train, command_data const &Command )
-{
-    if( Command.action == GLFW_PRESS ) {
-        // only reacting to press, so the switch doesn't flip back and forth if key is held down
+// TODO: replace battery with a two-state device, update switch code accordingly
+void TTrain::OnCommand_batterytoggle( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action != GLFW_REPEAT ) {
+        // keep the switch from flipping back and forth if key is held down
         if( false == Train->mvOccupied->Battery ) {
             // turn on
             OnCommand_batteryenable( Train, Command );
@@ -1729,16 +1746,13 @@ void TTrain::OnCommand_batterytoggle( TTrain *Train, command_data const &Command
 
 void TTrain::OnCommand_batteryenable( TTrain *Train, command_data const &Command ) {
 
-    if( true == Train->mvOccupied->Battery ) { return; } // already on
-
     if( Command.action == GLFW_PRESS ) {
-        // ignore repeats
-        // wyłącznik jest też w SN61, ewentualnie załączać prąd na stałe z poziomu FIZ
+        // visual feedback
+        Train->ggBatteryButton.UpdateValue( 1.0, Train->dsbSwitch );
+
+        if( true == Train->mvOccupied->Battery ) { return; } // already on
+
         if( Train->mvOccupied->BatterySwitch( true ) ) {
-            // bateria potrzebna np. do zapalenia świateł
-            if( Train->ggBatteryButton.SubModel ) {
-                Train->ggBatteryButton.UpdateValue( 1.0, Train->dsbSwitch );
-            }
             // side-effects
             if( Train->mvOccupied->LightsPosNo > 0 ) {
                 Train->SetLights();
@@ -1750,25 +1764,35 @@ void TTrain::OnCommand_batteryenable( TTrain *Train, command_data const &Command
             }
         }
     }
+    else if( Command.action == GLFW_RELEASE ) {
+        if( Train->ggBatteryButton.type() == TGaugeType::push ) {
+            // return the switch to neutral position
+            Train->ggBatteryButton.UpdateValue( 0.5f );
+        }
+    }
 }
 
 void TTrain::OnCommand_batterydisable( TTrain *Train, command_data const &Command ) {
-
-    if( false == Train->mvOccupied->Battery ) { return; } // already off
-
+    // TBD, TODO: ewentualnie zablokować z FIZ, np. w samochodach się nie odłącza akumulatora
     if( Command.action == GLFW_PRESS ) {
-        // ignore repeats
+        // visual feedback
+        Train->ggBatteryButton.UpdateValue( 0.0, Train->dsbSwitch );
+
+        if( false == Train->mvOccupied->Battery ) { return; } // already off
+
         if( Train->mvOccupied->BatterySwitch( false ) ) {
-            // ewentualnie zablokować z FIZ, np. w samochodach się nie odłącza akumulatora
-            if( Train->ggBatteryButton.SubModel ) {
-                Train->ggBatteryButton.UpdateValue( 0.0, Train->dsbSwitch );
-            }
             // side-effects
             if( false == Train->mvControlled->ConverterFlag ) {
                 // if there's no (low voltage) power source left, drop pantographs
                 Train->mvControlled->PantFront( false );
                 Train->mvControlled->PantRear( false );
             }
+        }
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+        if( Train->ggBatteryButton.type() == TGaugeType::push ) {
+            // return the switch to neutral position
+            Train->ggBatteryButton.UpdateValue( 0.5f );
         }
     }
 }
@@ -4129,7 +4153,7 @@ void TTrain::OnCommand_heatingtoggle( TTrain *Train, command_data const &Command
     }
 
     if( Command.action == GLFW_PRESS ) {
-        // only reacting to press, so the switch doesn't flip back and forth if key is held down
+        // ignore repeats so the switch doesn't flip back and forth if key is held down
         if( false == Train->mvControlled->HeatingAllow ) {
             // turn on
             OnCommand_heatingenable( Train, Command );
@@ -4137,6 +4161,14 @@ void TTrain::OnCommand_heatingtoggle( TTrain *Train, command_data const &Command
         else {
             //turn off
             OnCommand_heatingdisable( Train, Command );
+        }
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+
+        if( Train->ggTrainHeatingButton.type() == TGaugeType::push ) {
+            // impulse switch
+            // visual feedback
+            Train->ggTrainHeatingButton.UpdateValue( 0.0, Train->dsbSwitch );
         }
     }
 }
@@ -4157,7 +4189,11 @@ void TTrain::OnCommand_heatingdisable( TTrain *Train, command_data const &Comman
 
         Train->mvControlled->HeatingAllow = false;
         // visual feedback
-        Train->ggTrainHeatingButton.UpdateValue( 0.0, Train->dsbSwitch );
+        Train->ggTrainHeatingButton.UpdateValue( 
+            ( Train->ggTrainHeatingButton.type() == TGaugeType::push ?
+                1.0 :
+                0.0 ),
+            Train->dsbSwitch );
     }
 }
 
@@ -4288,37 +4324,73 @@ void TTrain::OnCommand_doortoggleleft( TTrain *Train, command_data const &Comman
 
 void TTrain::OnCommand_doorpermitleft( TTrain *Train, command_data const &Command ) {
 
+    if( Command.action == GLFW_REPEAT ) { return; }
+
     if( Command.action == GLFW_PRESS ) {
 
-        Train->mvOccupied->PermitDoors(
-            ( Train->mvOccupied->ActiveCab == 1 ?
+        auto const side { (
+            Train->mvOccupied->ActiveCab == 1 ?
                 side::left :
-                side::right ) );
+                side::right ) };
 
-        // visual feedback
-        Train->ggDoorLeftPermitButton.UpdateValue( 1.0, Train->dsbSwitch );
+        if( Train->ggDoorLeftPermitButton.type() == TGaugeType::push ) {
+            // impulse switch
+            Train->mvOccupied->PermitDoors( side );
+            // visual feedback
+            Train->ggDoorLeftPermitButton.UpdateValue( 1.0, Train->dsbSwitch );
+        }
+        else {
+            // two-state switch
+            auto const newstate { !( Train->mvOccupied->Doors.instances[ side ].open_permit ) };
+
+            Train->mvOccupied->PermitDoors( side, newstate );
+            // visual feedback
+            Train->ggDoorLeftPermitButton.UpdateValue( ( newstate ? 1.0 : 0.0 ), Train->dsbSwitch );
+        }
     }
     else if( Command.action == GLFW_RELEASE ) {
-        // visual feedback
-        Train->ggDoorLeftPermitButton.UpdateValue( 0.0, Train->dsbSwitch );
+
+        if( Train->ggDoorLeftPermitButton.type() == TGaugeType::push ) {
+            // impulse switch
+            // visual feedback
+            Train->ggDoorLeftPermitButton.UpdateValue( 0.0, Train->dsbSwitch );
+        }
     }
 }
 
 void TTrain::OnCommand_doorpermitright( TTrain *Train, command_data const &Command ) {
 
+    if( Command.action == GLFW_REPEAT ) { return; }
+
     if( Command.action == GLFW_PRESS ) {
 
-        Train->mvOccupied->PermitDoors(
-            ( Train->mvOccupied->ActiveCab == 1 ?
+        auto const side { (
+            Train->mvOccupied->ActiveCab == 1 ?
                 side::right :
-                side::left ) );
+                side::left ) };
 
-        // visual feedback
-        Train->ggDoorRightPermitButton.UpdateValue( 1.0, Train->dsbSwitch );
+        if( Train->ggDoorRightPermitButton.type() == TGaugeType::push ) {
+            // impulse switch
+            Train->mvOccupied->PermitDoors( side );
+            // visual feedback
+            Train->ggDoorRightPermitButton.UpdateValue( 1.0, Train->dsbSwitch );
+        }
+        else {
+            // two-state switch
+            auto const newstate { !( Train->mvOccupied->Doors.instances[ side ].open_permit ) };
+
+            Train->mvOccupied->PermitDoors( side, newstate );
+            // visual feedback
+            Train->ggDoorRightPermitButton.UpdateValue( ( newstate ? 1.0 : 0.0 ), Train->dsbSwitch );
+        }
     }
     else if( Command.action == GLFW_RELEASE ) {
-        // visual feedback
-        Train->ggDoorRightPermitButton.UpdateValue( 0.0, Train->dsbSwitch );
+
+        if( Train->ggDoorRightPermitButton.type() == TGaugeType::push ) {
+            // impulse switch
+            // visual feedback
+            Train->ggDoorRightPermitButton.UpdateValue( 0.0, Train->dsbSwitch );
+        }
     }
 }
 
@@ -4653,10 +4725,10 @@ void TTrain::OnCommand_doorcloseall( TTrain *Train, command_data const &Command 
     if( Command.action == GLFW_PRESS ) {
 
         if( Train->mvOccupied->Doors.has_autowarning ) {
-            // automatic departure signal delays actual door closing until the button is released
             Train->mvOccupied->signal_departure( true );
         }
-        else {
+        if( Train->ggDoorAllOffButton.type() != TGaugeType::push_delayed ) {
+            // delays the action until the button is released
             Train->mvOccupied->OperateDoors( side::right, false );
             Train->mvOccupied->OperateDoors( side::left, false );
         }
@@ -4667,10 +4739,10 @@ void TTrain::OnCommand_doorcloseall( TTrain *Train, command_data const &Command 
             Train->ggDoorAllOffButton.UpdateValue( 1.0, Train->dsbSwitch );
     }
     else if( Command.action == GLFW_RELEASE ) {
-        // release the button
         if( Train->mvOccupied->Doors.has_autowarning ) {
-            // automatic departure signal delays actual door closing until the button is released
             Train->mvOccupied->signal_departure( false );
+        }
+        if( Train->ggDoorAllOffButton.type() == TGaugeType::push_delayed ) {
             // now we can actually close the door
             Train->mvOccupied->OperateDoors( side::right, false );
             Train->mvOccupied->OperateDoors( side::left, false );
@@ -4685,6 +4757,13 @@ void TTrain::OnCommand_doorsteptoggle( TTrain *Train, command_data const &Comman
 
     if( Command.action == GLFW_PRESS ) {
         Train->mvOccupied->PermitDoorStep( false == Train->mvOccupied->Doors.step_enabled );
+    }
+}
+
+void TTrain::OnCommand_doormodetoggle( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        Train->mvOccupied->ChangeDoorControlMode( false == Train->mvOccupied->Doors.remote_only );
     }
 }
 
@@ -4939,6 +5018,7 @@ void TTrain::OnCommand_radiostoptest( TTrain *Train, command_data const &Command
 
     if( Command.action == GLFW_PRESS ) {
         if( ( Train->RadioChannel() == 10 )
+         && ( true == Train->mvOccupied->Radio )
          && ( Train->mvControlled->Battery || Train->mvControlled->ConverterFlag ) ) {
             Train->Dynamic()->RadioStop();
         }
@@ -4951,18 +5031,50 @@ void TTrain::OnCommand_radiostoptest( TTrain *Train, command_data const &Command
     }
 }
 
+void TTrain::OnCommand_radiocall3send( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        if( ( Train->RadioChannel() != 10 )
+         && ( true == Train->mvOccupied->Radio )
+         && ( Train->mvControlled->Battery || Train->mvControlled->ConverterFlag ) ) {
+            simulation::Events.queue_receivers( radio_message::call3, Train->Dynamic()->GetPosition() );
+        }
+        // visual feedback
+        Train->ggRadioCall3.UpdateValue( 1.0 );
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+        // visual feedback
+        Train->ggRadioCall3.UpdateValue( 0.0 );
+    }
+}
+
 void TTrain::OnCommand_cabchangeforward( TTrain *Train, command_data const &Command ) {
 
     if( Command.action == GLFW_PRESS ) {
-        if( false == Train->CabChange( 1 ) ) {
-            if( TestFlag( Train->DynamicObject->MoverParameters->Couplers[ end::front ].CouplingFlag, coupling::gangway ) ) {
+        auto const movedirection {
+            1 * ( Train->DynamicObject->ctOwner->Vehicle( end::front )->DirectionGet() == Train->DynamicObject->DirectionGet() ?
+                    1 :
+                   -1 ) };
+        if( false == Train->CabChange( movedirection ) ) {
+            auto const exitdirection { (
+                movedirection > 0 ?
+                    end::front :
+                    end::rear ) };
+            if( TestFlag( Train->DynamicObject->MoverParameters->Couplers[ exitdirection ].CouplingFlag, coupling::gangway ) ) {
                 // przejscie do nastepnego pojazdu
-                Global.changeDynObj = Train->DynamicObject->PrevConnected();
+                Global.changeDynObj = (
+                    exitdirection == end::front ?
+                        Train->DynamicObject->PrevConnected() :
+                        Train->DynamicObject->NextConnected() );
                 Global.changeDynObj->MoverParameters->ActiveCab = (
-                    Train->DynamicObject->MoverParameters->Neighbours[end::front].vehicle_end ?
+                    Train->DynamicObject->MoverParameters->Neighbours[ exitdirection ].vehicle_end ?
                         -1 :
                          1 );
             }
+        }
+        // HACK: match consist door permit state with the preset in the active cab
+        if( Train->ggDoorPermitPresetButton.SubModel != nullptr ) {
+            Train->mvOccupied->ChangeDoorPermitPreset( 0 );
         }
     }
 }
@@ -4970,15 +5082,30 @@ void TTrain::OnCommand_cabchangeforward( TTrain *Train, command_data const &Comm
 void TTrain::OnCommand_cabchangebackward( TTrain *Train, command_data const &Command ) {
 
     if( Command.action == GLFW_PRESS ) {
-        if( false == Train->CabChange( -1 ) ) {
-            if( TestFlag( Train->DynamicObject->MoverParameters->Couplers[ end::rear ].CouplingFlag, coupling::gangway ) ) {
+        auto const movedirection {
+            -1 * ( Train->DynamicObject->ctOwner->Vehicle( end::front )->DirectionGet() == Train->DynamicObject->DirectionGet() ?
+                    1 :
+                   -1 ) };
+        if( false == Train->CabChange( movedirection ) ) {
+            auto const exitdirection { (
+                movedirection > 0 ?
+                    end::front :
+                    end::rear ) };
+            if( TestFlag( Train->DynamicObject->MoverParameters->Couplers[ exitdirection ].CouplingFlag, coupling::gangway ) ) {
                 // przejscie do nastepnego pojazdu
-                Global.changeDynObj = Train->DynamicObject->NextConnected();
+                Global.changeDynObj = (
+                    exitdirection == end::front ?
+                        Train->DynamicObject->PrevConnected() :
+                        Train->DynamicObject->NextConnected() );
                 Global.changeDynObj->MoverParameters->ActiveCab = (
-                    Train->DynamicObject->MoverParameters->Neighbours[end::rear].vehicle_end ?
+                    Train->DynamicObject->MoverParameters->Neighbours[ exitdirection ].vehicle_end ?
                         -1 :
                          1 );
             }
+        }
+        // HACK: match consist door permit state with the preset in the active cab
+        if( Train->ggDoorPermitPresetButton.SubModel != nullptr ) {
+            Train->mvOccupied->ChangeDoorPermitPreset( 0 );
         }
     }
 }
@@ -5026,10 +5153,11 @@ bool TTrain::Update( double const Deltatime )
     if( ( ggMainButton.GetDesiredValue() > 0.95 )
      || ( ggMainOnButton.GetDesiredValue() > 0.95 ) ) {
         // keep track of period the line breaker button is held down, to determine when/if circuit closes
-        if( ( fHVoltage > 0.5 * mvControlled->EnginePowerSource.MaxVoltage )
-         || ( ( mvControlled->EngineType != TEngineType::ElectricSeriesMotor )
-           && ( mvControlled->EngineType != TEngineType::ElectricInductionMotor )
-           && ( true == mvControlled->Battery ) ) ) {
+        if( ( mvControlled->MainsInitTimeCountdown <= 0.0 )
+         && ( ( fHVoltage > 0.5 * mvControlled->EnginePowerSource.MaxVoltage )
+           || ( ( mvControlled->EngineType != TEngineType::ElectricSeriesMotor )
+             && ( mvControlled->EngineType != TEngineType::ElectricInductionMotor )
+             && ( true == mvControlled->Battery ) ) ) ) {
             // prevent the switch from working if there's no power
             // TODO: consider whether it makes sense for diesel engines and such
             fMainRelayTimer += Deltatime;
@@ -5171,7 +5299,7 @@ bool TTrain::Update( double const Deltatime )
         }
 
         bool kier = (DynamicObject->DirectionGet() * mvOccupied->ActiveCab > 0);
-        TDynamicObject *p = DynamicObject->GetFirstDynamic(mvOccupied->ActiveCab < 0 ? 1 : 0, 4);
+        TDynamicObject *p = DynamicObject->GetFirstDynamic(mvOccupied->ActiveCab < 0 ? end::rear : end::front, 4);
         int in = 0;
         fEIMParams[0][6] = 0;
         iCarNo = 0;
@@ -5240,6 +5368,27 @@ bool TTrain::Update( double const Deltatime )
                     in++;
                     iPowerNo = in;
                 }
+				if ((in < 8) && (p->MoverParameters->EngineType==TEngineType::DieselEngine))
+				{
+					fDieselParams[1 + in][0] = p->MoverParameters->enrot*60;
+					fDieselParams[1 + in][1] = p->MoverParameters->nrot;
+					fDieselParams[1 + in][2] = p->MoverParameters->RList[p->MoverParameters->MainCtrlPos].R;
+					fDieselParams[1 + in][3] = p->MoverParameters->dizel_fill;
+					fDieselParams[1 + in][4] = p->MoverParameters->RList[p->MoverParameters->MainCtrlPos].Mn;
+					fDieselParams[1 + in][5] = p->MoverParameters->dizel_engage;
+					fDieselParams[1 + in][6] = p->MoverParameters->dizel_heat.Twy;
+					fDieselParams[1 + in][7] = p->MoverParameters->OilPump.pressure;
+					//fDieselParams[1 + in][8] = p->MoverParameters->
+					//fDieselParams[1 + in][9] = p->MoverParameters->
+					bMains[in] = p->MoverParameters->Mains;
+					fCntVol[in] = p->MoverParameters->BatteryVoltage;
+					bFuse[in] = p->MoverParameters->FuseFlag;
+					bBatt[in] = p->MoverParameters->Battery;
+					bConv[in] = p->MoverParameters->ConverterFlag;
+					bHeat[in] = p->MoverParameters->Heating;
+					in++;
+					iPowerNo = in;
+				}
                 //                p = p->NextC(4);                                       //prev
                 if ((kier ? p->NextC(128) : p->PrevC(128)) != (kier ? p->NextC(4) : p->PrevC(4)))
                     iUnitNo++;
@@ -5282,16 +5431,11 @@ bool TTrain::Update( double const Deltatime )
 
         for (int i = in; i < 8; i++)
         {
-            fEIMParams[1 + i][0] = 0;
-            fEIMParams[1 + i][1] = 0;
-            fEIMParams[1 + i][2] = 0;
-            fEIMParams[1 + i][3] = 0;
-            fEIMParams[1 + i][4] = 0;
-            fEIMParams[1 + i][5] = 0;
-            fEIMParams[1 + i][6] = 0;
-            fEIMParams[1 + i][7] = 0;
-            fEIMParams[1 + i][8] = 0;
-            fEIMParams[1 + i][9] = 0;
+			for (int j = 0; j <= 9; j++)
+			{
+				fEIMParams[1 + i][j] = 0;
+				fDieselParams[1 + i][j] = 0;
+			}
         }
 #ifdef _WIN32
         if (Global.iFeedbackMode == 4) {
@@ -5538,9 +5682,10 @@ bool TTrain::Update( double const Deltatime )
                  || (true == mvControlled->Mains) ) ?
                     true :
                     false ) );
-            // NOTE: 'off' variant uses the same test, but opposite resulting states
             btLampkaWylSzybkiOff.Turn(
-                ( ( ( m_linebreakerstate == 2 )
+                ( ( ( mvControlled->MainsInitTimeCountdown > 0.0 )
+                 || ( fHVoltage == 0.0 )
+                 || ( m_linebreakerstate == 2 )
                  || ( true == mvControlled->Mains ) ) ?
                     false :
                     true ) );
@@ -5772,7 +5917,7 @@ bool TTrain::Update( double const Deltatime )
                     auto const *mover { tmp->MoverParameters };
 
                     btLampkaWylSzybkiB.Turn( mover->Mains );
-                    btLampkaWylSzybkiBOff.Turn( false == mover->Mains );
+                    btLampkaWylSzybkiBOff.Turn( ( false == mover->Mains ) && ( mover->MainsInitTimeCountdown <= 0.0 ) && ( fHVoltage != 0.0 ) );
 
                     btLampkaOporyB.Turn(mover->ResistorsFlagCheck());
                     btLampkaBezoporowaB.Turn(
@@ -6027,6 +6172,7 @@ bool TTrain::Update( double const Deltatime )
         ggRadioChannelNext.Update();
         ggRadioStop.Update();
         ggRadioTest.Update();
+        ggRadioCall3.Update();
         ggDepartureSignalButton.Update();
 
         ggPantFrontButton.Update();
@@ -6493,7 +6639,7 @@ void TTrain::update_sounds_radio() {
         auto const volume {
             ( true == radioenabled )
          && ( message.first == iRadioChannel ) ?
-                1.0 :
+                Global.RadioVolume :
                 0.0 };
         message.second->gain( volume );
     }
@@ -7068,28 +7214,11 @@ void TTrain::DynamicSet(TDynamicObject *d)
     // jeździć dobrze
     // również hamowanie wykonuje się zaworem w członie, a nie w silnikowym...
     DynamicObject = d; // jedyne miejsce zmiany
-    mvOccupied = mvControlled = d ? DynamicObject->MoverParameters : NULL; // albo silnikowy w EZT
-    if (!DynamicObject)
-        return;
-    // TODO: leverage code already present in TDynamicObject::ControlledFind()
-    if( ( d->MoverParameters->TrainType == dt_EZT )
-     || ( d->MoverParameters->TrainType == dt_DMU ) ) {
+    mvOccupied = mvControlled = ( d ? DynamicObject->MoverParameters : nullptr ); // albo silnikowy w EZT
 
-        if( ( d->NextConnected() != nullptr )
-         && ( true == TestFlag( d->MoverParameters->Couplers[ end::rear ].AllowedFlag, coupling::permanent ) ) ) {
-            if( ( mvControlled->Power < 1.0 ) && ( mvControlled->Couplers[ 1 ].Connected->Power > 1.0 ) ) {
-                // my nie mamy mocy, ale ten drugi ma
-                mvControlled = DynamicObject->NextConnected()->MoverParameters; // będziemy sterować tym z mocą
-            }
-        }
-        else if( ( d->PrevConnected() != nullptr )
-              && ( true == TestFlag( d->MoverParameters->Couplers[ end::front ].AllowedFlag, coupling::permanent ) ) ) {
-            if( ( mvControlled->Power < 1.0 ) && ( mvControlled->Couplers[ 0 ].Connected->Power > 1.0 ) ) {
-                // my nie mamy mocy, ale ten drugi ma
-                mvControlled = DynamicObject->PrevConnected()->MoverParameters; // będziemy sterować tym z mocą
-            }
-        }
-    }
+    if( DynamicObject == nullptr ) { return; }
+
+    mvControlled = DynamicObject->ControlledFind()->MoverParameters;
     mvSecond = NULL; // gdyby się nic nie znalazło
     if (mvOccupied->Power > 1.0) // dwuczłonowe lub ukrotnienia, żeby nie szukać każdorazowo
         if (mvOccupied->Couplers[1].Connected ?
@@ -7261,6 +7390,7 @@ void TTrain::clear_cab_controls()
     ggRadioChannelNext.Clear();
     ggRadioStop.Clear();
     ggRadioTest.Clear();
+    ggRadioCall3.Clear();
     ggDoorLeftPermitButton.Clear();
     ggDoorRightPermitButton.Clear();
     ggDoorPermitPresetButton.Clear();
@@ -7413,9 +7543,10 @@ void TTrain::clear_cab_controls()
 void TTrain::set_cab_controls( int const Cab ) {
     // switches
     // battery
-    if( true == mvOccupied->Battery ) {
-        ggBatteryButton.PutValue( 1.f );
-    }
+    ggBatteryButton.PutValue(
+        ( ggBatteryButton.type() == TGaugeType::push ? 0.5f :
+          mvOccupied->Battery ? 1.f :
+          0.f ) );
     // motor connectors
     ggStLinOffButton.PutValue(
         ( mvControlled->StLinSwitchOff ?
@@ -7577,9 +7708,15 @@ void TTrain::set_cab_controls( int const Cab ) {
         TimetableLightActive ?
             1.f :
             0.f ) );
-    // doors
-    // NOTE: for the time being permit switches are presumed to be impulse switches
+    // doors permits
+    if( ggDoorLeftPermitButton.type() != TGaugeType::push ) {
+        ggDoorLeftPermitButton.PutValue( mvOccupied->Doors.instances[ ( mvOccupied->ActiveCab == 1 ? side::left : side::right ) ].open_permit ? 1.f : 0.f );
+    }
+    if( ggDoorRightPermitButton.type() != TGaugeType::push ) {
+        ggDoorRightPermitButton.PutValue( mvOccupied->Doors.instances[ ( mvOccupied->ActiveCab == 1 ? side::right : side::left ) ].open_permit ? 1.f : 0.f );
+    }
     ggDoorPermitPresetButton.PutValue( mvOccupied->Doors.permit_preset );
+    // door controls
     ggDoorLeftButton.PutValue( mvOccupied->Doors.instances[ ( mvOccupied->ActiveCab == 1 ? side::left : side::right ) ].is_closed ? 0.f : 1.f );
     ggDoorRightButton.PutValue( mvOccupied->Doors.instances[ ( mvOccupied->ActiveCab == 1 ? side::right : side::left ) ].is_closed ? 0.f : 1.f );
     // door lock
@@ -7588,8 +7725,11 @@ void TTrain::set_cab_controls( int const Cab ) {
             1.f :
             0.f );
     // heating
-    if( true == mvControlled->Heating ) {
-        ggTrainHeatingButton.PutValue( 1.f );
+    if( ggTrainHeatingButton.type() != TGaugeType::push ) {
+        ggTrainHeatingButton.PutValue(
+            mvControlled->Heating ?
+                1.f :
+                0.f );
     }
     // brake acting time
     if( ggBrakeProfileCtrl.SubModel != nullptr ) {
@@ -7807,8 +7947,8 @@ bool TTrain::initialize_button(cParser &Parser, std::string const &Label, int co
     }
     // TODO: move viable dedicated lights to the automatic light array
     std::unordered_map<std::string, bool *> const autolights = {
-        { "i-doorpermit_left:", &mvOccupied->Doors.instances[side::left].open_permit },
-        { "i-doorpermit_right:", &mvOccupied->Doors.instances[ side::right ].open_permit },
+        { "i-doorpermit_left:",  &mvOccupied->Doors.instances[ ( mvOccupied->ActiveCab == 1 ? side::left : side::right ) ].open_permit },
+        { "i-doorpermit_right:", &mvOccupied->Doors.instances[ ( mvOccupied->ActiveCab == 1 ? side::right : side::left ) ].open_permit },
         { "i-doorstep:", &mvOccupied->Doors.step_enabled }
     };
     {
@@ -7937,6 +8077,7 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         { "radiochannelnext_sw:", ggRadioChannelNext },
         { "radiostop_sw:", ggRadioStop },
         { "radiotest_sw:", ggRadioTest },
+        { "radiocall3_sw:", ggRadioCall3 },
         { "pantfront_sw:", ggPantFrontButton },
         { "pantrear_sw:", ggPantRearButton },
         { "pantfrontoff_sw:", ggPantFrontButtonOff },
@@ -7978,6 +8119,7 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
     }
     // TODO: move viable dedicated gauges to the automatic array
     std::unordered_map<std::string, bool *> const autoboolgauges = {
+        { "doormode_sw:", &mvOccupied->Doors.remote_only },
         { "doorstep_sw:", &mvOccupied->Doors.step_enabled },
         { "coolingfans_sw:", &mvControlled->RVentForceOn }
     };
@@ -8252,6 +8394,18 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         gauge.Load(Parser, DynamicObject);
         gauge.AssignDouble(&mvControlled->AnPos);
         m_controlmapper.insert( gauge, "shuntmodepower:" );
+    }
+    else if( Label == "heatingvoltage:" ) {
+        if( mvControlled->HeatingPowerSource.SourceType == TPowerSource::Generator ) {
+            auto &gauge = Cabine[ Cabindex ].Gauge( -1 ); // pierwsza wolna gałka
+            gauge.Load( Parser, DynamicObject );
+            gauge.AssignDouble( &(mvControlled->HeatingPowerSource.EngineGenerator.voltage) );
+        }
+    }
+    else if( Label == "heatingcurrent:" ) {
+        auto &gauge = Cabine[ Cabindex ].Gauge( -1 ); // pierwsza wolna gałka
+        gauge.Load( Parser, DynamicObject );
+        gauge.AssignDouble( &( mvControlled->TotalCurrent ) );
     }
     else
     {

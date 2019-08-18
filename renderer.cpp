@@ -32,17 +32,18 @@ int const EU07_ENVIRONMENTBUFFERSIZE { 256 }; // size of (square) environmental 
 void
 opengl_light::apply_intensity( float const Factor ) {
 
-    if( Factor == 1.0 ) {
+    if( Factor == 1.f ) {
 
         ::glLightfv( id, GL_AMBIENT, glm::value_ptr( ambient ) );
         ::glLightfv( id, GL_DIFFUSE, glm::value_ptr( diffuse ) );
         ::glLightfv( id, GL_SPECULAR, glm::value_ptr( specular ) );
     }
     else {
+        auto const factor{ clamp( Factor, 0.05f, 1.f ) };
         // temporary light scaling mechanics (ultimately this work will be left to the shaders
-        glm::vec4 scaledambient( ambient.r * Factor, ambient.g * Factor, ambient.b * Factor, ambient.a );
-        glm::vec4 scaleddiffuse( diffuse.r * Factor, diffuse.g * Factor, diffuse.b * Factor, diffuse.a );
-        glm::vec4 scaledspecular( specular.r * Factor, specular.g * Factor, specular.b * Factor, specular.a );
+        glm::vec4 scaledambient( ambient.r * factor, ambient.g * factor, ambient.b * factor, ambient.a );
+        glm::vec4 scaleddiffuse( diffuse.r * factor, diffuse.g * factor, diffuse.b * factor, diffuse.a );
+        glm::vec4 scaledspecular( specular.r * factor, specular.g * factor, specular.b * factor, specular.a );
         glLightfv( id, GL_AMBIENT, glm::value_ptr( scaledambient ) );
         glLightfv( id, GL_DIFFUSE, glm::value_ptr( scaleddiffuse ) );
         glLightfv( id, GL_SPECULAR, glm::value_ptr( scaledspecular ) );
@@ -104,6 +105,134 @@ opengl_camera::draw( glm::vec3 const &Offset ) const {
     }
     ::glEnd();
 }
+
+
+
+std::vector<std::pair<glm::vec3, glm::vec2>> const billboard_vertices {
+
+    { { -0.5f, -0.5f, 0.f }, { 0.f, 0.f } },
+    { {  0.5f, -0.5f, 0.f }, { 1.f, 0.f } },
+    { {  0.5f,  0.5f, 0.f }, { 1.f, 1.f } },
+    { { -0.5f,  0.5f, 0.f }, { 0.f, 1.f } }
+};
+
+void
+opengl_particles::update( opengl_camera const &Camera ) {
+
+    m_particlevertices.clear();
+    // build a list of visible smoke sources
+    // NOTE: arranged by distance to camera, if we ever need sorting and/or total amount cap-based culling
+    std::multimap<float, smoke_source const &> sources;
+
+    for( auto const &source : simulation::Particles.sequence() ) {
+        if( false == Camera.visible( source.area() ) ) { continue; }
+        // NOTE: the distance is negative when the camera is inside the source's bounding area
+        sources.emplace(
+            static_cast<float>( glm::length( Camera.position() - source.area().center ) - source.area().radius ),
+            source );
+    }
+
+    if( true == sources.empty() ) { return; }
+
+    // build billboard data for particles from visible sources
+    auto const camerarotation { glm::mat3( Camera.modelview() ) };
+    particle_vertex vertex;
+    for( auto const &source : sources ) {
+
+        auto const &particles { source.second.sequence() };
+        // TODO: put sanity cap on the overall amount of particles that can be drawn
+        auto const sizestep { 256.0 * billboard_vertices.size() };
+        m_particlevertices.reserve(
+            sizestep * std::ceil( m_particlevertices.size() + ( particles.size() * billboard_vertices.size() ) / sizestep ) );
+        for( auto const &particle : particles ) {
+            // TODO: particle color support
+            vertex.color[ 0 ] =
+            vertex.color[ 1 ] =
+            vertex.color[ 2 ] = static_cast<std::uint8_t>( Global.fLuminance * 32 );
+            vertex.color[ 3 ] = clamp<std::uint8_t>( particle.opacity * 255, 0, 255 );
+
+            auto const offset { glm::vec3{ particle.position - Camera.position() } };
+            auto const rotation { glm::angleAxis( particle.rotation, glm::vec3{ 0.f, 0.f, 1.f } ) };
+
+            for( auto const &billboardvertex : billboard_vertices ) {
+                vertex.position = offset + ( rotation * billboardvertex.first * particle.size ) * camerarotation;
+                vertex.texture = billboardvertex.second;
+
+                m_particlevertices.emplace_back( vertex );
+            }
+        }
+    }
+
+    // ship the billboard data to the gpu:
+    // setup...
+    ::glPushClientAttrib( GL_CLIENT_VERTEX_ARRAY_BIT );
+    // ...make sure we have enough room...
+    if( m_buffercapacity < m_particlevertices.size() ) {
+        // allocate gpu side buffer big enough to hold the data
+        m_buffercapacity = 0;
+        if( m_buffer != -1 ) {
+            // get rid of the old buffer
+            ::glDeleteBuffers( 1, &m_buffer );
+        }
+        ::glGenBuffers( 1, &m_buffer );
+        ::glBindBuffer( GL_ARRAY_BUFFER, m_buffer );
+        if( m_buffer > 0 ) {
+            // if we didn't get a buffer we'll try again during the next draw call
+            // NOTE: we match capacity instead of current size to reduce number of re-allocations
+            auto const particlecount { m_particlevertices.capacity() };
+            ::glBufferData(
+                GL_ARRAY_BUFFER,
+                particlecount * sizeof( particle_vertex ),
+                nullptr,
+                GL_DYNAMIC_DRAW );
+            if( ::glGetError() == GL_OUT_OF_MEMORY ) {
+                // TBD: throw a bad_alloc?
+                ErrorLog( "openGL error: out of memory; failed to create a geometry buffer" );
+                ::glDeleteBuffers( 1, &m_buffer );
+                m_buffer = -1;
+            }
+            else {
+                m_buffercapacity = particlecount;
+            }
+        }
+    }
+    // ...send the data...
+    if( m_buffer > 0 ) {
+        // if the buffer exists at this point it's guaranteed to be big enough to hold our data
+        ::glBindBuffer( GL_ARRAY_BUFFER, m_buffer );
+        ::glBufferSubData(
+            GL_ARRAY_BUFFER,
+            0,
+            m_particlevertices.size() * sizeof( particle_vertex ),
+            m_particlevertices.data() );
+    }
+    // ...and cleanup
+    ::glPopClientAttrib();
+}
+
+void
+opengl_particles::render( int const Textureunit ) {
+
+    if( m_buffercapacity == 0 ) { return; }
+    if( m_particlevertices.empty() ) { return; }
+
+    // setup...
+    ::glPushClientAttrib( GL_CLIENT_VERTEX_ARRAY_BIT );
+    ::glBindBuffer( GL_ARRAY_BUFFER, m_buffer );
+    ::glVertexPointer( 3, GL_FLOAT, sizeof( particle_vertex ), static_cast<char *>( nullptr ) );
+    ::glEnableClientState( GL_VERTEX_ARRAY );
+    ::glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( particle_vertex ), static_cast<char *>( nullptr ) + sizeof( float ) * 3 );
+    ::glEnableClientState( GL_COLOR_ARRAY );
+    ::glClientActiveTexture( Textureunit );
+    ::glTexCoordPointer( 2, GL_FLOAT, sizeof( particle_vertex ), static_cast<char *>( nullptr ) + sizeof( float ) * 3 + sizeof( std::uint8_t ) * 4 );
+    ::glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+    // ...draw...
+    ::glDrawArrays( GL_QUADS, 0, m_particlevertices.size() );
+    // ...and cleanup
+    ::glPopClientAttrib();
+}
+
+
 
 bool
 opengl_renderer::Init( GLFWwindow *Window ) {
@@ -193,6 +322,7 @@ opengl_renderer::Init( GLFWwindow *Window ) {
     if( m_helpertextureunit >= 0 ) {
         m_reflectiontexture = Fetch_Texture( "fx/reflections" );
     }
+    m_smoketexture = Fetch_Texture( "fx/smoke" );
     WriteLog( "...gfx data pre-loading done" );
 
 #ifdef EU07_USE_PICKING_FRAMEBUFFER
@@ -495,10 +625,10 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
 
                 // run shadowmaps pass before color
                 Timer::subsystem.gfx_shadows.start();
-                Render_pass( rendermode::shadows );
                 if( false == FreeFlyModeFlag ) {
                     Render_pass( rendermode::cabshadows );
                 }
+                Render_pass( rendermode::shadows );
                 Timer::subsystem.gfx_shadows.stop();
                 m_debugtimestext += "shadows: " + to_string( Timer::subsystem.gfx_shadows.average(), 2 ) + " msec (" + std::to_string( m_cellqueue.size() ) + " sectors)\n";
 #ifdef EU07_USE_DEBUG_SHADOWMAP
@@ -601,6 +731,8 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
                 // ...translucent parts
                 setup_drawing( true );
                 Render_Alpha( simulation::Region );
+                // particles
+                Render_particles();
                 // precipitation; done at the end, only before cab render
                 Render_precipitation();
                 // cab render
@@ -688,7 +820,6 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
                 // setup
                 ::glEnable( GL_POLYGON_OFFSET_FILL ); // alleviate depth-fighting
                 ::glPolygonOffset( 1.f, 1.f );
-                ::glDisable( GL_CULL_FACE );
 
                 ::glBindFramebufferEXT( GL_FRAMEBUFFER, m_cabshadowframebuffer );
                 ::glViewport( 0, 0, m_shadowbuffersize / 2, m_shadowbuffersize / 2 );
@@ -711,6 +842,11 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
 #else
                 setup_units( false, false, false );
 #endif
+                ::glDisable( GL_CULL_FACE );
+
+                if( Global.RenderCabShadowsRange > 0 ) {
+                    Render( simulation::Region );
+                }
                 Render_cab( simulation::Train->Dynamic(), 0.f, false );
                 Render_cab( simulation::Train->Dynamic(), 0.f, true );
                 m_cabshadowpass = m_renderpass;
@@ -855,7 +991,7 @@ opengl_renderer::setup_pass( renderpass_config &Config, rendermode const Mode, f
     switch( Mode ) {
         case rendermode::color:        { Config.draw_range = Global.BaseDrawRange; break; }
         case rendermode::shadows:      { Config.draw_range = Global.BaseDrawRange * 0.5f; break; }
-        case rendermode::cabshadows:   { Config.draw_range = simulation::Train->Occupied()->Dim.L; break; }
+        case rendermode::cabshadows:   { Config.draw_range = ( Global.RenderCabShadowsRange > 0 ? clamp( Global.RenderCabShadowsRange, 5, 100 ) : simulation::Train->Occupied()->Dim.L ); break; }
         case rendermode::reflections:  { Config.draw_range = Global.BaseDrawRange; break; }
         case rendermode::pickcontrols: { Config.draw_range = 50.f; break; }
         case rendermode::pickscenery:  { Config.draw_range = Global.BaseDrawRange * 0.5f; break; }
@@ -1508,7 +1644,7 @@ opengl_renderer::Render( world_environment *Environment ) {
 
     auto const &modelview = OpenGLMatrices.data( GL_MODELVIEW );
 
-    auto const fogfactor { clamp<float>( Global.fFogEnd / 2000.f, 0.f, 1.f ) }; // stronger fog reduces opacity of the celestial bodies
+    auto const fogfactor { clamp<float>( Global.fFogEnd / 2000.f, 0.f, 1.f ) }; // closer/denser fog reduces opacity of the celestial bodies
     float const duskfactor = 1.0f - clamp( std::abs( Environment->m_sun.getAngle() ), 0.0f, 12.0f ) / 12.0f;
     glm::vec3 suncolor = interpolate(
         glm::vec3( 255.0f / 255.0f, 242.0f / 255.0f, 231.0f / 255.0f ),
@@ -1745,6 +1881,7 @@ opengl_renderer::Render( scene::basic_region *Region ) {
             break;
         }
         case rendermode::shadows:
+        case rendermode::cabshadows:
         case rendermode::pickscenery: {
             // these render modes don't bother with lights
             Render( std::begin( m_sectionqueue ), std::end( m_sectionqueue ) );
@@ -1775,7 +1912,8 @@ opengl_renderer::Render( section_sequence::iterator First, section_sequence::ite
 
             break;
         }
-        case rendermode::shadows: {
+        case rendermode::shadows:
+        case rendermode::cabshadows: {
             // experimental, for shadows render both back and front faces, to supply back faces of the 'forest strips'
             ::glDisable( GL_CULL_FACE );
             break; }
@@ -1798,6 +1936,7 @@ opengl_renderer::Render( section_sequence::iterator First, section_sequence::ite
             case rendermode::color:
             case rendermode::reflections:
             case rendermode::shadows:
+            case rendermode::cabshadows:
             case rendermode::pickscenery: {
                 if( false == section->m_shapes.empty() ) {
                     // since all shapes of the section share center point we can optimize out a few calls here
@@ -1821,6 +1960,7 @@ opengl_renderer::Render( section_sequence::iterator First, section_sequence::ite
         switch( m_renderpass.draw_mode ) {
             case rendermode::color:
             case rendermode::shadows:
+            case rendermode::cabshadows:
             case rendermode::pickscenery: {
                 for( auto &cell : section->m_cells ) {
                     if( ( true == cell.m_active )
@@ -1844,7 +1984,8 @@ opengl_renderer::Render( section_sequence::iterator First, section_sequence::ite
     }
 
     switch( m_renderpass.draw_mode ) {
-        case rendermode::shadows: {
+        case rendermode::shadows:
+        case rendermode::cabshadows: {
             // restore standard face cull mode
             ::glEnable( GL_CULL_FACE );
             break; }
@@ -1931,6 +2072,22 @@ opengl_renderer::Render( cell_sequence::iterator First, cell_sequence::iterator 
 
                 break;
             }
+            case rendermode::cabshadows: {
+                // since all shapes of the section share center point we can optimize out a few calls here
+                ::glPushMatrix();
+                auto const originoffset { cell->m_area.center - m_renderpass.camera.position() };
+                ::glTranslated( originoffset.x, originoffset.y, originoffset.z );
+
+                // render
+                // opaque non-instanced shapes
+                for( auto const &shape : cell->m_shapesopaque ) { Render( shape, false ); }
+                // NOTE: tracks aren't likely to cast shadows into the cab, so we skip them in this pass
+
+                // post-render cleanup
+                ::glPopMatrix();
+
+                break;
+            }
             case rendermode::pickscenery: {
                 // same procedure like with regular render, but editor-enabled nodes receive custom colour used for picking
                 // since all shapes of the section share center point we can optimize out a few calls here
@@ -1969,7 +2126,8 @@ opengl_renderer::Render( cell_sequence::iterator First, cell_sequence::iterator 
 
         switch( m_renderpass.draw_mode ) {
             case rendermode::color:
-            case rendermode::shadows: {
+            case rendermode::shadows:
+            case rendermode::cabshadows: {
                 // opaque parts of instanced models
                 for( auto *instance : cell->m_instancesopaque ) { Render( instance ); }
                 // opaque parts of vehicles
@@ -2060,7 +2218,8 @@ opengl_renderer::Render( scene::shape_node const &Shape, bool const Ignorerange 
     if( false == Ignorerange ) {
         double distancesquared;
         switch( m_renderpass.draw_mode ) {
-            case rendermode::shadows: {
+            case rendermode::shadows:
+            case rendermode::cabshadows: {
                 // 'camera' for the light pass is the light source, but we need to draw what the 'real' camera sees
                 distancesquared = Math3D::SquareMagnitude( ( data.area.center - Global.pCamera.Pos ) / Global.ZoomFactor ) / Global.fDistanceFactor;
                 break;
@@ -2092,6 +2251,7 @@ opengl_renderer::Render( scene::shape_node const &Shape, bool const Ignorerange 
         }
         // pick modes are painted with custom colours, and shadow pass doesn't use any
         case rendermode::shadows:
+        case rendermode::cabshadows:
         case rendermode::pickscenery:
         case rendermode::pickcontrols:
         default: {
@@ -2114,7 +2274,8 @@ opengl_renderer::Render( TAnimModel *Instance ) {
 
     double distancesquared;
     switch( m_renderpass.draw_mode ) {
-        case rendermode::shadows: {
+        case rendermode::shadows:
+        case rendermode::cabshadows: {
             // 'camera' for the light pass is the light source, but we need to draw what the 'real' camera sees
             distancesquared = Math3D::SquareMagnitude( ( Instance->location() - Global.pCamera.Pos ) / Global.ZoomFactor ) / Global.fDistanceFactor;
             break;
@@ -2126,6 +2287,11 @@ opengl_renderer::Render( TAnimModel *Instance ) {
     }
     if( ( distancesquared <  Instance->m_rangesquaredmin )
      || ( distancesquared >= Instance->m_rangesquaredmax ) ) {
+        return;
+    }
+    // crude way to reject early items too far to affect the output (mostly relevant for shadow passes)
+    auto const drawdistancethreshold{ m_renderpass.draw_range + 250 };
+    if( distancesquared > drawdistancethreshold * drawdistancethreshold ) {
         return;
     }
 
@@ -2160,17 +2326,23 @@ opengl_renderer::Render( TDynamicObject *Dynamic ) {
     if( false == Dynamic->renderme ) {
         return false;
     }
-    // debug data
-    ++m_debugstats.dynamics;
 
-    // setup
-    TSubModel::iInstance = reinterpret_cast<std::uintptr_t>( Dynamic ); //żeby nie robić cudzych animacji
-    glm::dvec3 const originoffset = Dynamic->vPosition - m_renderpass.camera.position();
     // lod visibility ranges are defined for base (x 1.0) viewing distance. for render we adjust them for actual range multiplier and zoom
     float squaredistance;
+    glm::dvec3 const originoffset = Dynamic->vPosition - m_renderpass.camera.position();
     switch( m_renderpass.draw_mode ) {
         case rendermode::shadows: {
             squaredistance = glm::length2( glm::vec3{ glm::dvec3{ Dynamic->vPosition - Global.pCamera.Pos } } / Global.ZoomFactor ) / Global.fDistanceFactor;
+            if( false == FreeFlyModeFlag ) {
+                // filter out small details if we're in vehicle cab
+                squaredistance = std::max( 100.f * 100.f, squaredistance );
+            }
+            break;
+        }
+        case rendermode::cabshadows: {
+            squaredistance = glm::length2( glm::vec3{ glm::dvec3{ Dynamic->vPosition - Global.pCamera.Pos } } / Global.ZoomFactor ) / Global.fDistanceFactor;
+            // filter out small details
+            squaredistance = std::max( 100.f * 100.f, squaredistance );
             break;
         }
         default: {
@@ -2178,6 +2350,18 @@ opengl_renderer::Render( TDynamicObject *Dynamic ) {
             break;
         }
     }
+
+    // crude way to reject early items too far to affect the output (mostly relevant for shadow passes)
+    auto const drawdistancethreshold { m_renderpass.draw_range + 250 };
+    if( squaredistance > drawdistancethreshold * drawdistancethreshold ) {
+        return false;
+    }
+
+    // debug data
+    ++m_debugstats.dynamics;
+
+    // setup
+    TSubModel::iInstance = reinterpret_cast<std::uintptr_t>( Dynamic ); //żeby nie robić cudzych animacji
     Dynamic->ABuLittleUpdate( squaredistance ); // ustawianie zmiennych submodeli dla wspólnego modelu
     ::glPushMatrix();
 
@@ -2194,34 +2378,36 @@ opengl_renderer::Render( TDynamicObject *Dynamic ) {
             m_renderspecular = true; // vehicles are rendered with specular component. static models without, at least for the time being
             // render
             if( Dynamic->mdLowPolyInt ) {
-                // low poly interior
-                /*
-                if( ( true == FreeFlyModeFlag )
-                 || ( ( Dynamic->mdKabina == nullptr ) || ( false == Dynamic->bDisplayCab ) ) ) {
-                 */
-/*
-                    // enable cab light if needed
-                    if( Dynamic->InteriorLightLevel > 0.0f ) {
+                // HACK: reduce light level for vehicle interior if there's strong global lighting source
+                auto const luminance { static_cast<float>( 0.5 * ( std::max( 0.3, Global.fLuminance - Global.Overcast ) ) ) };
+                m_sunlight.apply_intensity(
+                    clamp( (
+                        Dynamic->fShade > 0.f ?
+                            Dynamic->fShade :
+                            1.f )
+                        - luminance,
+                        0.f, 1.f ) );
 
-                        // crude way to light the cabin, until we have something more complete in place
-                        ::glLightModelfv( GL_LIGHT_MODEL_AMBIENT, glm::value_ptr( Dynamic->InteriorLight * Dynamic->InteriorLightLevel ) );
-                    }
-*/
-                    Render( Dynamic->mdLowPolyInt, Dynamic->Material(), squaredistance );
-/*
-                    if( Dynamic->InteriorLightLevel > 0.0f ) {
-                        // reset the overall ambient
-                        ::glLightModelfv( GL_LIGHT_MODEL_AMBIENT, glm::value_ptr( m_baseambient ) );
-                    }
-*/
-                /*
+                // low poly interior
+                Render( Dynamic->mdLowPolyInt, Dynamic->Material(), squaredistance );
+                // HACK: if the model has low poly interior, we presume the load is placed inside and also affected by reduced light level
+                if( Dynamic->mdLoad ) {
+                    // renderowanie nieprzezroczystego ładunku
+                    Render( Dynamic->mdLoad, Dynamic->Material(), squaredistance, { 0.f, Dynamic->LoadOffset, 0.f }, {} );
                 }
-                */
+
+                m_sunlight.apply_intensity( Dynamic->fShade > 0.f ? Dynamic->fShade : 1.f );
             }
-            if( Dynamic->mdModel )
+            else {
+                // HACK: if the model lacks low poly interior, we presume the load is placed outside
+                if( Dynamic->mdLoad ) {
+                    // renderowanie nieprzezroczystego ładunku
+                    Render( Dynamic->mdLoad, Dynamic->Material(), squaredistance, { 0.f, Dynamic->LoadOffset, 0.f }, {} );
+                }
+            }
+            if( Dynamic->mdModel ) {
                 Render( Dynamic->mdModel, Dynamic->Material(), squaredistance );
-            if( Dynamic->mdLoad ) // renderowanie nieprzezroczystego ładunku
-                Render( Dynamic->mdLoad, Dynamic->Material(), squaredistance, { 0.f, Dynamic->LoadOffset, 0.f }, {} );
+            }
             // post-render cleanup
             m_renderspecular = false;
             if( Dynamic->fShade > 0.0f ) {
@@ -2230,7 +2416,8 @@ opengl_renderer::Render( TDynamicObject *Dynamic ) {
             }
             break;
         }
-        case rendermode::shadows: {
+        case rendermode::shadows:
+        case rendermode::cabshadows: {
             if( Dynamic->mdLowPolyInt ) {
                 // low poly interior
 //                if( FreeFlyModeFlag ? true : !Dynamic->mdKabina || !Dynamic->bDisplayCab ) {
@@ -2778,7 +2965,8 @@ opengl_renderer::Render( scene::basic_cell::path_sequence::const_iterator First,
     ::glColor3fv( glm::value_ptr( colors::white ) );
     // setup
     switch( m_renderpass.draw_mode ) {
-        case rendermode::shadows: {
+        case rendermode::shadows:
+        case rendermode::cabshadows: {
             // NOTE: roads-based platforms tend to miss parts of shadows if rendered with either back or front culling
             ::glDisable( GL_CULL_FACE );
             break;
@@ -2818,7 +3006,8 @@ opengl_renderer::Render( scene::basic_cell::path_sequence::const_iterator First,
                 }
                 break;
             }
-            case rendermode::shadows: {
+            case rendermode::shadows:
+            case rendermode::cabshadows: {
                 if( ( std::abs( track->fTexHeight1 ) < 0.35f )
                  || ( track->iCategoryFlag != 2 ) ) {
                     // shadows are only calculated for high enough roads, typically meaning track platforms
@@ -2861,7 +3050,8 @@ opengl_renderer::Render( scene::basic_cell::path_sequence::const_iterator First,
                 }
                break;
             }
-            case rendermode::shadows: {
+            case rendermode::shadows:
+            case rendermode::cabshadows: {
                 if( ( std::abs( track->fTexHeight1 ) < 0.35f )
                  || ( ( track->iCategoryFlag == 1 )
                    && ( track->eType != tt_Normal ) ) ) {
@@ -2908,7 +3098,8 @@ opengl_renderer::Render( scene::basic_cell::path_sequence::const_iterator First,
                 }
                 break;
             }
-            case rendermode::shadows: {
+            case rendermode::shadows:
+            case rendermode::cabshadows: {
                 if( ( std::abs( track->fTexHeight1 ) < 0.35f )
                  || ( ( track->iCategoryFlag == 1 )
                    && ( track->eType != tt_Normal ) ) ) {
@@ -2928,7 +3119,8 @@ opengl_renderer::Render( scene::basic_cell::path_sequence::const_iterator First,
     }
     // post-render reset
     switch( m_renderpass.draw_mode ) {
-        case rendermode::shadows: {
+        case rendermode::shadows:
+        case rendermode::cabshadows: {
             ::glEnable( GL_CULL_FACE );
             break;
         }
@@ -2947,7 +3139,8 @@ opengl_renderer::Render( TMemCell *Memcell ) {
 
     switch( m_renderpass.draw_mode ) {
         case rendermode::color:
-        case rendermode::shadows: {
+        case rendermode::shadows:
+        case rendermode::cabshadows: {
             ::gluSphere( m_quadric, 0.35, 4, 2 );
             break;
         }
@@ -2971,6 +3164,25 @@ opengl_renderer::Render( TMemCell *Memcell ) {
 }
 
 void
+opengl_renderer::Render_particles() {
+
+    switch_units( true, false, false );
+
+    Bind_Material( null_handle ); // TODO: bind smoke texture
+
+    // TBD: leave lighting on to allow vehicle lights to affect it?
+    ::glDisable( GL_LIGHTING );
+    // momentarily disable depth write, to allow vehicle cab drawn afterwards to mask it instead of leaving it 'inside'
+    ::glDepthMask( GL_FALSE );
+
+    Bind_Texture( m_smoketexture );
+    m_particlerenderer.render( m_diffusetextureunit );
+
+    ::glDepthMask( GL_TRUE );
+    ::glEnable( GL_LIGHTING );
+}
+
+void
 opengl_renderer::Render_precipitation() {
 
     if( Global.Overcast <= 1.f ) { return; }
@@ -2985,8 +3197,11 @@ opengl_renderer::Render_precipitation() {
                 colors::white,
                 0.5f * clamp<float>( Global.fLuminance, 0.f, 1.f ) ) ) );
     ::glPushMatrix();
-    // tilt the precipitation cone against the velocity vector for crude motion blur
-    auto const velocity { simulation::Environment.m_precipitation.m_cameramove * -1.0 };
+    // tilt the precipitation cone against the camera movement vector for crude motion blur
+    // include current wind vector while at it
+    auto const velocity {
+        simulation::Environment.m_precipitation.m_cameramove * -1.0
+        + glm::dvec3{ simulation::Environment.wind() } * 0.5 };
     if( glm::length2( velocity ) > 0.0 ) {
         auto const forward{ glm::normalize( velocity ) };
         auto left { glm::cross( forward, {0.0,1.0,0.0} ) };
@@ -3763,6 +3978,16 @@ opengl_renderer::Update_Mouse_Position() {
 
 void
 opengl_renderer::Update( double const Deltatime ) {
+
+    // per frame updates
+    if( simulation::is_ready ) {
+        // update particle subsystem
+        renderpass_config renderpass;
+        setup_pass( renderpass, rendermode::color );
+        m_particlerenderer.update( renderpass.camera );
+    }
+
+    // fixed step updates
 /*
     m_pickupdateaccumulator += Deltatime;
 

@@ -14,6 +14,7 @@ http://mozilla.org/MPL/2.0/.
 #include "simulation.h"
 #include "simulationtime.h"
 #include "scenenodegroups.h"
+#include "particles.h"
 #include "Event.h"
 #include "Driver.h"
 #include "DynObj.h"
@@ -53,6 +54,7 @@ state_serializer::deserialize( std::string const &Scenariofile ) {
         // as long as the scenario file wasn't rainsted-created base file override
         Region->serialize( Scenariofile );
     }
+
     return true;
 }
 
@@ -163,14 +165,22 @@ state_serializer::deserialize_atmo( cParser &Input, scene::scratch_data &Scratch
     // atmosphere color; legacy parameter, no longer used
     Input.getTokens( 3 );
     // fog range
-    Input.getTokens( 2 );
-    Input
-        >> Global.fFogStart
-        >> Global.fFogEnd;
+    {
+        double fograngestart, fograngeend;
+        Input.getTokens( 2 );
+        Input
+            >> fograngestart
+            >> fograngeend;
 
-    if( Global.fFogEnd > 0.0 ) {
-        // fog colour; optional legacy parameter, no longer used
-        Input.getTokens( 3 );
+        if( Global.fFogEnd != 0.0 ) {
+            // fog colour; optional legacy parameter, no longer used
+            Input.getTokens( 3 );
+        }
+
+        Global.fFogEnd =
+            clamp(
+                Random( std::min( fograngestart, fograngeend ), std::max( fograngestart, fograngeend ) ),
+                10.0, 2000.0 );
     }
 
     std::string token { Input.getToken<std::string>() };
@@ -353,6 +363,16 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
         // vehicle import can potentially fail
         if( vehicle == nullptr ) { return; }
 
+        //
+        if( vehicle->mdModel != nullptr ) {
+            for( auto const &smokesource : vehicle->mdModel->smoke_sources() ) {
+                Particles.insert(
+                    smokesource.first,
+                    vehicle,
+                    smokesource.second );
+            }
+        }
+
         if( false == simulation::Vehicles.insert( vehicle ) ) {
 
             ErrorLog( "Bad scenario: duplicate vehicle name \"" + vehicle->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
@@ -445,6 +465,15 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
             // model import can potentially fail
             if( instance == nullptr ) { return; }
 
+            if( instance->Model() != nullptr ) {
+                for( auto const &smokesource : instance->Model()->smoke_sources() ) {
+                    Particles.insert(
+                        smokesource.first,
+                        instance,
+                        smokesource.second );
+                }
+            }
+
             if( false == simulation::Instances.insert( instance ) ) {
                 ErrorLog( "Bad scenario: duplicate 3d model instance name \"" + instance->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
             }
@@ -515,7 +544,10 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
         }
         else {
             scene::Groups.insert( scene::Groups.handle(), eventlauncher );
-            simulation::Region->insert( eventlauncher );
+            if( false == eventlauncher->IsRadioActivated() ) {
+                // NOTE: radio-activated launchers due to potentially large activation radius are resolved on global level rather than put in a region cell
+                simulation::Region->insert( eventlauncher );
+            }
         }
     }
     else if( nodedata.type == "sound" ) {

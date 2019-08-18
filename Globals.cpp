@@ -58,7 +58,7 @@ global_settings::ConfigParse(cParser &Parser) {
             Parser.getTokens( 1, false );
             Parser >> FieldOfView;
             // guard against incorrect values
-            FieldOfView = clamp( FieldOfView, 15.0f, 75.0f );
+            FieldOfView = clamp( FieldOfView, 10.0f, 75.0f );
         }
         else if (token == "width")
         {
@@ -127,7 +127,13 @@ global_settings::ConfigParse(cParser &Parser) {
             // selected device for audio renderer
             Parser.getTokens();
             Parser >> AudioVolume;
-            AudioVolume = clamp( AudioVolume, 0.0f, 2.f );
+            AudioVolume = clamp( AudioVolume, 0.f, 2.f );
+        }
+        else if( token == "sound.volume.radio" ) {
+            // selected device for audio renderer
+            Parser.getTokens();
+            Parser >> RadioVolume;
+            RadioVolume = clamp( RadioVolume, 0.f, 1.f );
         }
 		else if (token == "sound.maxsources") {
 			Parser.getTokens();
@@ -363,6 +369,11 @@ global_settings::ConfigParse(cParser &Parser) {
                 >> shadowtune.width
                 >> shadowtune.depth
                 >> shadowtune.distance;
+        }
+        else if( token == "gfx.shadows.cab.range" ) {
+            // shadow render toggle
+            Parser.getTokens();
+            Parser >> RenderCabShadowsRange;
         }
         else if (token == "smoothtraction")
         {

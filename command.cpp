@@ -123,6 +123,7 @@ commanddescription_sequence Commands_descriptions = {
     { "radiochanneldecrease", command_target::vehicle, command_mode::oneoff },
     { "radiostopsend", command_target::vehicle, command_mode::oneoff },
     { "radiostoptest", command_target::vehicle, command_mode::oneoff },
+    { "radiocall3send", command_target::vehicle, command_mode::oneoff },
     // TBD, TODO: make cab change controls entity-centric
     { "cabchangeforward", command_target::vehicle, command_mode::oneoff },
     { "cabchangebackward", command_target::vehicle, command_mode::oneoff },
@@ -154,6 +155,7 @@ commanddescription_sequence Commands_descriptions = {
     { "doorcloseright", command_target::vehicle, command_mode::oneoff },
     { "doorcloseall", command_target::vehicle, command_mode::oneoff },
     { "doorsteptoggle", command_target::vehicle, command_mode::oneoff },
+    { "doormodetoggle", command_target::vehicle, command_mode::oneoff },
     { "departureannounce", command_target::vehicle, command_mode::oneoff },
     { "doorlocktoggle", command_target::vehicle, command_mode::oneoff },
     { "pantographcompressorvalvetoggle", command_target::vehicle, command_mode::oneoff },
