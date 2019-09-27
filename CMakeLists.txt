@@ -164,6 +164,8 @@ if (WIN32)
 	set(ZEROMQ_LIBRARY ${ZEROMQ_LIBRARY} "${DEPS_DIR}/zeromq/lib/${ARCH}/libzmq.lib")	
 endif()
 
+set(GLM_INCLUDE_DIR ${GLM_INCLUDE_DIR} "${DEPS_DIR}/glm/")
+
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL MSVC)
 	set(SOURCES ${SOURCES} "eu07.rc")
 	set(SOURCES ${SOURCES} "eu07.ico")

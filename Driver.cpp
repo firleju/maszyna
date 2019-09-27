@@ -503,7 +503,7 @@ void TController::TableTraceRoute(double fDistance, TDynamicObject *pVehicle)
             VelSignalLast = -1.0;
         }
         iTableDirection = iDirection; // ustalenie w jakim kierunku jest wypełniana tabelka względem pojazdu
-        pTrack = pVehicle->RaTrackGet(); // odcinek, na którym stoi
+        pTrack = pVehicle->GetTrack(); // odcinek, na którym stoi
         fTrackLength = pVehicle->RaTranslationGet(); // pozycja na tym torze (odległość od Point1)
         fLastDir = pVehicle->DirectionGet() * pVehicle->RaDirectionGet(); // ustalenie kierunku skanowania na torze
         if( fLastDir < 0.0 ) {
@@ -1136,6 +1136,17 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                 if( sSpeedTable[ i ].fDist > 0.0 ) {
                     // check signals ahead
                     if( sSpeedTable[ i ].IsProperSemaphor( OrderCurrentGet() ) ) {
+
+                        if( ( mvOccupied->CategoryFlag & 2 )
+                         && ( sSpeedTable[ i ].fVelNext != -1.0 )
+                         && ( sSpeedTable[ i ].fVelNext  <  1.0 )
+                         && ( sSpeedTable[ i ].fDist < -0.5 + std::min( fBrakeDist * 0.2, mvOccupied->Vel * 0.2 ) ) ) {
+                            // special rule for cars: ignore stop signals at distance too short to come to a stop
+                            // as trying to stop in such situation is likely to place the car on train tracks
+                            sSpeedTable[ i ].iFlags &= ~spEnabled;
+                            continue;
+                        }
+
                         if( SemNextIndex == -1 ) {
                             // jeśli jest mienięty poprzedni semafor a wcześniej
                             // byl nowy to go dorzucamy do zmiennej, żeby cały czas widział najbliższy
@@ -1775,6 +1786,7 @@ void TController::Activation()
         auto const localbrakelevel { mvOccupied->LocalBrakePosA };
         ZeroSpeed();
         ZeroDirection();
+		mvOccupied->SpringBrakeActivate(true);
         if (TestFlag(d->MoverParameters->Couplers[iDirectionOrder < 0 ? 1 : 0].CouplingFlag, ctrain_controll)) {
             mvControlling->MainSwitch( false); // dezaktywacja czuwaka, jeśli przejście do innego członu
             mvOccupied->DecLocalBrakeLevel(LocalBrakePosNo); // zwolnienie hamulca w opuszczanym pojeździe
@@ -2097,12 +2109,18 @@ bool TController::CheckVehicles(TOrders user)
     { // sprawdzanie, czy jest głównym sterującym, żeby nie było konfliktu
         if (p->Mechanik) // jeśli ma obsadę
             if (p->Mechanik != this) // ale chodzi o inny pojazd, niż aktualnie sprawdzający
-                if (p->Mechanik->iDrivigFlags & movePrimary) // a tamten ma priorytet
-                    if ((iDrivigFlags & movePrimary) && (mvOccupied->DirAbsolute) &&
-                        (mvOccupied->BrakeCtrlPos >= -1)) // jeśli rządzi i ma kierunek
-                        p->Mechanik->iDrivigFlags &= ~movePrimary; // dezaktywuje tamtego
-                    else
+                if( p->Mechanik->iDrivigFlags & movePrimary ) {
+                    // a tamten ma priorytet
+                    if( ( iDrivigFlags & movePrimary )
+                     && ( mvOccupied->DirAbsolute )
+                     && ( mvOccupied->BrakeCtrlPos >= -1 ) ) {
+                        // jeśli rządzi i ma kierunek
+                        p->Mechanik->primary( false ); // dezaktywuje tamtego
+                    }
+                    else {
                         main = false; // nici z rządzenia
+                    }
+                }
         ++iVehicles; // jest jeden pojazd więcej
         pVehicles[1] = p; // zapamiętanie ostatniego
         fLength += p->MoverParameters->Dim.L; // dodanie długości pojazdu
@@ -2124,20 +2142,17 @@ bool TController::CheckVehicles(TOrders user)
         p = pVehicles[0];
         while (p)
         {
-            // HACK: wagony muszą mieć baterię załączoną do otwarcia drzwi...
             if( p != pVehicle ) {
                 if( ( ( p->MoverParameters->Couplers[ end::front ].CouplingFlag & ( coupling::control ) ) == 0 )
                  && ( ( p->MoverParameters->Couplers[ end::rear ].CouplingFlag  & ( coupling::control ) ) == 0 ) ) {
-                    // NOTE: don't set battery in the occupied vehicle, let the user/ai do it explicitly
+                    // NOTE: don't set battery in controllable vehicles, let the user/ai do it explicitly
+                    // HACK: wagony muszą mieć baterię załączoną do otwarcia drzwi...
                     p->MoverParameters->BatterySwitch( true );
-                }
-            }
-            // enable heating and converter in carriages with can be heated
-            // NOTE: don't touch the controlled vehicle, let the user/ai handle it explicitly
-            if( p->MoverParameters != mvControlling ) {
-                if( p->MoverParameters->HeatingPower > 0 ) {
-                    p->MoverParameters->HeatingAllow = true;
-                    p->MoverParameters->ConverterSwitch( true, range_t::local );
+                    // enable heating and converter in carriages with can be heated
+                    if( p->MoverParameters->HeatingPower > 0 ) {
+                        p->MoverParameters->HeatingAllow = true;
+                        p->MoverParameters->ConverterSwitch( true, range_t::local );
+                    }
                 }
             }
 
@@ -2678,6 +2693,7 @@ bool TController::ReleaseEngine() {
             }
             // gasimy światła
             Lights( 0, 0 );
+			mvOccupied->SpringBrakeActivate(true);
             mvOccupied->BatterySwitch( false );
         }
     }
@@ -2989,6 +3005,9 @@ bool TController::IncSpeed()
         // zamykanie drzwi - tutaj wykonuje tylko AI (zmienia fActionTime)
         Doors( false );
     }
+	if (mvOccupied->SpringBrake.IsActive && mvOccupied->SpringBrake.Activate) {
+		mvOccupied->SpringBrakeActivate(false);
+	}
     if( fActionTime < 0.0 ) {
         // gdy jest nakaz poczekać z jazdą, to nie ruszać
         return false;
@@ -3628,6 +3647,18 @@ void TController::SetTimeControllers()
 				  while (mvControlling->MainCtrlPos < DesiredPos) mvControlling->IncMainCtrl(1);
 			}
 		}
+	}
+	//6. UniversalBrakeButtons
+	//6.1. Checking flags for Over pressure
+	if (std::abs(BrakeCtrlPosition - gbh_FS)<0.5) {
+		UniversalBrakeButtons |= (TUniversalBrake::ub_HighPressure | TUniversalBrake::ub_Overload);
+	}
+	else {
+		UniversalBrakeButtons &= ~(TUniversalBrake::ub_HighPressure | TUniversalBrake::ub_Overload);
+	}
+	//6.2. Setting buttons
+	for (int i = 0; i < 3; i++) {
+		mvOccupied->UniversalBrakeButton(i, (UniversalBrakeButtons & mvOccupied->UniversalBrakeButtonFlag[i]));
 	}
 };
 
@@ -4753,7 +4784,7 @@ TController::UpdateSituation(double dt) {
                 // rozpoznaj komende bo lokomotywa jej nie rozpoznaje
                 RecognizeCommand(); // samo czyta komendę wstawioną do pojazdu?
             }
-        if( mvOccupied->SecuritySystem.Status > 1 ) {
+        if( mvOccupied->SecuritySystem.Status != s_off ) {
             // jak zadziałało CA/SHP
             if( !mvOccupied->SecuritySystemReset() ) { // to skasuj
                 if( ( /*mvOccupied->BrakeCtrlPos*/BrakeCtrlPosition == 0 )
@@ -5867,6 +5898,8 @@ TController::UpdateSituation(double dt) {
                     // napełnianie uderzeniowe
                     if( ( mvOccupied->BrakeHandle == TBrakeHandle::FV4a )
                      || ( mvOccupied->BrakeHandle == TBrakeHandle::MHZ_6P )
+					 || (mvOccupied->BrakeHandle == TBrakeHandle::MHZ_K5P)
+					 || (mvOccupied->BrakeHandle == TBrakeHandle::MHZ_K8P)
                      || ( mvOccupied->BrakeHandle == TBrakeHandle::M394 ) ) {
 
                         if( /*GBH mvOccupied->BrakeCtrlPos*/BrakeCtrlPosition == -2 ) {
@@ -5908,7 +5941,7 @@ TController::UpdateSituation(double dt) {
                                     /* mvOccupied->BrakeLevelSet( mvOccupied->Handle->GetPos( bh_FS ) ); GBH */
                                     BrakeLevelSet( gbh_FS );
                                     // don't charge the brakes too often, or we risk overcharging
-                                    BrakeChargingCooldown = -120.0;
+                                    BrakeChargingCooldown = -1 * clamp( iVehicleCount * 3, 30, 90 );
                                 }
                             }
 /*
@@ -5927,6 +5960,14 @@ TController::UpdateSituation(double dt) {
                         }
                     }
                 }
+				// unlocking main pipe
+				if ((AccDesired > -0.03)
+					&& (true == mvOccupied->LockPipe)) {
+					UniversalBrakeButtons |= TUniversalBrake::ub_UnlockPipe;
+				}
+				else if (false == mvOccupied->LockPipe) {
+					UniversalBrakeButtons &= ~TUniversalBrake::ub_UnlockPipe;
+				}
 #if LOGVELOCITY
                 WriteLog("Dist=" + FloatToStrF(ActualProximityDist, ffFixed, 7, 1) +
                             ", VelDesired=" + FloatToStrF(VelDesired, ffFixed, 7, 1) +
@@ -6561,7 +6602,7 @@ TCommandType TController::BackwardScan()
         double scandist = scanmax; // zmodyfikuje na rzeczywiście przeskanowane
         basic_event *e = NULL; // event potencjalnie od semafora
         // opcjonalnie może być skanowanie od "wskaźnika" z przodu, np. W5, Tm=Ms1, koniec toru wg drugiej osi w kierunku ruchu
-        TTrack *scantrack = BackwardTraceRoute(scandist, scandir, pVehicles[0]->RaTrackGet(), e);
+        TTrack *scantrack = BackwardTraceRoute(scandist, scandir, pVehicles[0]->GetTrack(), e);
         auto const dir = startdir * pVehicles[0]->VectorFront(); // wektor w kierunku jazdy/szukania
         if( !scantrack ) {
             // jeśli wstecz wykryto koniec toru to raczej nic się nie da w takiej sytuacji zrobić
@@ -6749,43 +6790,56 @@ void TController::UpdateDelayFlag() {
 
 //-----------koniec skanowania semaforow
 
-void TController::TakeControl(bool yes)
+void TController::TakeControl( bool const Aidriver, bool const Forcevehiclecheck )
 { // przejęcie kontroli przez AI albo oddanie
-    if (AIControllFlag == yes)
+    if (AIControllFlag == Aidriver)
         return; // już jest jak ma być
-    if (yes) //żeby nie wykonywać dwa razy
+    if (Aidriver) //żeby nie wykonywać dwa razy
     { // teraz AI prowadzi
         AIControllFlag = AIdriver;
         pVehicle->Controller = AIdriver;
         iDirection = 0; // kierunek jazdy trzeba dopiero zgadnąć
-        // gdy zgaszone światła, flaga podjeżdżania pod semafory pozostaje bez zmiany
-        // conditional below disabled to get around the situation where the AI train does nothing ever
-        // because it is waiting for orders which don't come until the engine is engaged, i.e. effectively never
-        if (OrderCurrentGet()) // jeśli coś robi
-            PrepareEngine(); // niech sprawdzi stan silnika
-        else // jeśli nic nie robi
-        if (pVehicle->iLights[ ( mvOccupied->CabNo < 0 ?
-                end::rear :
-                end::front ) ]
-            & (light::headlight_left | light::headlight_right | light::headlight_upper)) // któreś ze świateł zapalone?
-        { // od wersji 357 oczekujemy podania komend dla AI przez scenerię
-            OrderNext(Prepare_engine);
-            if (pVehicle->iLights[mvOccupied->CabNo < 0 ? end::rear : end::front] & light::headlight_upper) // górne światło zapalone
-                OrderNext(Obey_train); // jazda pociągowa
-            else
-                OrderNext(Shunt); // jazda manewrowa
-            if (mvOccupied->Vel >= 1.0) // jeśli jedzie (dla 0.1 ma stać)
-                iDrivigFlags &= ~moveStopHere; // to ma nie czekać na sygnał, tylko jechać
-            else
-                iDrivigFlags |= moveStopHere; // a jak stoi, to niech czeka
-        }
-        CheckVehicles(); // ustawienie świateł
         TableClear(); // ponowne utworzenie tabelki, bo człowiek mógł pojechać niezgodnie z sygnałami
+        if( action() != TAction::actSleep ) {
+            // gdy zgaszone światła, flaga podjeżdżania pod semafory pozostaje bez zmiany
+            // conditional below disabled to get around the situation where the AI train does nothing ever
+            // because it is waiting for orders which don't come until the engine is engaged, i.e. effectively never
+            if( OrderCurrentGet() ) {
+                // jeśli coś robi
+                PrepareEngine(); // niech sprawdzi stan silnika
+            }
+            else {
+                // jeśli nic nie robi
+                if( pVehicle->iLights[ ( mvOccupied->CabNo < 0 ?
+                        end::rear :
+                        end::front ) ]
+                    & ( light::headlight_left | light::headlight_right | light::headlight_upper ) ) // któreś ze świateł zapalone?
+                { // od wersji 357 oczekujemy podania komend dla AI przez scenerię
+                    OrderNext( Prepare_engine );
+                    if( pVehicle->iLights[ mvOccupied->CabNo < 0 ? end::rear : end::front ] & light::headlight_upper ) // górne światło zapalone
+                        OrderNext( Obey_train ); // jazda pociągowa
+                    else
+                        OrderNext( Shunt ); // jazda manewrowa
+                    if( mvOccupied->Vel >= 1.0 ) // jeśli jedzie (dla 0.1 ma stać)
+                        iDrivigFlags &= ~moveStopHere; // to ma nie czekać na sygnał, tylko jechać
+                    else
+                        iDrivigFlags |= moveStopHere; // a jak stoi, to niech czeka
+                }
+            }
+            CheckVehicles(); // ustawienie świateł
+        }
     }
     else
     { // a teraz użytkownik
         AIControllFlag = Humandriver;
         pVehicle->Controller = Humandriver;
+        if( eAction == TAction::actSleep ) {
+            eAction = TAction::actUnknown;
+        }
+        if( Forcevehiclecheck ) {
+            // update consist ownership and other consist data
+            CheckVehicles();
+        }
     }
 };
 

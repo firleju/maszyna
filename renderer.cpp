@@ -120,6 +120,9 @@ void
 opengl_particles::update( opengl_camera const &Camera ) {
 
     m_particlevertices.clear();
+
+    if( false == Global.Smoke ) { return; }
+
     // build a list of visible smoke sources
     // NOTE: arranged by distance to camera, if we ever need sorting and/or total amount cap-based culling
     std::multimap<float, smoke_source const &> sources;
@@ -139,6 +142,12 @@ opengl_particles::update( opengl_camera const &Camera ) {
     particle_vertex vertex;
     for( auto const &source : sources ) {
 
+        auto const particlecolor {
+            glm::clamp(
+                source.second.color()
+                * ( glm::vec3 { Global.DayLight.ambient } + 0.35f * glm::vec3{ Global.DayLight.diffuse } )
+                * 255.f,
+                glm::vec3{ 0.f }, glm::vec3{ 255.f } ) };
         auto const &particles { source.second.sequence() };
         // TODO: put sanity cap on the overall amount of particles that can be drawn
         auto const sizestep { 256.0 * billboard_vertices.size() };
@@ -146,9 +155,9 @@ opengl_particles::update( opengl_camera const &Camera ) {
             sizestep * std::ceil( m_particlevertices.size() + ( particles.size() * billboard_vertices.size() ) / sizestep ) );
         for( auto const &particle : particles ) {
             // TODO: particle color support
-            vertex.color[ 0 ] =
-            vertex.color[ 1 ] =
-            vertex.color[ 2 ] = static_cast<std::uint8_t>( Global.fLuminance * 32 );
+            vertex.color[ 0 ] = static_cast<std::uint_fast8_t>( particlecolor.r );
+            vertex.color[ 1 ] = static_cast<std::uint_fast8_t>( particlecolor.g );
+            vertex.color[ 2 ] = static_cast<std::uint_fast8_t>( particlecolor.b );
             vertex.color[ 3 ] = clamp<std::uint8_t>( particle.opacity * 255, 0, 255 );
 
             auto const offset { glm::vec3{ particle.position - Camera.position() } };
@@ -170,16 +179,17 @@ opengl_particles::update( opengl_camera const &Camera ) {
     if( m_buffercapacity < m_particlevertices.size() ) {
         // allocate gpu side buffer big enough to hold the data
         m_buffercapacity = 0;
-        if( m_buffer != -1 ) {
+        if( m_buffer != (GLuint)-1 ) {
             // get rid of the old buffer
             ::glDeleteBuffers( 1, &m_buffer );
+            m_buffer = (GLuint)-1;
         }
         ::glGenBuffers( 1, &m_buffer );
-        ::glBindBuffer( GL_ARRAY_BUFFER, m_buffer );
-        if( m_buffer > 0 ) {
+        if( ( m_buffer > 0 ) && ( m_buffer != (GLuint)-1 ) ) {
             // if we didn't get a buffer we'll try again during the next draw call
             // NOTE: we match capacity instead of current size to reduce number of re-allocations
             auto const particlecount { m_particlevertices.capacity() };
+            ::glBindBuffer( GL_ARRAY_BUFFER, m_buffer );
             ::glBufferData(
                 GL_ARRAY_BUFFER,
                 particlecount * sizeof( particle_vertex ),
@@ -189,7 +199,7 @@ opengl_particles::update( opengl_camera const &Camera ) {
                 // TBD: throw a bad_alloc?
                 ErrorLog( "openGL error: out of memory; failed to create a geometry buffer" );
                 ::glDeleteBuffers( 1, &m_buffer );
-                m_buffer = -1;
+                m_buffer = (GLuint)-1;
             }
             else {
                 m_buffercapacity = particlecount;
@@ -197,7 +207,7 @@ opengl_particles::update( opengl_camera const &Camera ) {
         }
     }
     // ...send the data...
-    if( m_buffer > 0 ) {
+    if( ( m_buffer > 0 ) && ( m_buffer != (GLuint)-1 ) ) {
         // if the buffer exists at this point it's guaranteed to be big enough to hold our data
         ::glBindBuffer( GL_ARRAY_BUFFER, m_buffer );
         ::glBufferSubData(
@@ -213,8 +223,10 @@ opengl_particles::update( opengl_camera const &Camera ) {
 void
 opengl_particles::render( int const Textureunit ) {
 
+    if( false == Global.Smoke ) { return; }
     if( m_buffercapacity == 0 ) { return; }
     if( m_particlevertices.empty() ) { return; }
+    if( ( m_buffer == 0 ) || ( m_buffer == (GLuint)-1 ) ) { return; }
 
     // setup...
     ::glPushClientAttrib( GL_CLIENT_VERTEX_ARRAY_BIT );
@@ -229,6 +241,8 @@ opengl_particles::render( int const Textureunit ) {
     // ...draw...
     ::glDrawArrays( GL_QUADS, 0, m_particlevertices.size() );
     // ...and cleanup
+    ::glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	gfx::opengl_vbogeometrybank::reset();
     ::glPopClientAttrib();
 }
 
@@ -953,12 +967,7 @@ opengl_renderer::Render_reflections() {
 
     if( Global.ReflectionUpdatesPerSecond == 0 ) { return false; }
 
-    auto const &time = simulation::Time.data();
-    auto const timestamp =
-        time.wMilliseconds
-        + time.wSecond * 1000
-        + time.wMinute * 1000 * 60
-        + time.wHour * 1000 * 60 * 60;
+    auto const timestamp { static_cast<int>( Timer::GetTime() * 1000 ) };
     if( ( timestamp - m_environmentupdatetime < Global.ReflectionUpdatesPerSecond )
      && ( glm::length( m_renderpass.camera.position() - m_environmentupdatelocation ) < 1000.0 ) ) {
         // run update every 5+ mins of simulation time, or at least 1km from the last location

@@ -20,6 +20,7 @@ http://mozilla.org/MPL/2.0/.
 #include "Camera.h"
 #include "mtable.h"
 #include "Train.h"
+#include "Button.h"
 #include "Driver.h"
 #include "AnimModel.h"
 #include "DynObj.h"
@@ -135,12 +136,14 @@ drivingaid_panel::update() {
                 }
             }
         }
-        std::string textline =
-            ( true == TestFlag( mover->SecuritySystem.Status, s_aware ) ?
+        std::string textline = (
+            ( ( true == TestFlag( mover->SecuritySystem.Status, s_aware ) )
+           && ( train != nullptr )
+           && ( train->fBlinkTimer > 0 ) ) ?
                 locale::strings[ locale::string::driver_aid_alerter ] :
                 "          " );
-        textline +=
-            ( true == TestFlag( mover->SecuritySystem.Status, s_active ) ?
+        textline += (
+            ( true == TestFlag( mover->SecuritySystem.Status, s_active ) ) ?
                 locale::strings[ locale::string::driver_aid_shp ] :
                 "     " );
 
@@ -167,7 +170,7 @@ scenario_panel::update() {
         std::get<TDynamicObject *>( simulation::Region->find_vehicle( camera.Pos, 20, false, false ) ) ); // w trybie latania lokalizujemy wg mapy
     if( m_nearest == nullptr ) { return; }
     auto const *owner { (
-        ( ( m_nearest->Mechanik != nullptr ) && ( m_nearest->Mechanik->Primary() ) ) ?
+        ( ( m_nearest->Mechanik != nullptr ) && ( m_nearest->Mechanik->primary() ) ) ?
             m_nearest->Mechanik :
             m_nearest->ctOwner ) };
     if( owner == nullptr ) { return; }
@@ -205,7 +208,7 @@ scenario_panel::render() {
     if( true == ImGui::Begin( panelname.c_str(), &is_open, flags ) ) {
         // potential assignment section
         auto const *owner { (
-            ( ( m_nearest->Mechanik != nullptr ) && ( m_nearest->Mechanik->Primary() ) ) ?
+            ( ( m_nearest->Mechanik != nullptr ) && ( m_nearest->Mechanik->primary() ) ) ?
                 m_nearest->Mechanik :
                 m_nearest->ctOwner ) };
         if( owner != nullptr ) {
@@ -258,7 +261,7 @@ timetable_panel::update() {
     if( vehicle == nullptr ) { return; }
     // if the nearest located vehicle doesn't have a direct driver, try to query its owner
     auto const *owner = (
-        ( ( vehicle->Mechanik != nullptr ) && ( vehicle->Mechanik->Primary() ) ) ?
+        ( ( vehicle->Mechanik != nullptr ) && ( vehicle->Mechanik->primary() ) ) ?
             vehicle->Mechanik :
             vehicle->ctOwner );
     if( owner == nullptr ) { return; }
@@ -552,7 +555,7 @@ debug_panel::update_section_vehicle( std::vector<text_line> &Output ) {
     auto const &vehicle { *m_input.vehicle };
     auto const &mover { *m_input.mover };
 
-    auto const isowned { ( vehicle.Mechanik == nullptr ) && ( vehicle.ctOwner != nullptr ) };
+    auto const isowned { /* ( vehicle.Mechanik == nullptr ) && */ ( vehicle.ctOwner != nullptr ) && ( vehicle.ctOwner->Vehicle() != m_input.vehicle ) };
     auto const isplayervehicle { ( m_input.train != nullptr ) && ( m_input.train->Dynamic() == m_input.vehicle ) };
     auto const isdieselenginepowered { ( mover.EngineType == TEngineType::DieselElectric ) || ( mover.EngineType == TEngineType::DieselEngine ) };
     auto const isdieselinshuntmode { mover.ShuntMode && mover.EngineType == TEngineType::DieselElectric };
@@ -963,6 +966,13 @@ debug_panel::update_section_scenario( std::vector<text_line> &Output ) {
     textline = "Cloud cover: " + to_string( Global.Overcast, 3 );
     textline += "\nLight level: " + to_string( Global.fLuminance, 3 );
     if( Global.FakeLight ) { textline += "(*)"; }
+    textline +=
+        "\nWind: azimuth "
+        + to_string( simulation::Environment.wind_azimuth(), 0 ) // ma być azymut, czyli 0 na północy i rośnie na wschód
+        + " "
+        + std::string( "N NEE SES SWW NW" )
+        .substr( 0 + 2 * std::floor( std::fmod( 8 + ( glm::radians( simulation::Environment.wind_azimuth() ) + 0.5 * M_PI_4 ) / M_PI_4, 8 ) ), 2 )
+        + ", " + to_string( glm::length( simulation::Environment.wind() ), 1 ) + " m/s";
     textline += "\nAir temperature: " + to_string( Global.AirTemperature, 1 ) + " deg C";
 
     Output.emplace_back( textline, Global.UITextColor );
