@@ -126,8 +126,8 @@ void TIsolated::Modify(int i, TDynamicObject *o)
                 simulation::Events.AddToQuery(evFree, o); // dodanie zwolnienia do kolejki
             if (Global.iMultiplayer) // jeśli multiplayer
                 multiplayer::WyslijString(asName, 10); // wysłanie pakietu o zwolnieniu
-			if (Global.network)
-				multiplayer::SendIsolatedOccupancy(asName, false);
+			//if (Global.network)
+			//	multiplayer::SendIsolatedOccupancy(asName, false);
             if (pMemCell) // w powiązanej komórce
                 pMemCell->UpdateValues( "", 0, int( pMemCell->Value2() ) & ~0xFF,
                 basic_event::flags::value_2 ); //"zerujemy" ostatnią wartość
@@ -142,8 +142,8 @@ void TIsolated::Modify(int i, TDynamicObject *o)
                 simulation::Events.AddToQuery(evBusy, o); // dodanie zajętości do kolejki
             if (Global.iMultiplayer) // jeśli multiplayer
                 multiplayer::WyslijString(asName, 11); // wysłanie pakietu o zajęciu
-			if (Global.network)
-				multiplayer::SendIsolatedOccupancy(asName, true);
+			//if (Global.network)
+			//	multiplayer::SendIsolatedOccupancy(asName, true);
             if (pMemCell) // w powiązanej komórce
                 pMemCell->UpdateValues( "", 0, int( pMemCell->Value2() ) | 1, basic_event::flags::value_2 ); // zmieniamy ostatnią wartość na nieparzystą
         }

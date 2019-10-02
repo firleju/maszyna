@@ -17,9 +17,9 @@ http://mozilla.org/MPL/2.0/.
 
 namespace multiplayer {
 	enum network_codes {
-		net_proto_version = 0,
-		scenery_name = 1,
-		event_call = 2,
+		handshake_info = 0,
+		ping = 1,
+		pong = 2,
 		ai_command = 3,
 		track_occupancy = 4,
 		isolated_occupancy = 5,
@@ -152,14 +152,14 @@ namespace multiplayer {
 	};
 	
 	
-	void SendVersionInfo();
-	void SendScenery();
+	void SendHandshakeInfo(bool change = false);
+    void SendPing();
 	void SendEventCallConfirmation(int status, std::string name);
 	void SendAiCommandConfirmation(int status, std::string vehicle, std::string command);
 	void SendTrackOccupancy(std::string name);
 	void SendTrackOccupancy(std::string name, bool occupied, int damage_flag);
-	void SendIsolatedOccupancy(std::string name);
-	void SendIsolatedOccupancy(std::string name, bool occupied);
+	//void SendIsolatedOccupancy(std::string name);
+	//void SendIsolatedOccupancy(std::string name, bool occupied);
 	void SendSimulationStatus(int which_param);
-	void OnCommandGet(std::list<network_queue_t> &incoming_queue);
+	void HandleMessage(std::list<network_queue_t> &incoming_queue);
 }

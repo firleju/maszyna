@@ -83,8 +83,11 @@ driver_mode::drivermode_input::init() {
     if (Global.motiontelemetry_conf.enable)
         telemetry = std::make_unique<motiontelemetry>();
 
-	if (Global.network_conf.enable)
+	if (Global.network_conf.enable) {
 		Global.network = std::make_unique<multiplayer::ZMQConnection>();
+		multiplayer::SendHandshakeInfo();
+		multiplayer::SendPing();
+	}
 
 #ifdef _WIN32
     Console::On(); // włączenie konsoli
@@ -182,7 +185,8 @@ driver_mode::update() {
                 multiplayer::WyslijParam( 5, 3 ); // ramka 5 z czasem i stanem zapauzowania
                 iPause = Global.iPause;
             }
-
+		//if (Global.network)
+		//	multiplayer::SendPing();
         // TODO: generic shake update pass for vehicles within view range
         if( Camera.m_owner != nullptr ) {
             Camera.m_owner->update_shake( m_secondaryupdaterate );
@@ -1146,6 +1150,7 @@ driver_mode::ChangeDynamic() {
         CabView(); // na pozycję mecha
     }
     Global.changeDynObj = nullptr;
+	multiplayer::SendHandshakeInfo(true);
 }
 
 void

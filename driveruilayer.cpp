@@ -53,7 +53,9 @@ driver_ui::on_key( int const Key, int const Action ) {
         // toggle pause
         if( Action != GLFW_PRESS ) { return true; } // recognized, but ignored
 
-        if( Global.iPause & 1 ) {
+        if (Global.iMultiplayer & 2)
+			return true; // in network communication pause is steered by vd
+		if( Global.iPause & 1 ) {
             // jeśli pauza startowa
             // odpauzowanie, gdy po wczytaniu miało nie startować
             Global.iPause ^= 1;

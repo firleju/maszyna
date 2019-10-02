@@ -118,8 +118,14 @@ namespace multiplayer {
 	{
 		//net_context = CpperoMQ::Context();
 		//net_socket = net_context.createDealerSocket();
-		if (Global.network_conf.identity != "auto")
-			m_socket.setIdentity(Global.network_conf.identity.c_str());
+	    if (Global.network_conf.identity != "auto")
+		    m_socket.setIdentity(Global.network_conf.identity.c_str());
+	    else
+		{
+		    double b = Random(std::numeric_limits<double>::max());
+			m_socket.setIdentity(reinterpret_cast<char*>(&b));
+		}
+		    
 		m_socket.connect(std::string("tcp://" + Global.network_conf.address + ":" + Global.network_conf.port).c_str());
 		m_poller = CpperoMQ::Poller(0);
 
@@ -160,28 +166,38 @@ namespace multiplayer {
 		}
 	}
 
-	void SendVersionInfo()
+	void SendHandshakeInfo(bool change)
 	{
+		//Handshake
+		//1 - typ wiadomoœci
+		//2 - typ clienta - symulator - zawsze 1
+		//3 - inicjacja (0) czy zmiana (1)
+		//4 - sceneria
+		//5 - pojazd
 		auto msg = ZMQMessage();
-		msg.AddFrame(network_codes::net_proto_version);
-		msg.AddFrame(1);
-		msg.AddFrame(ZMQConnection::protocol_version);
+		msg.AddFrame(network_codes::handshake_info);
+	    msg.AddFrame(1);
+		msg.AddFrame(change);
+		msg.AddFrame(Global.SceneryFile);
+	    msg.AddFrame(Global.asHumanCtrlVehicle);
 		Global.network_queue.push_back(msg);
 	}
 
-	void SendScenery()
+	void SendPing()
 	{
-		auto msg = ZMQMessage();
-		msg.AddFrame(network_codes::scenery_name);
-		msg.AddFrame(1);
-		msg.AddFrame(Global.SceneryFile);
-		Global.network_queue.push_back(msg);
+	    // Ping
+	    // 1 - typ wiadomoœci
+	    // 2 - numer
+	    auto msg = ZMQMessage();
+	    msg.AddFrame(network_codes::ping);
+	    msg.AddFrame(1);
+	    Global.network_queue.push_back(msg);
 	}
 
 	void SendEventCallConfirmation(int status, std::string name)
 	{
 		auto msg = ZMQMessage();
-		msg.AddFrame(network_codes::event_call);
+		msg.AddFrame(network_codes::pong);
 		msg.AddFrame(1);
 		msg.AddFrame(status);
 		msg.AddFrame(name);
@@ -249,51 +265,51 @@ namespace multiplayer {
 		Global.network_queue.push_back(msg);
 	}
 
-	void SendIsolatedOccupancy(std::string name)
-	{
-		TIsolated *Current;
-		auto msg = ZMQMessage();
-		msg.AddFrame(network_codes::isolated_occupancy);
-		msg.AddFrame(1);
-		if ("*" == name)
-		{
-			int i = 0;
-			msg.AddFrame(0); // narazie zero odcinków
-			for (Current = TIsolated::Root(); Current; Current = Current->Next(), i++) {
-				msg.AddFrame(Current->asName);
-				msg.AddFrame((int)Current->Busy());
-			}
-			msg[2] = i;
-		}
-		else
-		{
-			msg.AddFrame(1);
-			msg.AddFrame(name);
-			for (Current = TIsolated::Root(); Current; Current = Current->Next()) {
-				if (Current->asName == name) {
-					msg.AddFrame((int)Current->Busy());
-					// nie sprawdzaj dalszych
-					Global.network_queue.push_back(msg);
+	//void SendIsolatedOccupancy(std::string name)
+	//{
+	//	TIsolated *Current;
+	//	auto msg = ZMQMessage();
+	//	msg.AddFrame(network_codes::isolated_occupancy);
+	//	msg.AddFrame(1);
+	//	if ("*" == name)
+	//	{
+	//		int i = 0;
+	//		msg.AddFrame(0); // narazie zero odcinków
+	//		for (Current = TIsolated::Root(); Current; Current = Current->Next(), i++) {
+	//			msg.AddFrame(Current->asName);
+	//			msg.AddFrame((int)Current->Busy());
+	//		}
+	//		msg[2] = i;
+	//	}
+	//	else
+	//	{
+	//		msg.AddFrame(1);
+	//		msg.AddFrame(name);
+	//		for (Current = TIsolated::Root(); Current; Current = Current->Next()) {
+	//			if (Current->asName == name) {
+	//				msg.AddFrame((int)Current->Busy());
+	//				// nie sprawdzaj dalszych
+	//				Global.network_queue.push_back(msg);
 
-					return;
-				}
-			}
-			// jesli nie znalaz³ to wysy³amy wolny
-			msg.AddFrame(0);
-		}
-		Global.network_queue.push_back(msg);
-	}
+	//				return;
+	//			}
+	//		}
+	//		// jesli nie znalaz³ to wysy³amy wolny
+	//		msg.AddFrame(0);
+	//	}
+	//	Global.network_queue.push_back(msg);
+	//}
 
-	void SendIsolatedOccupancy(std::string name, bool occupied)
-	{
-		auto msg = ZMQMessage();
-		msg.AddFrame(network_codes::isolated_occupancy);
-		msg.AddFrame(1);
-		msg.AddFrame(1);
-		msg.AddFrame(name);
-		msg.AddFrame((int)occupied);
-		Global.network_queue.push_back(msg);
-	}
+	//void SendIsolatedOccupancy(std::string name, bool occupied)
+	//{
+	//	auto msg = ZMQMessage();
+	//	msg.AddFrame(network_codes::isolated_occupancy);
+	//	msg.AddFrame(1);
+	//	msg.AddFrame(1);
+	//	msg.AddFrame(name);
+	//	msg.AddFrame((int)occupied);
+	//	Global.network_queue.push_back(msg);
+	//}
 
 	void SendSimulationStatus(int which_param)
 	{
@@ -313,7 +329,7 @@ namespace multiplayer {
 		Global.network_queue.push_back(msg);
 	}
 
-	void OnCommandGet(std::list<multiplayer::network_queue_t>& incoming_queue)
+	void HandleMessage(std::list<multiplayer::network_queue_t>& incoming_queue)
 	{
 		for (auto &m : incoming_queue)
 		{
@@ -323,39 +339,16 @@ namespace multiplayer {
 			switch (m.message[0].ToInt())
 			{
 			case 0: {
-				// informacja o wersji protoko³u
-				switch (m.message[1].ToInt())
-				{
-				case 0:
-					CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " ask for version" + " rcvd");
-					SendVersionInfo();
-					break;
-				case 1:
-					CommLog(Now() + " " + to_string(m.message[0].ToInt()) + " Information about version" + " rcvd");
-					if (m.message.size() != 3)
-					{
-						CommLog(Now() + " Wrong number of frames");
-						return;
-					}
-					//if (m.message[2].ToInt() != network->protocol_version)
-					//{
-					//	CommLog(Now() + " Wrong protocol version: disable network");
-					//	Global.network.~unique_ptr();
-					//	Global.network_conf.enable = false;
-					//}
-					break;
-				default:
-					CommLog(Now() + " Wrong code type");
-				}
+				// handshake
 				break;
 			}
 			case 1: {
-				// informacja o scenerii (nazwa pliku)
+				// ping
 				switch (m.message[1].ToInt())
 				{
 				case 0:
-					CommLog(Now() + " " + m.message[0].ToString() + " Ask for scenery name" + " rcvd");
-					SendScenery();
+					CommLog(Now() + " " + m.message[0].ToString() + " Ping" + " rcvd");
+					//multiplayer::SendScenery();
 					break;
 				case 1:
 					CommLog(Now() + " " + m.message[0].ToString() + " Information about scenery name" + " rcvd");
@@ -483,7 +476,7 @@ namespace multiplayer {
 						return;
 					}
 					CommLog(Now() + " Isolated: " + m.message[2].ToString() + " rcvd");
-					multiplayer::SendIsolatedOccupancy(m.message[2].ToString());
+					//multiplayer::SendIsolatedOccupancy(m.message[2].ToString());
 					break;
 				case 1:
 					CommLog(Now() + " Client do not handle messages with isolated busy / free info");

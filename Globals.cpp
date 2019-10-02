@@ -717,6 +717,8 @@ global_settings::ConfigParse(cParser &Parser) {
 			Parser >> network_conf.address;
 			Parser >> network_conf.port;
 			Parser >> network_conf.identity;
+			iMultiplayer = 2;
+			iPause = 1;
 		}
 
 		else if (token == "ddsupperorigin") {
