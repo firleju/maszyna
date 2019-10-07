@@ -19,7 +19,7 @@ namespace multiplayer {
 	enum network_codes {
 		handshake_info = 0,
 		ping = 1,
-		pong = 2,
+		event_call = 2,
 		ai_command = 3,
 		track_occupancy = 4,
 		isolated_occupancy = 5,
